@@ -1,26 +1,65 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-primary: #7c3aed;
+  --color-primary-strong: #6d28d9;
+  --color-primary-soft: #ede9fe;
+  --color-primary-faint: #f6f4fe;
+  --color-bg: #f7f6fb;
+  --color-surface: #ffffff;
+  --color-border: #ebe8f4;
+  --color-text: #211a3e;
+  --color-text-muted: #736e8d;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fee2e2;
+  --color-success: #15803d;
+  --color-success-soft: #dcfce7;
+  --color-warning-soft: #fef3c7;
+  --color-warning-text: #92400e;
+  --color-info-soft: #dbeafe;
+  --color-info-text: #1d4ed8;
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  --shadow-sm: 0 1px 3px rgba(33, 26, 62, 0.07);
+  --shadow-md: 0 4px 16px rgba(33, 26, 62, 0.08);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-primary: var(--color-primary);
+  --color-primary-strong: var(--color-primary-strong);
+  --color-primary-soft: var(--color-primary-soft);
+  --color-primary-faint: var(--color-primary-faint);
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-border: var(--color-border);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-warning-soft: var(--color-warning-soft);
+  --color-warning-text: var(--color-warning-text);
+  --color-info-soft: var(--color-info-soft);
+  --color-info-text: var(--color-info-text);
+  --radius-lg: var(--radius-lg);
+  --radius-md: var(--radius-md);
+  --radius-sm: var(--radius-sm);
+  --font-sans: var(--font-plus-jakarta);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+/* O preflight do Tailwind zera a margin do <dialog>, o que quebra a centralização
+   nativa do navegador ao abrir com showModal() — sem isso ele cola no canto superior esquerdo. */
+dialog {
+  margin: auto;
 }
