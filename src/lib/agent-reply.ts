@@ -4,6 +4,9 @@ const client = new Anthropic();
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 const ATTENTION_TAG = /\[\[PRECISA_HUMANO\]\]/i;
+// Tag de classificação de status da conversa (ex.: [[STATUS: interessado]]) — o prompt do agente
+// instrui a sempre incluir isso, mas é só pra uso interno; nunca deveria chegar no texto pro cliente.
+const STATUS_TAG = /\[\[STATUS:\s*[a-zà-ú]+\s*\]\]/i;
 
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 
@@ -55,6 +58,7 @@ export async function generateReply(
 
   const needsHuman = ATTENTION_TAG.test(text);
   if (needsHuman) text = text.replace(ATTENTION_TAG, "").trim();
+  text = text.replace(STATUS_TAG, "").trim();
 
   return { reply: text, needsHuman, inputTokens, outputTokens };
 }
