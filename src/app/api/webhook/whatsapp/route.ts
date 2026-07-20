@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { generateReply, type ConversationMessage } from "@/lib/agent-reply";
@@ -48,9 +48,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  // Responde já — processa em background sem segurar a conexão da Evolution.
+  // Responde já — processa em background sem segurar a conexão da Evolution. Em serverless
+  // (Vercel) a invocação pode ser congelada assim que a resposta é enviada, então o processamento
+  // de verdade precisa rodar dentro de `after()` pra a plataforma saber que tem que manter a
+  // function viva até terminar — um `.catch()` solto sem isso é descartado antes de completar.
   const body = await req.json().catch(() => null);
-  processWebhook(body).catch((err) => console.error("Erro no webhook WhatsApp:", err));
+  after(() => processWebhook(body).catch((err) => console.error("Erro no webhook WhatsApp:", err)));
   return NextResponse.json({ ok: true });
 }
 

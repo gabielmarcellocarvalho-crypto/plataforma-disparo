@@ -15,18 +15,22 @@ export async function createAgent(_prevState: CreateAgentState, formData: FormDa
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
 
+  // Gera o id no client pra já mandar o evolution_instance_name (derivado do id) no mesmo insert —
+  // a coluna é NOT NULL, não dá pra criar a linha e só depois preencher.
+  const agentId = crypto.randomUUID();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("agents")
-    .insert({ workspace_id: workspace.id, name, system_prompt: systemPrompt })
+    .insert({
+      id: agentId,
+      workspace_id: workspace.id,
+      name,
+      system_prompt: systemPrompt,
+      evolution_instance_name: agentInstanceNameFor(agentId),
+    })
     .select("id")
     .single();
   if (error || !data) return { error: "Não foi possível criar o agente." };
-
-  await supabase
-    .from("agents")
-    .update({ evolution_instance_name: agentInstanceNameFor(data.id) })
-    .eq("id", data.id);
 
   revalidatePath("/agentes");
   return { error: null, ok: true };
