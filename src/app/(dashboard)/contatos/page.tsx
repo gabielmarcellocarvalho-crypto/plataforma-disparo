@@ -7,23 +7,30 @@ export default async function ContatosPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const { data: contacts } = workspace
-    ? await supabase
-        .from("contacts")
-        .select("id, name, phone, email, opt_out_whatsapp, opt_out_email, created_at")
-        .eq("workspace_id", workspace.id)
-        .order("created_at", { ascending: false })
-        .limit(500)
-    : { data: [] };
+  const [{ data: contacts }, { count }] = workspace
+    ? await Promise.all([
+        supabase
+          .from("contacts")
+          .select("id, name, phone, email, opt_out_whatsapp, opt_out_email, created_at")
+          .eq("workspace_id", workspace.id)
+          .order("created_at", { ascending: false })
+          .limit(500),
+        supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
+      ])
+    : [{ data: [] }, { count: 0 }];
 
   const rows = contacts ?? [];
+  const total = count ?? rows.length;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Contatos</h1>
-          <p className="text-text-muted text-sm mt-1">{rows.length} contato(s) em {workspace?.name}.</p>
+          <p className="text-text-muted text-sm mt-1">
+            {total} contato(s) em {workspace?.name}
+            {total > rows.length ? ` — mostrando os ${rows.length} mais recentes` : ""}.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <ImportContactsForm />

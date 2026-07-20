@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { connectAgent, refreshAgentStatus, updateAgentPrompt, toggleAgentStatus } from "@/app/actions/agents";
+import { connectAgent, refreshAgentStatus, updateAgentPrompt, toggleAgentStatus, updateAgentDelay } from "@/app/actions/agents";
 
 type Agent = {
   id: string;
@@ -12,7 +12,11 @@ type Agent = {
   photo_url: string | null;
   connection_status: string;
   status: "ativo" | "pausado";
+  reply_delay_min_seconds: number;
+  reply_delay_max_seconds: number;
 };
+
+const USD_TO_BRL = 5.4; // referência aproximada — mesma taxa usada na calculadora de custos
 
 const CONNECTION_STYLES: Record<string, { label: string; bg: string; text: string; dot: string }> = {
   open: { label: "Conectado", bg: "bg-success-soft", text: "text-success", dot: "bg-success" },
@@ -27,12 +31,16 @@ function formatPhone(phone: string | null) {
   return m ? `+55 (${m[1]}) ${m[2]}-${m[3]}` : `+${phone}`;
 }
 
-export function AgentCard({ agent }: { agent: Agent }) {
+export function AgentCard({ agent, model, totalCostUsd }: { agent: Agent; model: string; totalCostUsd: number }) {
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [prompt, setPrompt] = useState(agent.system_prompt);
   const [promptSaved, setPromptSaved] = useState(false);
+  const [delayMin, setDelayMin] = useState(agent.reply_delay_min_seconds);
+  const [delayMax, setDelayMax] = useState(agent.reply_delay_max_seconds);
+  const [delaySaved, setDelaySaved] = useState(false);
+  const [delayError, setDelayError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const connected = agent.connection_status === "open";
@@ -64,6 +72,16 @@ export function AgentCard({ agent }: { agent: Agent }) {
   function handleToggleStatus() {
     startTransition(async () => {
       await toggleAgentStatus(agent.id, agent.status === "ativo" ? "pausado" : "ativo");
+    });
+  }
+
+  function handleSaveDelay() {
+    setDelaySaved(false);
+    setDelayError(null);
+    startTransition(async () => {
+      const result = await updateAgentDelay(agent.id, delayMin, delayMax);
+      if (result.error) setDelayError(result.error);
+      else setDelaySaved(true);
     });
   }
 
@@ -121,6 +139,61 @@ export function AgentCard({ agent }: { agent: Agent }) {
         >
           Atualizar status
         </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border-t border-b border-border py-2.5">
+        <div className="flex justify-between">
+          <span className="text-text-muted">Modelo</span>
+          <span className="font-semibold">{model}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-text-muted">Instância</span>
+          <span className="font-semibold font-mono">{agent.evolution_instance_name}</span>
+        </div>
+        <div className="flex justify-between col-span-2">
+          <span className="text-text-muted">Custo estimado (todas as conversas)</span>
+          <span className="font-bold">
+            US$ {totalCostUsd.toFixed(4)} (~R$ {(totalCostUsd * USD_TO_BRL).toFixed(2)})
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-bold">Delay antes de responder (segundos)</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            value={delayMin}
+            onChange={(e) => {
+              setDelayMin(Number(e.target.value));
+              setDelaySaved(false);
+            }}
+            className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+          />
+          <span className="text-text-muted">a</span>
+          <input
+            type="number"
+            min={0}
+            value={delayMax}
+            onChange={(e) => {
+              setDelayMax(Number(e.target.value));
+              setDelaySaved(false);
+            }}
+            className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            onClick={handleSaveDelay}
+            disabled={pending}
+            className="border border-border text-xs font-bold px-3 py-1.5 rounded-md cursor-pointer disabled:opacity-60"
+          >
+            Salvar
+          </button>
+          {delaySaved && <span className="text-xs font-semibold text-success">Salvo.</span>}
+        </div>
+        {delayError && <p className="text-xs text-danger font-medium">{delayError}</p>}
+        <p className="text-xs text-text-muted">Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo.</p>
       </div>
 
       {!connected && (

@@ -86,3 +86,15 @@ export async function toggleAgentStatus(agentId: string, status: "ativo" | "paus
   await supabase.from("agents").update({ status }).eq("id", agentId);
   revalidatePath("/agentes");
 }
+
+export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {
+  if (minSeconds < 0 || maxSeconds < minSeconds) return { error: "Intervalo de delay inválido." };
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("agents")
+    .update({ reply_delay_min_seconds: minSeconds, reply_delay_max_seconds: maxSeconds })
+    .eq("id", agentId);
+  if (error) return { error: "Não foi possível salvar o delay." };
+  revalidatePath("/agentes");
+  return { error: null };
+}

@@ -6,6 +6,11 @@ import { generateReply, type ConversationMessage } from "@/lib/agent-reply";
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
 
+// Resposta roda em background após o 200 já ter sido devolvido pra Evolution — mas ainda dentro
+// da mesma invocação serverless, incluindo o delay humanizado + a chamada da Anthropic. Aumenta o
+// limite padrão da Vercel pra caber isso com folga.
+export const maxDuration = 30;
+
 type EvolutionMessage = {
   message?: {
     conversation?: string;
@@ -71,7 +76,7 @@ async function processWebhook(body: {
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, status, evolution_instance_name")
+    .select("id, workspace_id, system_prompt, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds")
     .eq("evolution_instance_name", instanceName)
     .maybeSingle();
 
@@ -111,8 +116,20 @@ async function processWebhook(body: {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type AdminClient = ReturnType<typeof createAdminClient>;
-type Agent = { id: string; workspace_id: string; system_prompt: string; status: string; evolution_instance_name: string };
+type Agent = {
+  id: string;
+  workspace_id: string;
+  system_prompt: string;
+  status: string;
+  evolution_instance_name: string;
+  reply_delay_min_seconds: number;
+  reply_delay_max_seconds: number;
+};
 
 async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: string, data: EvolutionMessage) {
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir.
@@ -176,7 +193,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     .reverse()
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const { reply, needsHuman } = await generateReply(
+  const { reply, needsHuman, inputTokens, outputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history
@@ -189,7 +206,15 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
       agent_id: agent.id,
       role: "assistant",
       content: reply,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
     });
+
+    // Delay humanizado antes de responder — evita a sensação de bot respondendo instantâneo.
+    const { reply_delay_min_seconds: min, reply_delay_max_seconds: max } = agent;
+    const delaySeconds = min + Math.random() * Math.max(0, max - min);
+    await sleep(delaySeconds * 1000);
+
     await sendText(agent.evolution_instance_name, phone, reply).catch((err) =>
       console.error("Erro ao enviar resposta do agente:", err)
     );

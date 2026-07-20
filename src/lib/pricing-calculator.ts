@@ -2,6 +2,19 @@
 // Valores de e-mail baseados na tabela pública do Resend (resend.com/pricing, checado em 2026-07-19).
 // São valores DE REFERÊNCIA pra planejamento comercial — confirme no site deles antes de fechar contrato.
 
+// Preço por milhão de tokens da API Anthropic (platform.claude.com/docs/en/pricing, checado em 2026-07-20).
+export const ANTHROPIC_PRICING: Record<string, { inputPerMTokUsd: number; outputPerMTokUsd: number }> = {
+  "claude-sonnet-5": { inputPerMTokUsd: 3.0, outputPerMTokUsd: 15.0 },
+  "claude-opus-4-8": { inputPerMTokUsd: 5.0, outputPerMTokUsd: 25.0 },
+  "claude-haiku-4-5": { inputPerMTokUsd: 1.0, outputPerMTokUsd: 5.0 },
+};
+
+export function estimateAnthropicCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = ANTHROPIC_PRICING[model];
+  if (!pricing) return 0;
+  return (inputTokens / 1_000_000) * pricing.inputPerMTokUsd + (outputTokens / 1_000_000) * pricing.outputPerMTokUsd;
+}
+
 export type EmailEstimate = {
   plano: string;
   custoMensalUsd: number;

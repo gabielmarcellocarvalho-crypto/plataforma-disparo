@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { WhatsappConnect } from "@/components/whatsapp-connect";
+import { WhatsappConnectChooser } from "@/components/whatsapp-connect-chooser";
 
 export default async function ConfiguracoesPage() {
   const { workspace } = await getCurrentWorkspace();
@@ -22,11 +22,11 @@ export default async function ConfiguracoesPage() {
       </div>
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
-        <h3 className="font-bold text-[15px] mb-1">WhatsApp</h3>
+        <h3 className="font-bold text-[15px] mb-1">WhatsApp — disparo em massa</h3>
         <p className="text-xs text-text-muted mb-4">
-          Conecta o número desse cliente via QR code (mesma tecnologia usada no piloto da Hanoi).
+          Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes.
         </p>
-        <WhatsappConnect initialStatus={instance?.connection_status || "desconectado"} />
+        <WhatsappConnectChooser hasExistingInstance={!!instance} initialStatus={instance?.connection_status || "desconectado"} />
       </div>
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

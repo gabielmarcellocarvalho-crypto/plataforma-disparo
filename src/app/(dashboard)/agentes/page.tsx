@@ -3,16 +3,21 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { AgentCard } from "@/components/agent-card";
 import { AddAgentForm } from "@/components/add-agent-form";
 import { AttentionPanel } from "@/components/attention-panel";
+import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
+
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 export default async function AgentesPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: agents }, { data: attentionContacts }] = workspace
+  const [{ data: agents }, { data: attentionContacts }, { data: usageRows }] = workspace
     ? await Promise.all([
         supabase
           .from("agents")
-          .select("id, name, system_prompt, evolution_instance_name, phone_number, photo_url, connection_status, status")
+          .select(
+            "id, name, system_prompt, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds"
+          )
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
         supabase
@@ -21,8 +26,17 @@ export default async function AgentesPage() {
           .eq("workspace_id", workspace.id)
           .eq("needs_attention", true)
           .order("created_at", { ascending: false }),
+        supabase.from("messages").select("agent_id, input_tokens, output_tokens").eq("workspace_id", workspace.id).not("agent_id", "is", null),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }];
+
+  // Soma tokens por agente e converte pra custo estimado em USD (mesma tabela de preço da calculadora).
+  const costByAgent = new Map<string, number>();
+  for (const row of usageRows || []) {
+    if (!row.agent_id) continue;
+    const cost = estimateAnthropicCostUsd(ANTHROPIC_MODEL, row.input_tokens || 0, row.output_tokens || 0);
+    costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -31,6 +45,7 @@ export default async function AgentesPage() {
           <h1 className="text-2xl font-extrabold tracking-tight">Agentes</h1>
           <p className="text-text-muted text-sm mt-1">
             Cada agente atende por um número de WhatsApp próprio, com prompt próprio, respondendo sozinho os contatos desse workspace.
+            Diferente de um número de disparo em massa (sem IA) — esse você conecta em Configurações.
           </p>
         </div>
         <AddAgentForm />
@@ -46,7 +61,7 @@ export default async function AgentesPage() {
       ) : (
         <div className="grid md:grid-cols-2 gap-5">
           {agents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} />
+            <AgentCard key={agent.id} agent={agent} model={ANTHROPIC_MODEL} totalCostUsd={costByAgent.get(agent.id) || 0} />
           ))}
         </div>
       )}
