@@ -35,6 +35,14 @@ function unsupportedMediaType(data?: EvolutionMessage) {
 }
 
 export async function POST(req: Request) {
+  // A Evolution API não assina o payload nem manda header custom — a única forma de
+  // autenticar quem chama é um segredo na própria URL do webhook (?secret=...), configurado
+  // junto com EVOLUTION_WEBHOOK_URL. Sem isso, qualquer um na internet poderia forjar eventos.
+  const secret = new URL(req.url).searchParams.get("secret");
+  if (!process.env.WHATSAPP_WEBHOOK_SECRET || secret !== process.env.WHATSAPP_WEBHOOK_SECRET) {
+    return NextResponse.json({ ok: false }, { status: 401 });
+  }
+
   // Responde já — processa em background sem segurar a conexão da Evolution.
   const body = await req.json().catch(() => null);
   processWebhook(body).catch((err) => console.error("Erro no webhook WhatsApp:", err));
