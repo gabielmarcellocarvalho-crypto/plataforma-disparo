@@ -196,7 +196,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     .reverse()
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  const { reply, needsHuman, inputTokens, outputTokens } = await generateReply(
+  const { reply, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history
@@ -211,6 +211,8 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
       content: reply,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
+      cache_creation_input_tokens: cacheCreationInputTokens,
+      cache_read_input_tokens: cacheReadInputTokens,
     });
 
     // Delay humanizado antes de responder — evita a sensação de bot respondendo instantâneo.

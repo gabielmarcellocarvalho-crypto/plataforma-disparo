@@ -15,7 +15,14 @@ export type AgentReplyContact = {
   custom_fields: Record<string, unknown> | null;
 };
 
-export type AgentReply = { reply: string; needsHuman: boolean; inputTokens: number; outputTokens: number };
+export type AgentReply = {
+  reply: string;
+  needsHuman: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+};
 
 // Gera a resposta do agente pra uma mensagem recebida, dado o prompt configurado pro agente
 // e o histórico de conversa já salvo com esse contato.
@@ -45,9 +52,18 @@ export async function generateReply(
 
   const inputTokens = response.usage.input_tokens;
   const outputTokens = response.usage.output_tokens;
+  const cacheCreationInputTokens = response.usage.cache_creation_input_tokens ?? 0;
+  const cacheReadInputTokens = response.usage.cache_read_input_tokens ?? 0;
 
   if (response.stop_reason === "refusal") {
-    return { reply: "Vou confirmar isso com a equipe e já retorno.", needsHuman: true, inputTokens, outputTokens };
+    return {
+      reply: "Vou confirmar isso com a equipe e já retorno.",
+      needsHuman: true,
+      inputTokens,
+      outputTokens,
+      cacheCreationInputTokens,
+      cacheReadInputTokens,
+    };
   }
 
   let text = response.content
@@ -60,5 +76,5 @@ export async function generateReply(
   if (needsHuman) text = text.replace(ATTENTION_TAG, "").trim();
   text = text.replace(STATUS_TAG, "").trim();
 
-  return { reply: text, needsHuman, inputTokens, outputTokens };
+  return { reply: text, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
 }

@@ -9,10 +9,27 @@ export const ANTHROPIC_PRICING: Record<string, { inputPerMTokUsd: number; output
   "claude-haiku-4-5": { inputPerMTokUsd: 1.0, outputPerMTokUsd: 5.0 },
 };
 
-export function estimateAnthropicCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+export type AnthropicTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+};
+
+// Cache write (TTL de 5min, o único usado hoje) custa ~1.25x o preço de input; cache read custa ~0.1x.
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;
+
+export function estimateAnthropicCostUsd(model: string, usage: AnthropicTokenUsage): number {
   const pricing = ANTHROPIC_PRICING[model];
   if (!pricing) return 0;
-  return (inputTokens / 1_000_000) * pricing.inputPerMTokUsd + (outputTokens / 1_000_000) * pricing.outputPerMTokUsd;
+  const { inputTokens, outputTokens, cacheCreationInputTokens = 0, cacheReadInputTokens = 0 } = usage;
+  return (
+    (inputTokens / 1_000_000) * pricing.inputPerMTokUsd +
+    (outputTokens / 1_000_000) * pricing.outputPerMTokUsd +
+    (cacheCreationInputTokens / 1_000_000) * pricing.inputPerMTokUsd * CACHE_WRITE_MULTIPLIER +
+    (cacheReadInputTokens / 1_000_000) * pricing.inputPerMTokUsd * CACHE_READ_MULTIPLIER
+  );
 }
 
 export type EmailEstimate = {

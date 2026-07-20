@@ -26,7 +26,11 @@ export default async function AgentesPage() {
           .eq("workspace_id", workspace.id)
           .eq("needs_attention", true)
           .order("created_at", { ascending: false }),
-        supabase.from("messages").select("agent_id, input_tokens, output_tokens").eq("workspace_id", workspace.id).not("agent_id", "is", null),
+        supabase
+          .from("messages")
+          .select("agent_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
+          .eq("workspace_id", workspace.id)
+          .not("agent_id", "is", null),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
 
@@ -34,7 +38,12 @@ export default async function AgentesPage() {
   const costByAgent = new Map<string, number>();
   for (const row of usageRows || []) {
     if (!row.agent_id) continue;
-    const cost = estimateAnthropicCostUsd(ANTHROPIC_MODEL, row.input_tokens || 0, row.output_tokens || 0);
+    const cost = estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
+      inputTokens: row.input_tokens || 0,
+      outputTokens: row.output_tokens || 0,
+      cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
+      cacheReadInputTokens: row.cache_read_input_tokens || 0,
+    });
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
   }
 
