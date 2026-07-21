@@ -11,7 +11,7 @@ export default async function AgentesPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: agents }, { data: attentionContacts }, { data: usageRows }] = workspace
+  const [{ data: agents }, { data: attentionContacts }, { data: usageRows }, { data: mediaRows }] = workspace
     ? await Promise.all([
         supabase
           .from("agents")
@@ -31,8 +31,13 @@ export default async function AgentesPage() {
           .select("agent_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
           .eq("workspace_id", workspace.id)
           .not("agent_id", "is", null),
+        supabase
+          .from("agent_media")
+          .select("id, agent_id, category, url, caption")
+          .eq("workspace_id", workspace.id)
+          .order("created_at", { ascending: true }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
   // Soma tokens por agente e converte pra custo estimado em USD (mesma tabela de preço da calculadora).
   const costByAgent = new Map<string, number>();
@@ -45,6 +50,15 @@ export default async function AgentesPage() {
       cacheReadInputTokens: row.cache_read_input_tokens || 0,
     });
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
+  }
+
+  // Agrupa a biblioteca de fotos por agente.
+  type MediaRow = { id: string; category: string; url: string; caption: string | null };
+  const mediaByAgent = new Map<string, MediaRow[]>();
+  for (const m of mediaRows || []) {
+    const list = mediaByAgent.get(m.agent_id) || [];
+    list.push({ id: m.id, category: m.category, url: m.url, caption: m.caption });
+    mediaByAgent.set(m.agent_id, list);
   }
 
   return (
@@ -70,7 +84,13 @@ export default async function AgentesPage() {
       ) : (
         <div className="grid md:grid-cols-2 gap-5">
           {agents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} model={ANTHROPIC_MODEL} totalCostUsd={costByAgent.get(agent.id) || 0} />
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              model={ANTHROPIC_MODEL}
+              totalCostUsd={costByAgent.get(agent.id) || 0}
+              media={mediaByAgent.get(agent.id) || []}
+            />
           ))}
         </div>
       )}

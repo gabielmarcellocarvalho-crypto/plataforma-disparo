@@ -1,8 +1,55 @@
 import { NextResponse, after } from "next/server";
+import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendText, getMediaBase64 } from "@/lib/evolution";
-import { generateReply, type ConversationMessage, type AgentImage } from "@/lib/agent-reply";
+import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
+import { generateReply, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
+
+// Ferramentas disponíveis pro agente. `enviar_foto` já funciona ponta a ponta (biblioteca de
+// mídia por agente). gerar_link_pagamento e consultar_disponibilidade são os pontos de
+// integração externa por cliente (gateway de pagamento / PMS) — adicionar como novas tools aqui.
+const AGENT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "enviar_foto",
+    description:
+      "Envia uma ou mais fotos pro cliente no WhatsApp. Use quando o cliente pedir pra ver fotos " +
+      "(quartos, área de lazer, café da manhã, etc.) ou quando mostrar a foto ajudar a converter. " +
+      "O parâmetro 'categoria' descreve o que mostrar (ex: 'quarto standard', 'piscina', 'cafe da manha'). " +
+      "Só existem fotos das categorias que o hotel cadastrou; se não houver, não diga que enviou.",
+    input_schema: {
+      type: "object",
+      properties: {
+        categoria: { type: "string", description: "O que a foto deve mostrar (ex: 'quarto standard', 'piscina')" },
+      },
+      required: ["categoria"],
+    },
+  },
+];
+
+function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string): ToolExecutor {
+  return async (name, input) => {
+    if (name === "enviar_foto") {
+      const categoria = String(input.categoria || "").trim();
+      if (!categoria) return "Informe qual categoria de foto enviar.";
+      const { data: media } = await supabase
+        .from("agent_media")
+        .select("url, caption, category")
+        .eq("agent_id", agent.id)
+        .ilike("category", `%${categoria}%`)
+        .limit(3);
+      if (!media || media.length === 0) {
+        return `Nenhuma foto cadastrada para "${categoria}". Não invente que enviou; ofereça outra opção ou diga que vai verificar.`;
+      }
+      for (const m of media) {
+        await sendMedia(agent.evolution_instance_name, phone, m.url, { caption: m.caption || undefined }).catch((e) =>
+          console.error("Erro ao enviar foto:", e)
+        );
+      }
+      return `${media.length} foto(s) da categoria "${categoria}" enviada(s) ao cliente.`;
+    }
+    return `Ferramenta "${name}" não implementada.`;
+  };
+}
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
@@ -244,7 +291,9 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
-    images
+    images,
+    AGENT_TOOLS,
+    makeToolExecutor(supabase, agent, phone)
   );
 
   if (reply) {

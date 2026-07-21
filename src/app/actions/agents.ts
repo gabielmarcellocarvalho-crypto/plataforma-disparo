@@ -91,6 +91,42 @@ export async function toggleAgentStatus(agentId: string, status: "ativo" | "paus
   revalidatePath("/agentes");
 }
 
+export async function addAgentMedia(
+  agentId: string,
+  category: string,
+  url: string,
+  caption: string
+): Promise<{ error: string | null }> {
+  const cat = category.trim();
+  const link = url.trim();
+  if (!cat || !link) return { error: "Categoria e URL são obrigatórias." };
+  if (!/^https?:\/\//i.test(link)) return { error: "A URL precisa começar com http:// ou https://." };
+
+  const supabase = await createClient();
+  const { data: agent } = await supabase.from("agents").select("workspace_id").eq("id", agentId).maybeSingle();
+  if (!agent) return { error: "Agente não encontrado." };
+
+  const { error } = await supabase.from("agent_media").insert({
+    agent_id: agentId,
+    workspace_id: agent.workspace_id,
+    category: cat,
+    url: link,
+    caption: caption.trim() || null,
+  });
+  if (error) return { error: "Não foi possível salvar a foto." };
+
+  revalidatePath("/agentes");
+  return { error: null };
+}
+
+export async function deleteAgentMedia(mediaId: string): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("agent_media").delete().eq("id", mediaId);
+  if (error) return { error: "Não foi possível remover a foto." };
+  revalidatePath("/agentes");
+  return { error: null };
+}
+
 export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {
   if (minSeconds < 0 || maxSeconds < minSeconds) return { error: "Intervalo de delay inválido." };
   const supabase = await createClient();

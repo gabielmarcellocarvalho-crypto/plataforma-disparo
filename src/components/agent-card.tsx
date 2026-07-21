@@ -1,7 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { connectAgent, refreshAgentStatus, updateAgentPrompt, toggleAgentStatus, updateAgentDelay } from "@/app/actions/agents";
+import {
+  connectAgent,
+  refreshAgentStatus,
+  updateAgentPrompt,
+  toggleAgentStatus,
+  updateAgentDelay,
+  addAgentMedia,
+  deleteAgentMedia,
+} from "@/app/actions/agents";
 
 type Agent = {
   id: string;
@@ -15,6 +23,8 @@ type Agent = {
   reply_delay_min_seconds: number;
   reply_delay_max_seconds: number;
 };
+
+type AgentMedia = { id: string; category: string; url: string; caption: string | null };
 
 const USD_TO_BRL = 5.4; // referência aproximada — mesma taxa usada na calculadora de custos
 
@@ -31,7 +41,17 @@ function formatPhone(phone: string | null) {
   return m ? `+55 (${m[1]}) ${m[2]}-${m[3]}` : `+${phone}`;
 }
 
-export function AgentCard({ agent, model, totalCostUsd }: { agent: Agent; model: string; totalCostUsd: number }) {
+export function AgentCard({
+  agent,
+  model,
+  totalCostUsd,
+  media,
+}: {
+  agent: Agent;
+  model: string;
+  totalCostUsd: number;
+  media: AgentMedia[];
+}) {
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -41,6 +61,11 @@ export function AgentCard({ agent, model, totalCostUsd }: { agent: Agent; model:
   const [delayMax, setDelayMax] = useState(agent.reply_delay_max_seconds);
   const [delaySaved, setDelaySaved] = useState(false);
   const [delayError, setDelayError] = useState<string | null>(null);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaCategory, setMediaCategory] = useState("");
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaCaption, setMediaCaption] = useState("");
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const connected = agent.connection_status === "open";
@@ -82,6 +107,25 @@ export function AgentCard({ agent, model, totalCostUsd }: { agent: Agent; model:
       const result = await updateAgentDelay(agent.id, delayMin, delayMax);
       if (result.error) setDelayError(result.error);
       else setDelaySaved(true);
+    });
+  }
+
+  function handleAddMedia() {
+    setMediaError(null);
+    startTransition(async () => {
+      const result = await addAgentMedia(agent.id, mediaCategory, mediaUrl, mediaCaption);
+      if (result.error) setMediaError(result.error);
+      else {
+        setMediaCategory("");
+        setMediaUrl("");
+        setMediaCaption("");
+      }
+    });
+  }
+
+  function handleDeleteMedia(mediaId: string) {
+    startTransition(async () => {
+      await deleteAgentMedia(mediaId);
     });
   }
 
@@ -264,6 +308,94 @@ export function AgentCard({ agent, model, totalCostUsd }: { agent: Agent; model:
                 Salvar prompt
               </button>
               {promptSaved && <span className="text-xs font-semibold text-success">Salvo.</span>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-border pt-3">
+        <button
+          type="button"
+          onClick={() => setMediaOpen((v) => !v)}
+          className="flex items-center justify-between w-full text-left cursor-pointer py-1"
+          aria-expanded={mediaOpen}
+        >
+          <span className="text-sm font-bold">Fotos do agente ({media.length})</span>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`text-text-muted transition-transform ${mediaOpen ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+
+        {mediaOpen && (
+          <div className="flex flex-col gap-3 mt-2">
+            <p className="text-xs text-text-muted">
+              Fotos que o agente pode enviar (quartos, lazer, etc.). O agente escolhe pela categoria quando o cliente pede.
+            </p>
+
+            {media.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                {media.map((m) => (
+                  <div key={m.id} className="flex items-center gap-2 text-xs border border-border rounded-md px-2.5 py-1.5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={m.url} alt={m.category} className="w-8 h-8 rounded object-cover shrink-0 border border-border" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">{m.category}</div>
+                      {m.caption && <div className="text-text-muted truncate">{m.caption}</div>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteMedia(m.id)}
+                      disabled={pending}
+                      className="text-danger font-semibold hover:underline shrink-0 disabled:opacity-60"
+                    >
+                      remover
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <input
+                value={mediaCategory}
+                onChange={(e) => setMediaCategory(e.target.value)}
+                placeholder="Categoria (ex: quarto standard, piscina)"
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <input
+                value={mediaUrl}
+                onChange={(e) => setMediaUrl(e.target.value)}
+                placeholder="URL pública da imagem (https://…)"
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <input
+                value={mediaCaption}
+                onChange={(e) => setMediaCaption(e.target.value)}
+                placeholder="Legenda (opcional)"
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddMedia}
+                  disabled={pending}
+                  className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-md cursor-pointer disabled:opacity-60"
+                >
+                  Adicionar foto
+                </button>
+                {mediaError && <span className="text-xs text-danger font-medium">{mediaError}</span>}
+              </div>
             </div>
           </div>
         )}

@@ -27,13 +27,23 @@ export type AgentReply = {
   cacheReadInputTokens: number;
 };
 
+// Executor de ferramenta: recebe nome + argumentos que o modelo pediu, executa o efeito
+// (mandar foto, gerar link de pagamento, consultar disponibilidade...) e devolve o resultado
+// em texto pra o modelo. Retornar algo com "PRECISA_HUMANO" marca a conversa pra atenção humana.
+export type ToolExecutor = (name: string, input: Record<string, unknown>) => Promise<string>;
+
+const MAX_TOOL_ITERATIONS = 6;
+
 // Gera a resposta do agente pra uma mensagem recebida, dado o prompt configurado pro agente
-// e o histórico de conversa já salvo com esse contato.
+// e o histórico de conversa já salvo com esse contato. Se `tools`/`executeTool` forem passados,
+// roda o loop de tool-calling (o modelo pode chamar ferramentas antes de dar a resposta final).
 export async function generateReply(
   systemPrompt: string,
   contact: AgentReplyContact,
   history: ConversationMessage[],
-  currentImages: AgentImage[] = []
+  currentImages: AgentImage[] = [],
+  tools: Anthropic.Tool[] = [],
+  executeTool?: ToolExecutor
 ): Promise<AgentReply> {
   const camposExtras = contact.custom_fields && Object.keys(contact.custom_fields).length
     ? ` Dados adicionais: ${JSON.stringify(contact.custom_fields)}.`
@@ -62,39 +72,70 @@ export async function generateReply(
     ...historyMessages,
   ];
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    thinking: { type: "adaptive" },
-    system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
-    messages,
-  });
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheCreationInputTokens = 0;
+  let cacheReadInputTokens = 0;
+  let needsHuman = false;
+  let finalText = "";
 
-  const inputTokens = response.usage.input_tokens;
-  const outputTokens = response.usage.output_tokens;
-  const cacheCreationInputTokens = response.usage.cache_creation_input_tokens ?? 0;
-  const cacheReadInputTokens = response.usage.cache_read_input_tokens ?? 0;
+  for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      thinking: { type: "adaptive" },
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages,
+      ...(tools.length ? { tools } : {}),
+    });
 
-  if (response.stop_reason === "refusal") {
-    return {
-      reply: "Vou confirmar isso com a equipe e já retorno.",
-      needsHuman: true,
-      inputTokens,
-      outputTokens,
-      cacheCreationInputTokens,
-      cacheReadInputTokens,
-    };
+    inputTokens += response.usage.input_tokens;
+    outputTokens += response.usage.output_tokens;
+    cacheCreationInputTokens += response.usage.cache_creation_input_tokens ?? 0;
+    cacheReadInputTokens += response.usage.cache_read_input_tokens ?? 0;
+
+    if (response.stop_reason === "refusal") {
+      return {
+        reply: "Vou confirmar isso com a equipe e já retorno.",
+        needsHuman: true,
+        inputTokens,
+        outputTokens,
+        cacheCreationInputTokens,
+        cacheReadInputTokens,
+      };
+    }
+
+    finalText = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+
+    const toolUses = response.content.filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
+
+    if (response.stop_reason !== "tool_use" || toolUses.length === 0) break;
+
+    // Preserva a resposta inteira (thinking + tool_use) — obrigatório pra continuar o turno com
+    // as ferramentas — e devolve o resultado de cada ferramenta pro modelo.
+    messages.push({ role: "assistant", content: response.content });
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const toolUse of toolUses) {
+      let result = "Ferramenta indisponível.";
+      if (executeTool) {
+        try {
+          result = await executeTool(toolUse.name, toolUse.input as Record<string, unknown>);
+        } catch (err) {
+          result = `Erro ao executar ${toolUse.name}: ${(err as Error).message}`;
+        }
+      }
+      if (/PRECISA_HUMANO/i.test(result)) needsHuman = true;
+      toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
+    }
+    messages.push({ role: "user", content: toolResults });
   }
 
-  let text = response.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
+  needsHuman = needsHuman || ATTENTION_TAG.test(finalText);
+  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").trim();
 
-  const needsHuman = ATTENTION_TAG.test(text);
-  if (needsHuman) text = text.replace(ATTENTION_TAG, "").trim();
-  text = text.replace(STATUS_TAG, "").trim();
-
-  return { reply: text, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
+  return { reply: finalText, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
 }
