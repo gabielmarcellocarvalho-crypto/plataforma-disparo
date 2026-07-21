@@ -88,6 +88,41 @@ export async function sendText(instanceName: string, number: string, text: strin
   return request("POST", `/message/sendText/${instanceName}`, { number, text, delay: 1200 });
 }
 
+// Envia mídia (foto de quarto, etc.) — `media` pode ser uma URL pública ou base64.
+export async function sendMedia(
+  instanceName: string,
+  number: string,
+  media: string,
+  opts?: { caption?: string; mediatype?: "image" | "video" | "document" | "audio"; fileName?: string }
+) {
+  return request("POST", `/message/sendMedia/${instanceName}`, {
+    number,
+    mediatype: opts?.mediatype || "image",
+    media,
+    caption: opts?.caption,
+    fileName: opts?.fileName,
+    delay: 1200,
+  });
+}
+
+// Baixa a mídia recebida (áudio/imagem) em base64, a partir do id da mensagem no webhook.
+// Usado pra transcrever áudio (Whisper) e pra passar fotos pro modelo (visão).
+export async function getMediaBase64(
+  instanceName: string,
+  messageId: string
+): Promise<{ base64: string; mimetype: string } | null> {
+  try {
+    const res = (await request("POST", `/chat/getBase64FromMediaMessage/${instanceName}`, {
+      message: { key: { id: messageId } },
+    })) as { base64?: string; mimetype?: string };
+    if (!res?.base64) return null;
+    return { base64: res.base64, mimetype: res.mimetype || "application/octet-stream" };
+  } catch (err) {
+    console.error("Erro ao baixar mídia da Evolution:", err);
+    return null;
+  }
+}
+
 // Detalhes da instância — usado pra descobrir o número conectado (ownerJid) e a foto de perfil
 // do WhatsApp depois do QR escaneado (ou pra detectar se a pessoa trocou de foto).
 export async function fetchInstanceInfo(

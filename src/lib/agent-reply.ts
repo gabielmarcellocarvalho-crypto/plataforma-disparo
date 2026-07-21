@@ -10,6 +10,9 @@ const STATUS_TAG = /\[\[STATUS:\s*[a-zà-ú]+\s*\]\]/i;
 
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 
+// Foto que o cliente mandou nessa mensagem, pra o modelo enxergar (Claude tem visão nativa).
+export type AgentImage = { base64: string; mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" };
+
 export type AgentReplyContact = {
   name: string | null;
   custom_fields: Record<string, unknown> | null;
@@ -29,17 +32,34 @@ export type AgentReply = {
 export async function generateReply(
   systemPrompt: string,
   contact: AgentReplyContact,
-  history: ConversationMessage[]
+  history: ConversationMessage[],
+  currentImages: AgentImage[] = []
 ): Promise<AgentReply> {
   const camposExtras = contact.custom_fields && Object.keys(contact.custom_fields).length
     ? ` Dados adicionais: ${JSON.stringify(contact.custom_fields)}.`
     : "";
   const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}`;
 
+  const historyMessages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
+
+  // Anexa as fotos recebidas nessa mensagem ao último turno do usuário (visão só no turno atual —
+  // manter imagens no histórico inteiro encareceria demais; o modelo já "viu" e respondeu sobre elas).
+  if (currentImages.length && historyMessages.length) {
+    const last = historyMessages[historyMessages.length - 1];
+    if (last.role === "user" && typeof last.content === "string") {
+      const imageBlocks: Anthropic.ImageBlockParam[] = currentImages.map((img) => ({
+        type: "image",
+        source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+      }));
+      const textBlocks: Anthropic.TextBlockParam[] = last.content ? [{ type: "text", text: last.content }] : [];
+      last.content = [...imageBlocks, ...textBlocks];
+    }
+  }
+
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: `<contexto>${contactContext}</contexto>` },
     { role: "assistant", content: "Entendido, vou conduzir a conversa com esse contato." },
-    ...history,
+    ...historyMessages,
   ];
 
   const response = await client.messages.create({

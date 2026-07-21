@@ -1,7 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendText } from "@/lib/evolution";
-import { generateReply, type ConversationMessage } from "@/lib/agent-reply";
+import { sendText, getMediaBase64 } from "@/lib/evolution";
+import { generateReply, type ConversationMessage, type AgentImage } from "@/lib/agent-reply";
+import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
@@ -15,12 +16,12 @@ type EvolutionMessage = {
   message?: {
     conversation?: string;
     extendedTextMessage?: { text?: string };
-    audioMessage?: unknown;
-    imageMessage?: unknown;
+    audioMessage?: { mimetype?: string };
+    imageMessage?: { mimetype?: string; caption?: string };
     videoMessage?: unknown;
     documentMessage?: unknown;
   };
-  key?: { remoteJid?: string; fromMe?: boolean };
+  key?: { remoteJid?: string; fromMe?: boolean; id?: string };
   pushName?: string;
 };
 
@@ -29,14 +30,54 @@ function extractText(data?: EvolutionMessage) {
   return msg?.conversation || msg?.extendedTextMessage?.text || null;
 }
 
-function unsupportedMediaType(data?: EvolutionMessage) {
-  const msg = data?.message;
-  if (!msg) return null;
-  if (msg.audioMessage) return "áudio";
-  if (msg.imageMessage) return "imagem";
-  if (msg.videoMessage) return "vídeo";
-  if (msg.documentMessage) return "documento";
-  return null;
+function toSupportedImageType(mimetype: string): AgentImage["mediaType"] {
+  if (mimetype.includes("png")) return "image/png";
+  if (mimetype.includes("gif")) return "image/gif";
+  if (mimetype.includes("webp")) return "image/webp";
+  return "image/jpeg"; // WhatsApp manda jpeg na esmagadora maioria dos casos
+}
+
+// Resolve o conteúdo da mensagem recebida em algo que o agente consegue usar:
+// texto direto, transcrição de áudio (Whisper), ou foto (base64 pra visão do Claude).
+// `unsupported` != null quando é um tipo que o agente não processa (vídeo/documento, ou
+// áudio sem OPENAI_API_KEY) — nesses casos a conversa vai pra atenção humana.
+async function resolveIncoming(
+  instanceName: string,
+  data: EvolutionMessage
+): Promise<{ text: string | null; images: AgentImage[]; unsupported: string | null }> {
+  const msg = data.message;
+  const messageId = data.key?.id;
+
+  const directText = msg?.conversation || msg?.extendedTextMessage?.text || null;
+  if (directText) return { text: directText, images: [], unsupported: null };
+
+  // Áudio → transcrição
+  if (msg?.audioMessage) {
+    if (!messageId || !transcriptionAvailable()) return { text: null, images: [], unsupported: "áudio" };
+    const media = await getMediaBase64(instanceName, messageId);
+    const transcription = media ? await transcribeAudio(media.base64, media.mimetype) : null;
+    if (transcription) return { text: transcription, images: [], unsupported: null };
+    return { text: null, images: [], unsupported: "áudio" };
+  }
+
+  // Imagem → visão
+  if (msg?.imageMessage) {
+    if (!messageId) return { text: null, images: [], unsupported: "imagem" };
+    const media = await getMediaBase64(instanceName, messageId);
+    if (media) {
+      const caption = msg.imageMessage.caption || "";
+      return {
+        text: caption,
+        images: [{ base64: media.base64, mediaType: toSupportedImageType(media.mimetype) }],
+        unsupported: null,
+      };
+    }
+    return { text: null, images: [], unsupported: "imagem" };
+  }
+
+  if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo" };
+  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento" };
+  return { text: null, images: [], unsupported: null };
 }
 
 export async function POST(req: Request) {
@@ -155,28 +196,31 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   if (contact.opt_out_whatsapp) return;
 
-  const text = extractText(data);
-  const unsupported = unsupportedMediaType(data);
+  const { text, images, unsupported } = await resolveIncoming(agent.evolution_instance_name, data);
 
-  if (!text) {
+  if (!text && images.length === 0) {
     if (unsupported) {
       await supabase
         .from("contacts")
-        .update({ needs_attention: true, attention_reason: `Enviou ${unsupported}, o agente não consegue processar esse tipo de mensagem.` })
+        .update({ needs_attention: true, attention_reason: `Enviou ${unsupported}, o agente não conseguiu processar automaticamente.` })
         .eq("id", contact.id);
     }
     return;
   }
+
+  // Foto sem legenda ainda precisa virar uma linha de texto no histórico — o modelo recebe a
+  // imagem de fato via `images`, mas o registro guarda um marcador legível pra revisão humana.
+  const userContent = text || "[o cliente enviou uma foto]";
 
   await supabase.from("messages").insert({
     workspace_id: agent.workspace_id,
     contact_id: contact.id,
     agent_id: agent.id,
     role: "user",
-    content: text,
+    content: userContent,
   });
 
-  if (OPT_OUT.test(text)) {
+  if (text && OPT_OUT.test(text)) {
     await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
     return;
   }
@@ -199,7 +243,8 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   const { reply, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
-    history
+    history,
+    images
   );
 
   if (reply) {
