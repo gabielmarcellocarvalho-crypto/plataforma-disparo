@@ -107,19 +107,35 @@ export async function sendMedia(
 
 // Baixa a mídia recebida (áudio/imagem) em base64, a partir do id da mensagem no webhook.
 // Usado pra transcrever áudio (Whisper) e pra passar fotos pro modelo (visão).
+// Timeout curto: se a Evolution não consegue recuperar a mídia, é melhor falhar rápido (cai pra
+// atenção humana) do que segurar a função serverless até estourar o maxDuration.
 export async function getMediaBase64(
   instanceName: string,
   messageId: string
 ): Promise<{ base64: string; mimetype: string } | null> {
+  if (!EVOLUTION_URL || !EVOLUTION_APIKEY) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = (await request("POST", `/chat/getBase64FromMediaMessage/${instanceName}`, {
-      message: { key: { id: messageId } },
-    })) as { base64?: string; mimetype?: string };
-    if (!res?.base64) return null;
-    return { base64: res.base64, mimetype: res.mimetype || "application/octet-stream" };
+    const res = await fetch(`${EVOLUTION_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: EVOLUTION_APIKEY },
+      body: JSON.stringify({ message: { key: { id: messageId } }, convertToMp4: false }),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      console.error(`getBase64FromMediaMessage ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const data = (await res.json()) as { base64?: string; mimetype?: string };
+    if (!data?.base64) return null;
+    return { base64: data.base64, mimetype: data.mimetype || "application/octet-stream" };
   } catch (err) {
-    console.error("Erro ao baixar mídia da Evolution:", err);
+    console.error("Erro ao baixar mídia da Evolution:", (err as Error).message);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
