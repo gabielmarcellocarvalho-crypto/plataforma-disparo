@@ -297,7 +297,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   const tools = categories.length ? buildAgentTools(categories) : [];
   const executor = categories.length ? makeToolExecutor(supabase, agent, phone) : undefined;
 
-  const { reply, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
+  const { reply, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
@@ -307,6 +307,8 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   );
 
   if (reply) {
+    // O agente respondeu — não marca atenção humana mesmo que ele tenha sido cauteloso no texto.
+    // "Precisa de atenção" fica só pros casos em que ele realmente NÃO conseguiu responder (abaixo).
     await supabase.from("messages").insert({
       workspace_id: agent.workspace_id,
       contact_id: contact.id,
@@ -327,12 +329,11 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     await sendText(agent.evolution_instance_name, phone, reply).catch((err) =>
       console.error("Erro ao enviar resposta do agente:", err)
     );
-  }
-
-  if (needsHuman) {
+  } else {
+    // Só aqui é atenção humana de verdade: o agente não produziu nenhuma resposta.
     await supabase
       .from("contacts")
-      .update({ needs_attention: true, attention_reason: "O agente sinalizou que precisa de atenção humana nessa conversa." })
+      .update({ needs_attention: true, attention_reason: "O agente não conseguiu responder automaticamente essa mensagem." })
       .eq("id", contact.id);
   }
 }

@@ -46,11 +46,13 @@ export function AgentCard({
   model,
   totalCostUsd,
   media,
+  canManage,
 }: {
   agent: Agent;
   model: string;
   totalCostUsd: number;
   media: AgentMedia[];
+  canManage: boolean;
 }) {
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,17 +173,27 @@ export function AgentCard({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleToggleStatus}
-          disabled={pending}
-          className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
-            agent.status === "ativo" ? "bg-primary-faint text-primary-strong" : "bg-bg text-text-muted"
-          }`}
-          aria-label={agent.status === "ativo" ? "Pausar agente" : "Reativar agente"}
-        >
-          {agent.status === "ativo" ? "Ativo" : "Pausado"}
-        </button>
+        {canManage ? (
+          <button
+            type="button"
+            onClick={handleToggleStatus}
+            disabled={pending}
+            className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+              agent.status === "ativo" ? "bg-primary-faint text-primary-strong" : "bg-bg text-text-muted"
+            }`}
+            aria-label={agent.status === "ativo" ? "Pausar agente" : "Reativar agente"}
+          >
+            {agent.status === "ativo" ? "Ativo" : "Pausado"}
+          </button>
+        ) : (
+          <span
+            className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 ${
+              agent.status === "ativo" ? "bg-primary-faint text-primary-strong" : "bg-bg text-text-muted"
+            }`}
+          >
+            {agent.status === "ativo" ? "Ativo" : "Pausado"}
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -199,62 +211,67 @@ export function AgentCard({
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border-t border-b border-border py-2.5">
-        <div className="flex justify-between">
-          <span className="text-text-muted">Modelo</span>
-          <span className="font-semibold">{model}</span>
+      {/* Bloco técnico (modelo, instância, custo) — só pra equipe da agência, nunca pro cliente. */}
+      {canManage && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border-t border-b border-border py-2.5">
+          <div className="flex justify-between">
+            <span className="text-text-muted">Modelo</span>
+            <span className="font-semibold">{model}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Instância</span>
+            <span className="font-semibold font-mono">{agent.evolution_instance_name}</span>
+          </div>
+          <div className="flex justify-between col-span-2">
+            <span className="text-text-muted">Custo estimado (todas as conversas)</span>
+            <span className="font-bold">
+              US$ {totalCostUsd.toFixed(4)} (~R$ {(totalCostUsd * USD_TO_BRL).toFixed(2)})
+            </span>
+          </div>
         </div>
-        <div className="flex justify-between">
-          <span className="text-text-muted">Instância</span>
-          <span className="font-semibold font-mono">{agent.evolution_instance_name}</span>
-        </div>
-        <div className="flex justify-between col-span-2">
-          <span className="text-text-muted">Custo estimado (todas as conversas)</span>
-          <span className="font-bold">
-            US$ {totalCostUsd.toFixed(4)} (~R$ {(totalCostUsd * USD_TO_BRL).toFixed(2)})
-          </span>
-        </div>
-      </div>
+      )}
 
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-bold">Delay antes de responder (segundos)</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={0}
-            value={delayMin}
-            onChange={(e) => {
-              setDelayMin(Number(e.target.value));
-              setDelaySaved(false);
-            }}
-            className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
-          />
-          <span className="text-text-muted">a</span>
-          <input
-            type="number"
-            min={0}
-            value={delayMax}
-            onChange={(e) => {
-              setDelayMax(Number(e.target.value));
-              setDelaySaved(false);
-            }}
-            className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
-          />
-          <button
-            type="button"
-            onClick={handleSaveDelay}
-            disabled={pending}
-            className="border border-border text-xs font-bold px-3 py-1.5 rounded-md cursor-pointer disabled:opacity-60"
-          >
-            Salvar
-          </button>
-          {delaySaved && <span className="text-xs font-semibold text-success">Salvo.</span>}
+      {canManage && (
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-bold">Delay antes de responder (segundos)</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={delayMin}
+              onChange={(e) => {
+                setDelayMin(Number(e.target.value));
+                setDelaySaved(false);
+              }}
+              className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+            />
+            <span className="text-text-muted">a</span>
+            <input
+              type="number"
+              min={0}
+              value={delayMax}
+              onChange={(e) => {
+                setDelayMax(Number(e.target.value));
+                setDelaySaved(false);
+              }}
+              className="w-20 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              onClick={handleSaveDelay}
+              disabled={pending}
+              className="border border-border text-xs font-bold px-3 py-1.5 rounded-md cursor-pointer disabled:opacity-60"
+            >
+              Salvar
+            </button>
+            {delaySaved && <span className="text-xs font-semibold text-success">Salvo.</span>}
+          </div>
+          {delayError && <p className="text-xs text-danger font-medium">{delayError}</p>}
+          <p className="text-xs text-text-muted">Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo.</p>
         </div>
-        {delayError && <p className="text-xs text-danger font-medium">{delayError}</p>}
-        <p className="text-xs text-text-muted">Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo.</p>
-      </div>
+      )}
 
-      {!connected && (
+      {canManage && !connected && (
         <div className="flex flex-col items-start gap-2">
           <button
             type="button"
@@ -276,6 +293,7 @@ export function AgentCard({
         </div>
       )}
 
+      {canManage && (
       <div className="border-t border-border pt-3">
         <button
           type="button"
@@ -326,7 +344,9 @@ export function AgentCard({
           </div>
         )}
       </div>
+      )}
 
+      {canManage && (
       <div className="border-t border-border pt-3">
         <button
           type="button"
@@ -354,7 +374,7 @@ export function AgentCard({
         {mediaOpen && (
           <div className="flex flex-col gap-3 mt-2">
             <p className="text-xs text-text-muted">
-              Fotos organizadas em pastas (quartos, lazer, etc.). Suba várias de uma vez por pasta. O agente vê a
+              Fotos organizadas em pastas por categoria. Suba várias de uma vez por pasta. O agente vê a
               lista de pastas e escolhe qual mandar quando o cliente pede.
             </p>
 
@@ -395,7 +415,7 @@ export function AgentCard({
               <input
                 value={mediaCategory}
                 onChange={(e) => setMediaCategory(e.target.value)}
-                placeholder="Nome da pasta (ex: quarto standard, piscina, café da manhã)"
+                placeholder="Nome da pasta (ex: produtos, ambiente, equipe)"
                 className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
               />
               <input
@@ -421,6 +441,7 @@ export function AgentCard({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

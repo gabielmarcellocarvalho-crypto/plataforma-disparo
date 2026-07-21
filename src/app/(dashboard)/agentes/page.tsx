@@ -8,7 +8,7 @@ import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 export default async function AgentesPage() {
-  const { workspace } = await getCurrentWorkspace();
+  const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const [{ data: agents }, { data: attentionContacts }, { data: usageRows }, { data: mediaRows }] = workspace
@@ -71,7 +71,7 @@ export default async function AgentesPage() {
             Diferente de um número de disparo em massa (sem IA) — esse você conecta em Configurações.
           </p>
         </div>
-        <AddAgentForm />
+        {isColaborador && <AddAgentForm />}
       </div>
 
       <AttentionPanel contacts={attentionContacts || []} />
@@ -90,6 +90,7 @@ export default async function AgentesPage() {
               model={ANTHROPIC_MODEL}
               totalCostUsd={costByAgent.get(agent.id) || 0}
               media={mediaByAgent.get(agent.id) || []}
+              canManage={isColaborador}
             />
           ))}
         </div>

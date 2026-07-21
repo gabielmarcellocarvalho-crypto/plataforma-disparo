@@ -6,7 +6,7 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const USD_TO_BRL = 5.4;
 
 export default async function MetricasPage() {
-  const { workspace } = await getCurrentWorkspace();
+  const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const { data: agentMessages } = workspace
@@ -43,6 +43,8 @@ export default async function MetricasPage() {
         <p className="text-text-muted text-sm mt-1">Funil e desempenho das campanhas do workspace atual.</p>
       </div>
 
+      {/* Custo dos agentes — só pra equipe da agência. Cliente nunca vê (margem). */}
+      {isColaborador && (
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
         <h3 className="font-bold text-[15px] mb-1">Custo dos agentes de IA (WhatsApp)</h3>
         <p className="text-xs text-text-muted mb-4">
@@ -71,6 +73,7 @@ export default async function MetricasPage() {
           </div>
         </div>
       </div>
+      )}
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-10 text-center text-text-muted">
         <p className="font-semibold text-text">Funil de campanhas — sem dados ainda</p>
