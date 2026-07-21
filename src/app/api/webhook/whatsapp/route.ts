@@ -8,23 +8,26 @@ import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 // Ferramentas disponíveis pro agente. `enviar_foto` já funciona ponta a ponta (biblioteca de
 // mídia por agente). gerar_link_pagamento e consultar_disponibilidade são os pontos de
 // integração externa por cliente (gateway de pagamento / PMS) — adicionar como novas tools aqui.
-const AGENT_TOOLS: Anthropic.Tool[] = [
-  {
-    name: "enviar_foto",
-    description:
-      "Envia uma ou mais fotos pro cliente no WhatsApp. Use quando o cliente pedir pra ver fotos " +
-      "(quartos, área de lazer, café da manhã, etc.) ou quando mostrar a foto ajudar a converter. " +
-      "O parâmetro 'categoria' descreve o que mostrar (ex: 'quarto standard', 'piscina', 'cafe da manha'). " +
-      "Só existem fotos das categorias que o hotel cadastrou; se não houver, não diga que enviou.",
-    input_schema: {
-      type: "object",
-      properties: {
-        categoria: { type: "string", description: "O que a foto deve mostrar (ex: 'quarto standard', 'piscina')" },
+// A lista de pastas (categorias) entra na descrição pra o modelo escolher uma que existe de fato.
+function buildAgentTools(categories: string[]): Anthropic.Tool[] {
+  return [
+    {
+      name: "enviar_foto",
+      description:
+        "Envia uma ou mais fotos pro cliente no WhatsApp. Use quando o cliente pedir pra ver fotos " +
+        "(quartos, área de lazer, café da manhã, etc.) ou quando mostrar a foto ajudar a converter. " +
+        `Pastas de fotos disponíveis: ${categories.join(", ")}. ` +
+        "Passe em 'categoria' exatamente uma dessas pastas. Não prometa foto de pasta que não existe na lista.",
+      input_schema: {
+        type: "object",
+        properties: {
+          categoria: { type: "string", description: "Uma das pastas de fotos disponíveis", enum: categories },
+        },
+        required: ["categoria"],
       },
-      required: ["categoria"],
     },
-  },
-];
+  ];
+}
 
 function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string): ToolExecutor {
   return async (name, input) => {
@@ -287,13 +290,20 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     .reverse()
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+  // Pastas de fotos cadastradas pra esse agente — só habilita a ferramenta de foto se houver
+  // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
+  const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
+  const categories = [...new Set((mediaCats || []).map((m) => m.category))];
+  const tools = categories.length ? buildAgentTools(categories) : [];
+  const executor = categories.length ? makeToolExecutor(supabase, agent, phone) : undefined;
+
   const { reply, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
     images,
-    AGENT_TOOLS,
-    makeToolExecutor(supabase, agent, phone)
+    tools,
+    executor
   );
 
   if (reply) {

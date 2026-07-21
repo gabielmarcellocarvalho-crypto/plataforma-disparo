@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import {
   connectAgent,
   refreshAgentStatus,
   updateAgentPrompt,
   toggleAgentStatus,
   updateAgentDelay,
-  addAgentMedia,
+  uploadAgentMedia,
   deleteAgentMedia,
 } from "@/app/actions/agents";
 
@@ -63,9 +63,9 @@ export function AgentCard({
   const [delayError, setDelayError] = useState<string | null>(null);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [mediaCategory, setMediaCategory] = useState("");
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [mediaCaption, setMediaCaption] = useState("");
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaStatus, setMediaStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [pending, startTransition] = useTransition();
 
   const connected = agent.connection_status === "open";
@@ -110,15 +110,23 @@ export function AgentCard({
     });
   }
 
-  function handleAddMedia() {
+  function handleUploadMedia() {
     setMediaError(null);
+    setMediaStatus(null);
+    const files = fileInputRef.current?.files;
+    if (!files || files.length === 0) {
+      setMediaError("Selecione as fotos.");
+      return;
+    }
+    const formData = new FormData();
+    for (const file of Array.from(files)) formData.append("files", file);
     startTransition(async () => {
-      const result = await addAgentMedia(agent.id, mediaCategory, mediaUrl, mediaCaption);
+      const result = await uploadAgentMedia(agent.id, mediaCategory, formData);
       if (result.error) setMediaError(result.error);
       else {
+        setMediaStatus(`${result.count} foto(s) enviada(s) pra pasta "${mediaCategory}".`);
         setMediaCategory("");
-        setMediaUrl("");
-        setMediaCaption("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
     });
   }
@@ -128,6 +136,12 @@ export function AgentCard({
       await deleteAgentMedia(mediaId);
     });
   }
+
+  // Agrupa as fotos por pasta (categoria) pra exibir tipo "drive".
+  const folders = media.reduce<Record<string, AgentMedia[]>>((acc, m) => {
+    (acc[m.category] ||= []).push(m);
+    return acc;
+  }, {});
 
   return (
     <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-4">
@@ -340,60 +354,67 @@ export function AgentCard({
         {mediaOpen && (
           <div className="flex flex-col gap-3 mt-2">
             <p className="text-xs text-text-muted">
-              Fotos que o agente pode enviar (quartos, lazer, etc.). O agente escolhe pela categoria quando o cliente pede.
+              Fotos organizadas em pastas (quartos, lazer, etc.). Suba várias de uma vez por pasta. O agente vê a
+              lista de pastas e escolhe qual mandar quando o cliente pede.
             </p>
 
-            {media.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                {media.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2 text-xs border border-border rounded-md px-2.5 py-1.5">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={m.url} alt={m.category} className="w-8 h-8 rounded object-cover shrink-0 border border-border" />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold truncate">{m.category}</div>
-                      {m.caption && <div className="text-text-muted truncate">{m.caption}</div>}
+            {Object.keys(folders).length > 0 && (
+              <div className="flex flex-col gap-2.5">
+                {Object.entries(folders).map(([folder, fotos]) => (
+                  <div key={folder} className="border border-border rounded-md p-2.5">
+                    <div className="text-xs font-bold mb-1.5 flex items-center gap-1.5">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted" aria-hidden>
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                      {folder} <span className="text-text-muted font-semibold">({fotos.length})</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMedia(m.id)}
-                      disabled={pending}
-                      className="text-danger font-semibold hover:underline shrink-0 disabled:opacity-60"
-                    >
-                      remover
-                    </button>
+                    <div className="flex flex-wrap gap-1.5">
+                      {fotos.map((m) => (
+                        <div key={m.id} className="relative group">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={m.url} alt={folder} className="w-12 h-12 rounded object-cover border border-border" />
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMedia(m.id)}
+                            disabled={pending}
+                            aria-label="Remover foto"
+                            className="absolute -top-1.5 -right-1.5 bg-danger text-white w-4 h-4 rounded-full text-[10px] leading-none grid place-items-center cursor-pointer disabled:opacity-60"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+              <span className="text-xs font-bold">Subir fotos numa pasta</span>
               <input
                 value={mediaCategory}
                 onChange={(e) => setMediaCategory(e.target.value)}
-                placeholder="Categoria (ex: quarto standard, piscina)"
+                placeholder="Nome da pasta (ex: quarto standard, piscina, café da manhã)"
                 className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
               />
               <input
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                placeholder="URL pública da imagem (https://…)"
-                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-              />
-              <input
-                value={mediaCaption}
-                onChange={(e) => setMediaCaption(e.target.value)}
-                placeholder="Legenda (opcional)"
-                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="text-xs file:mr-3 file:border-0 file:rounded-md file:bg-primary-soft file:text-primary-strong file:font-semibold file:px-3 file:py-1.5 file:cursor-pointer"
               />
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleAddMedia}
+                  onClick={handleUploadMedia}
                   disabled={pending}
                   className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-md cursor-pointer disabled:opacity-60"
                 >
-                  Adicionar foto
+                  {pending ? "Enviando…" : "Subir fotos"}
                 </button>
+                {mediaStatus && <span className="text-xs font-semibold text-success">{mediaStatus}</span>}
                 {mediaError && <span className="text-xs text-danger font-medium">{mediaError}</span>}
               </div>
             </div>

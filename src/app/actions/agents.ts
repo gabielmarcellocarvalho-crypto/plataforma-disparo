@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, fetchQrCode, fetchInstanceInfo, agentInstanceNameFor } from "@/lib/evolution";
 
@@ -125,6 +126,51 @@ export async function deleteAgentMedia(mediaId: string): Promise<{ error: string
   if (error) return { error: "Não foi possível remover a foto." };
   revalidatePath("/agentes");
   return { error: null };
+}
+
+export type UploadMediaResult = { error: string | null; count?: number };
+
+// Upload em massa: joga várias fotos de uma vez numa "pasta" (categoria). Sobe cada arquivo pro
+// Supabase Storage (bucket público agent-media) e grava a URL na biblioteca do agente.
+export async function uploadAgentMedia(agentId: string, category: string, formData: FormData): Promise<UploadMediaResult> {
+  const cat = category.trim();
+  if (!cat) return { error: "Dê um nome pra pasta (categoria)." };
+
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { error: "Selecione pelo menos uma foto." };
+
+  const supabase = await createClient();
+  // Valida acesso pelo client do usuário (RLS): se não enxerga o agente, não sobe nada.
+  const { data: agent } = await supabase.from("agents").select("workspace_id").eq("id", agentId).maybeSingle();
+  if (!agent) return { error: "Agente não encontrado." };
+
+  const admin = createAdminClient();
+  let count = 0;
+  for (const file of files) {
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const path = `${agentId}/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await admin.storage.from("agent-media").upload(path, file, {
+      contentType: file.type || "image/jpeg",
+      upsert: false,
+    });
+    if (upErr) {
+      console.error("Erro no upload de foto:", upErr.message);
+      continue;
+    }
+    const { data: pub } = admin.storage.from("agent-media").getPublicUrl(path);
+    const { error: insErr } = await admin.from("agent_media").insert({
+      agent_id: agentId,
+      workspace_id: agent.workspace_id,
+      category: cat,
+      url: pub.publicUrl,
+      caption: null,
+    });
+    if (!insErr) count++;
+  }
+
+  if (count === 0) return { error: "Não foi possível subir as fotos." };
+  revalidatePath("/agentes");
+  return { error: null, count };
 }
 
 export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {
