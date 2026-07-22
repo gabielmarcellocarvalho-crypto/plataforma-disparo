@@ -24,7 +24,14 @@ type Agent = {
   reply_delay_max_seconds: number;
 };
 
-type AgentMedia = { id: string; category: string; url: string; caption: string | null };
+type AgentMedia = {
+  id: string;
+  category: string;
+  url: string;
+  caption: string | null;
+  media_type: string;
+  file_name: string | null;
+};
 
 const USD_TO_BRL = 5.4; // referência aproximada — mesma taxa usada na calculadora de custos
 
@@ -117,7 +124,7 @@ export function AgentCard({
     setMediaStatus(null);
     const files = fileInputRef.current?.files;
     if (!files || files.length === 0) {
-      setMediaError("Selecione as fotos.");
+      setMediaError("Selecione os arquivos.");
       return;
     }
     const formData = new FormData();
@@ -126,7 +133,7 @@ export function AgentCard({
       const result = await uploadAgentMedia(agent.id, mediaCategory, formData);
       if (result.error) setMediaError(result.error);
       else {
-        setMediaStatus(`${result.count} foto(s) enviada(s) pra pasta "${mediaCategory}".`);
+        setMediaStatus(`${result.count} arquivo(s) enviado(s) pra pasta "${mediaCategory}".`);
         setMediaCategory("");
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
@@ -354,7 +361,7 @@ export function AgentCard({
           className="flex items-center justify-between w-full text-left cursor-pointer py-1"
           aria-expanded={mediaOpen}
         >
-          <span className="text-sm font-bold">Fotos do agente ({media.length})</span>
+          <span className="text-sm font-bold">Arquivos do agente ({media.length})</span>
           <svg
             width="16"
             height="16"
@@ -374,8 +381,8 @@ export function AgentCard({
         {mediaOpen && (
           <div className="flex flex-col gap-3 mt-2">
             <p className="text-xs text-text-muted">
-              Fotos organizadas em pastas por categoria. Suba várias de uma vez por pasta. O agente vê a
-              lista de pastas e escolhe qual mandar quando o cliente pede.
+              Fotos e documentos (PDF) organizados em pastas por categoria. Suba vários de uma vez por pasta. O
+              agente vê a lista de pastas e escolhe qual mandar quando o cliente pede.
             </p>
 
             {Object.keys(folders).length > 0 && (
@@ -391,13 +398,28 @@ export function AgentCard({
                     <div className="flex flex-wrap gap-1.5">
                       {fotos.map((m) => (
                         <div key={m.id} className="relative group">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={m.url} alt={folder} className="w-12 h-12 rounded object-cover border border-border" />
+                          {m.media_type === "document" ? (
+                            <a
+                              href={m.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={m.file_name || "documento"}
+                              className="w-12 h-12 rounded border border-border grid place-items-center bg-bg text-danger"
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                            </a>
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={m.url} alt={folder} className="w-12 h-12 rounded object-cover border border-border" />
+                          )}
                           <button
                             type="button"
                             onClick={() => handleDeleteMedia(m.id)}
                             disabled={pending}
-                            aria-label="Remover foto"
+                            aria-label="Remover arquivo"
                             className="absolute -top-1.5 -right-1.5 bg-danger text-white w-4 h-4 rounded-full text-[10px] leading-none grid place-items-center cursor-pointer disabled:opacity-60"
                           >
                             ×
@@ -411,17 +433,17 @@ export function AgentCard({
             )}
 
             <div className="flex flex-col gap-2 border-t border-border pt-2.5">
-              <span className="text-xs font-bold">Subir fotos numa pasta</span>
+              <span className="text-xs font-bold">Subir arquivos numa pasta</span>
               <input
                 value={mediaCategory}
                 onChange={(e) => setMediaCategory(e.target.value)}
-                placeholder="Nome da pasta (ex: produtos, ambiente, equipe)"
+                placeholder="Nome da pasta (ex: produtos, pacotes, cardápio)"
                 className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
               />
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,application/pdf"
                 multiple
                 className="text-xs file:mr-3 file:border-0 file:rounded-md file:bg-primary-soft file:text-primary-strong file:font-semibold file:px-3 file:py-1.5 file:cursor-pointer"
               />
@@ -432,7 +454,7 @@ export function AgentCard({
                   disabled={pending}
                   className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-md cursor-pointer disabled:opacity-60"
                 >
-                  {pending ? "Enviando…" : "Subir fotos"}
+                  {pending ? "Enviando…" : "Subir arquivos"}
                 </button>
                 {mediaStatus && <span className="text-xs font-semibold text-success">{mediaStatus}</span>}
                 {mediaError && <span className="text-xs text-danger font-medium">{mediaError}</span>}

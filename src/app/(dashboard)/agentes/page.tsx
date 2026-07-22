@@ -33,7 +33,7 @@ export default async function AgentesPage() {
           .not("agent_id", "is", null),
         supabase
           .from("agent_media")
-          .select("id, agent_id, category, url, caption")
+          .select("id, agent_id, category, url, caption, media_type, file_name")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
       ])
@@ -52,12 +52,19 @@ export default async function AgentesPage() {
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
   }
 
-  // Agrupa a biblioteca de fotos por agente.
-  type MediaRow = { id: string; category: string; url: string; caption: string | null };
+  // Agrupa a biblioteca de arquivos por agente.
+  type MediaRow = {
+    id: string;
+    category: string;
+    url: string;
+    caption: string | null;
+    media_type: string;
+    file_name: string | null;
+  };
   const mediaByAgent = new Map<string, MediaRow[]>();
   for (const m of mediaRows || []) {
     const list = mediaByAgent.get(m.agent_id) || [];
-    list.push({ id: m.id, category: m.category, url: m.url, caption: m.caption });
+    list.push({ id: m.id, category: m.category, url: m.url, caption: m.caption, media_type: m.media_type, file_name: m.file_name });
     mediaByAgent.set(m.agent_id, list);
   }
 

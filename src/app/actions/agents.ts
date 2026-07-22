@@ -147,14 +147,16 @@ export async function uploadAgentMedia(agentId: string, category: string, formDa
   const admin = createAdminClient();
   let count = 0;
   for (const file of files) {
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const mediaType = isPdf ? "document" : "image";
+    const ext = (file.name.split(".").pop() || (isPdf ? "pdf" : "jpg")).toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const path = `${agentId}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await admin.storage.from("agent-media").upload(path, file, {
-      contentType: file.type || "image/jpeg",
+      contentType: file.type || (isPdf ? "application/pdf" : "image/jpeg"),
       upsert: false,
     });
     if (upErr) {
-      console.error("Erro no upload de foto:", upErr.message);
+      console.error("Erro no upload de arquivo:", upErr.message);
       continue;
     }
     const { data: pub } = admin.storage.from("agent-media").getPublicUrl(path);
@@ -164,6 +166,8 @@ export async function uploadAgentMedia(agentId: string, category: string, formDa
       category: cat,
       url: pub.publicUrl,
       caption: null,
+      media_type: mediaType,
+      file_name: isPdf ? file.name : null,
     });
     if (!insErr) count++;
   }

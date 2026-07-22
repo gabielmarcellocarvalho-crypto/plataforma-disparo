@@ -12,16 +12,17 @@ import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 function buildAgentTools(categories: string[]): Anthropic.Tool[] {
   return [
     {
-      name: "enviar_foto",
+      name: "enviar_arquivo",
       description:
-        "Envia uma ou mais fotos pro cliente no WhatsApp. Use quando o cliente pedir pra ver fotos " +
-        "(quartos, área de lazer, café da manhã, etc.) ou quando mostrar a foto ajudar a converter. " +
-        `Pastas de fotos disponíveis: ${categories.join(", ")}. ` +
-        "Passe em 'categoria' exatamente uma dessas pastas. Não prometa foto de pasta que não existe na lista.",
+        "Envia um ou mais arquivos (fotos ou documentos/PDF) pro cliente no WhatsApp. Use quando o " +
+        "cliente pedir pra ver algo (fotos de quartos/áreas, cardápio, tabela de pacotes em PDF, etc.) " +
+        "ou quando mostrar o arquivo ajudar a converter. " +
+        `Pastas disponíveis: ${categories.join(", ")}. ` +
+        "Passe em 'categoria' exatamente uma dessas pastas. Não prometa arquivo de pasta que não existe na lista.",
       input_schema: {
         type: "object",
         properties: {
-          categoria: { type: "string", description: "Uma das pastas de fotos disponíveis", enum: categories },
+          categoria: { type: "string", description: "Uma das pastas de arquivos disponíveis", enum: categories },
         },
         required: ["categoria"],
       },
@@ -31,24 +32,27 @@ function buildAgentTools(categories: string[]): Anthropic.Tool[] {
 
 function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string): ToolExecutor {
   return async (name, input) => {
-    if (name === "enviar_foto") {
+    if (name === "enviar_arquivo") {
       const categoria = String(input.categoria || "").trim();
-      if (!categoria) return "Informe qual categoria de foto enviar.";
+      if (!categoria) return "Informe qual categoria de arquivo enviar.";
       const { data: media } = await supabase
         .from("agent_media")
-        .select("url, caption, category")
+        .select("url, caption, category, media_type, file_name")
         .eq("agent_id", agent.id)
         .ilike("category", `%${categoria}%`)
-        .limit(3);
+        .limit(5);
       if (!media || media.length === 0) {
-        return `Nenhuma foto cadastrada para "${categoria}". Não invente que enviou; ofereça outra opção ou diga que vai verificar.`;
+        return `Nenhum arquivo cadastrado para "${categoria}". Não invente que enviou; ofereça outra opção ou diga que vai verificar.`;
       }
       for (const m of media) {
-        await sendMedia(agent.evolution_instance_name, phone, m.url, { caption: m.caption || undefined }).catch((e) =>
-          console.error("Erro ao enviar foto:", e)
-        );
+        const mediatype = m.media_type === "document" ? "document" : "image";
+        await sendMedia(agent.evolution_instance_name, phone, m.url, {
+          caption: m.caption || undefined,
+          mediatype,
+          fileName: m.file_name || undefined,
+        }).catch((e) => console.error("Erro ao enviar arquivo:", e));
       }
-      return `${media.length} foto(s) da categoria "${categoria}" enviada(s) ao cliente.`;
+      return `${media.length} arquivo(s) da categoria "${categoria}" enviado(s) ao cliente.`;
     }
     return `Ferramenta "${name}" não implementada.`;
   };
