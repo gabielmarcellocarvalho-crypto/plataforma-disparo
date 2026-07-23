@@ -31,6 +31,30 @@ export async function resolveAttention(contactId: string): Promise<ActionResult>
   return { error: null, ok: true };
 }
 
+// Dispensa o alerta "pode precisar de atenção" (flagged_reason) sem mexer em needs_attention —
+// o agente continua respondendo normalmente, isso só limpa o aviso na UI.
+export async function dismissFlag(contactId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("contacts").update({ flagged_reason: null }).eq("id", contactId);
+  if (error) return { error: "Não foi possível dispensar o alerta." };
+  revalidatePath("/conversas");
+  return { error: null, ok: true };
+}
+
+// Apaga o histórico de mensagens desse contato com esse agente — é isso que vira contexto/"cache"
+// mandado pro modelo a cada resposta. Útil pra testar do zero sem o agente carregar conversa antiga.
+export async function clearConversationHistory(contactId: string, agentId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("messages").delete().eq("contact_id", contactId).eq("agent_id", agentId);
+  if (error) return { error: "Não foi possível limpar o histórico." };
+
+  await supabase.from("contacts").update({ needs_attention: false, attention_reason: null }).eq("id", contactId);
+
+  revalidatePath("/conversas");
+  revalidatePath("/agentes");
+  return { error: null, ok: true };
+}
+
 // Envio manual — só funciona com a conversa assumida (needs_attention = true), pra não brigar com o agente.
 export async function sendManualMessage(contactId: string, agentId: string, text: string): Promise<ActionResult> {
   const trimmed = text.trim();

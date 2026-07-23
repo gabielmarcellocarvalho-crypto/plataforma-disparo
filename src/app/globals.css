@@ -1,30 +1,76 @@
 @import "tailwindcss";
 
 :root {
+  /* Roxo — escala primária */
   --color-primary: #7c3aed;
-  --color-primary-strong: #6d28d9;
-  --color-primary-soft: #ede9fe;
-  --color-primary-faint: #f6f4fe;
-  --color-bg: #f7f6fb;
+  --color-primary-strong: #6b21d4;
+  --color-primary-soft: #ece7fe;
+  --color-primary-faint: #f6f3ff;
+
+  /* Sidebar — roxo profundo (o "branco e roxo" premium) */
+  --color-sidebar: #2a1259;
+  --color-sidebar-deep: #1e0c45;
+  --color-sidebar-text: #c9bbe8;
+  --color-sidebar-muted: #9585bd;
+  --color-sidebar-active-bg: rgba(255, 255, 255, 0.12);
+  --color-sidebar-border: rgba(255, 255, 255, 0.08);
+
+  /* Neutros */
+  --color-bg: #f6f5fa;
   --color-surface: #ffffff;
-  --color-border: #ebe8f4;
-  --color-text: #211a3e;
-  --color-text-muted: #736e8d;
+  --color-surface-2: #faf9fd;
+  --color-border: #eae7f2;
+  --color-border-strong: #ddd8ea;
+  --color-text: #1a1533;
+  --color-text-muted: #6e6a85;
+
+  /* Estados */
   --color-danger: #dc2626;
   --color-danger-soft: #fee2e2;
-  --color-success: #15803d;
-  --color-success-soft: #dcfce7;
+  --color-success: #059669;
+  --color-success-soft: #d1fae5;
   --color-warning-soft: #fef3c7;
   --color-warning-text: #92400e;
   --color-info-soft: #dbeafe;
   --color-info-text: #1d4ed8;
 
+  /* Data viz */
+  --color-chart-1: #7c3aed;
+  --color-chart-2: #06b6d4;
+
+  /* Tokens do componente de gráfico (AreaChart visx) — tema roxo/branco */
+  --chart-background: #ffffff;
+  --chart-foreground: #1a1533;
+  --chart-foreground-muted: #6e6a85;
+  --chart-label: #8b86a3;
+  --chart-line-primary: #7c3aed;
+  --chart-line-secondary: #06b6d4;
+  --chart-crosshair: #cbbdec;
+  --chart-grid: #eae7f2;
+  --chart-indicator-color: #7c3aed;
+  --chart-indicator-secondary-color: #06b6d4;
+  --chart-marker-background: #ffffff;
+  --chart-marker-border: #eae7f2;
+  --chart-marker-foreground: #1a1533;
+  --chart-marker-badge-background: #7c3aed;
+  --chart-marker-badge-foreground: #ffffff;
+  --chart-segment-background: #ece7fe;
+  --chart-segment-line: #7c3aed;
+
+  /* Tokens semânticos usados pelo gráfico via classes Tailwind */
+  --color-chart-label: #8b86a3;
+  --color-chart-tooltip-foreground: #1a1533;
+  --color-chart-tooltip-muted: #6e6a85;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1a1533;
+
   --radius-lg: 16px;
   --radius-md: 12px;
   --radius-sm: 8px;
 
-  --shadow-sm: 0 1px 3px rgba(33, 26, 62, 0.07);
-  --shadow-md: 0 4px 16px rgba(33, 26, 62, 0.08);
+  --shadow-sm: 0 1px 2px rgba(26, 21, 51, 0.06), 0 1px 3px rgba(26, 21, 51, 0.04);
+  --shadow-md: 0 4px 12px rgba(26, 21, 51, 0.06), 0 12px 32px rgba(26, 21, 51, 0.07);
+  --shadow-lg: 0 8px 24px rgba(42, 18, 89, 0.1), 0 24px 48px rgba(42, 18, 89, 0.08);
 }
 
 @theme inline {
@@ -32,9 +78,17 @@
   --color-primary-strong: var(--color-primary-strong);
   --color-primary-soft: var(--color-primary-soft);
   --color-primary-faint: var(--color-primary-faint);
+  --color-sidebar: var(--color-sidebar);
+  --color-sidebar-deep: var(--color-sidebar-deep);
+  --color-sidebar-text: var(--color-sidebar-text);
+  --color-sidebar-muted: var(--color-sidebar-muted);
+  --color-sidebar-active-bg: var(--color-sidebar-active-bg);
+  --color-sidebar-border: var(--color-sidebar-border);
   --color-bg: var(--color-bg);
   --color-surface: var(--color-surface);
+  --color-surface-2: var(--color-surface-2);
   --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
   --color-text: var(--color-text);
   --color-text-muted: var(--color-text-muted);
   --color-danger: var(--color-danger);
@@ -45,6 +99,13 @@
   --color-warning-text: var(--color-warning-text);
   --color-info-soft: var(--color-info-soft);
   --color-info-text: var(--color-info-text);
+  --color-chart-1: var(--color-chart-1);
+  --color-chart-2: var(--color-chart-2);
+  --color-chart-label: var(--color-chart-label);
+  --color-chart-tooltip-foreground: var(--color-chart-tooltip-foreground);
+  --color-chart-tooltip-muted: var(--color-chart-tooltip-muted);
+  --color-popover: var(--color-popover);
+  --color-popover-foreground: var(--color-popover-foreground);
   --radius-lg: var(--radius-lg);
   --radius-md: var(--radius-md);
   --radius-sm: var(--radius-sm);
@@ -56,10 +117,18 @@ body {
   color: var(--color-text);
   font-family: var(--font-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* O preflight do Tailwind zera a margin do <dialog>, o que quebra a centralização
    nativa do navegador ao abrir com showModal() — sem isso ele cola no canto superior esquerdo. */
 dialog {
   margin: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

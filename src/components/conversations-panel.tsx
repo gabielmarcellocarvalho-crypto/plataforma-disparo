@@ -1,9 +1,16 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { takeOverConversation, resolveAttention, sendManualMessage } from "@/app/actions/conversations";
+import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
 
-type Contact = { id: string; name: string | null; phone: string | null; needs_attention: boolean; attention_reason: string | null };
+type Contact = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  needs_attention: boolean;
+  attention_reason: string | null;
+  flagged_reason: string | null;
+};
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
 type Message = { id: string; contact_id: string; agent_id: string | null; role: string; content: string; created_at: string };
 
@@ -49,6 +56,24 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
     startTransition(async () => {
       const result = await resolveAttention(contactId);
       if (result.error) setError(result.error);
+    });
+  }
+
+  function handleDismissFlag(contactId: string) {
+    setError(null);
+    startTransition(async () => {
+      const result = await dismissFlag(contactId);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleClearHistory(contactId: string, agentId: string) {
+    if (!window.confirm("Apagar todo o histórico dessa conversa? O agente esquece tudo que já foi falado com esse contato. Não dá pra desfazer.")) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await clearConversationHistory(contactId, agentId);
+      if (result.error) setError(result.error);
+      else setSelectedKey(null);
     });
   }
 
@@ -104,12 +129,20 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                             <line x1="12" y1="17" x2="12" y2="17" />
                           </svg>
                         )}
+                        {!c.contact.needs_attention && c.contact.flagged_reason && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-info-text shrink-0" aria-hidden>
+                            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                            <line x1="4" y1="22" x2="4" y2="15" />
+                          </svg>
+                        )}
                         {c.contact.name || c.contact.phone || "sem nome"}
                       </span>
                       {last && <time className="text-[11px] text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
                     </div>
                     <p className="text-xs text-text-muted truncate">
-                      {c.contact.needs_attention ? c.contact.attention_reason || "Precisa de atenção" : last?.content || ""}
+                      {c.contact.needs_attention
+                        ? c.contact.attention_reason || "Precisa de atenção"
+                        : c.contact.flagged_reason || last?.content || ""}
                     </p>
                   </div>
                 </button>
@@ -134,6 +167,15 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
               </div>
               <button
                 type="button"
+                onClick={() => handleClearHistory(selected.contact.id, selected.agent.id)}
+                disabled={pending}
+                title="Apaga o histórico dessa conversa (o agente esquece tudo)"
+                className="text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60"
+              >
+                Limpar conversa
+              </button>
+              <button
+                type="button"
                 onClick={() => (selected.contact.needs_attention ? handleResolve(selected.contact.id) : handleTakeOver(selected.contact.id))}
                 disabled={pending}
                 className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 ${
@@ -147,6 +189,20 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
             {selected.contact.needs_attention && (
               <div className="bg-warning-soft text-warning-text text-xs font-semibold px-4 py-2">
                 {selected.contact.attention_reason || "Conversa assumida manualmente."} O agente não responde até você devolver.
+              </div>
+            )}
+
+            {!selected.contact.needs_attention && selected.contact.flagged_reason && (
+              <div className="bg-info-soft text-info-text text-xs font-semibold px-4 py-2 flex items-center justify-between gap-3">
+                <span>{selected.contact.flagged_reason} O agente continua respondendo normalmente.</span>
+                <button
+                  type="button"
+                  onClick={() => handleDismissFlag(selected.contact.id)}
+                  disabled={pending}
+                  className="underline shrink-0 cursor-pointer disabled:opacity-60"
+                >
+                  Dispensar
+                </button>
               </div>
             )}
 

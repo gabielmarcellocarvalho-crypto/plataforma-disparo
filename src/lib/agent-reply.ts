@@ -7,6 +7,23 @@ const ATTENTION_TAG = /\[\[PRECISA_HUMANO\]\]/i;
 // Tag de classificação de status da conversa (ex.: [[STATUS: interessado]]) — o prompt do agente
 // instrui a sempre incluir isso, mas é só pra uso interno; nunca deveria chegar no texto pro cliente.
 const STATUS_TAG = /\[\[STATUS:\s*[a-zà-ú]+\s*\]\]/i;
+// Dados que o agente coletou do contato (config "informações que preciso") — vira update em
+// contacts.custom_fields. Formato: [[DADOS: chave=valor; chave2=valor2]].
+const DADOS_TAG = /\[\[DADOS:\s*([^\]]*)\]\]/i;
+
+function parseCollectedData(text: string): Record<string, string> {
+  const match = text.match(DADOS_TAG);
+  if (!match) return {};
+  const data: Record<string, string> = {};
+  for (const pair of match[1].split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx === -1) continue;
+    const key = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (key && value) data[key] = value;
+  }
+  return data;
+}
 
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 
@@ -21,6 +38,7 @@ export type AgentReplyContact = {
 export type AgentReply = {
   reply: string;
   needsHuman: boolean;
+  collectedData: Record<string, string>;
   inputTokens: number;
   outputTokens: number;
   cacheCreationInputTokens: number;
@@ -43,7 +61,8 @@ export async function generateReply(
   history: ConversationMessage[],
   currentImages: AgentImage[] = [],
   tools: Anthropic.Tool[] = [],
-  executeTool?: ToolExecutor
+  executeTool?: ToolExecutor,
+  knowledgeText?: string
 ): Promise<AgentReply> {
   const camposExtras = contact.custom_fields && Object.keys(contact.custom_fields).length
     ? ` Dados adicionais: ${JSON.stringify(contact.custom_fields)}.`
@@ -72,6 +91,19 @@ export async function generateReply(
     ...historyMessages,
   ];
 
+  // Bloco separado (cache próprio) pra material de estudo — nunca repetir isso literalmente pro
+  // cliente, é só referência interna do agente sobre a empresa.
+  const systemBlocks: Anthropic.TextBlockParam[] = [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
+  if (knowledgeText) {
+    systemBlocks.push({
+      type: "text",
+      text:
+        "Material de estudo sobre a empresa (referência interna pra responder com mais precisão — nunca cite isso " +
+        `literalmente nem diga "de acordo com meus arquivos"):\n\n${knowledgeText}`,
+      cache_control: { type: "ephemeral" },
+    });
+  }
+
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheCreationInputTokens = 0;
@@ -84,7 +116,7 @@ export async function generateReply(
       model: MODEL,
       max_tokens: 2048,
       thinking: { type: "adaptive" },
-      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      system: systemBlocks,
       messages,
       ...(tools.length ? { tools } : {}),
     });
@@ -98,6 +130,7 @@ export async function generateReply(
       return {
         reply: "Vou confirmar isso com a equipe e já retorno.",
         needsHuman: true,
+        collectedData: {},
         inputTokens,
         outputTokens,
         cacheCreationInputTokens,
@@ -135,7 +168,8 @@ export async function generateReply(
   }
 
   needsHuman = needsHuman || ATTENTION_TAG.test(finalText);
-  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").trim();
+  const collectedData = parseCollectedData(finalText);
+  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").trim();
 
-  return { reply: finalText, needsHuman, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
+  return { reply: finalText, needsHuman, collectedData, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
 }

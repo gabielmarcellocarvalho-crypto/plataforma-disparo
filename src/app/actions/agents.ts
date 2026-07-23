@@ -5,13 +5,20 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, fetchQrCode, fetchInstanceInfo, agentInstanceNameFor } from "@/lib/evolution";
+import { buildSystemPrompt, normalizeAgentConfig, type AgentConfig } from "@/lib/agent-prompt";
+import { extractKnowledgeText } from "@/lib/agent-knowledge";
+import { MAX_TOTAL_CHARS } from "@/lib/agent-knowledge-limits";
 
 export type CreateAgentState = { error: string | null; ok?: boolean };
 
 export async function createAgent(_prevState: CreateAgentState, formData: FormData): Promise<CreateAgentState> {
   const name = String(formData.get("name") || "").trim();
-  const systemPrompt = String(formData.get("system_prompt") || "").trim();
   if (!name) return { error: "Informe o nome do agente." };
+
+  const config = normalizeAgentConfig({
+    companyName: String(formData.get("company_name") || "").trim(),
+    businessType: String(formData.get("business_type") || "").trim(),
+  });
 
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -26,7 +33,8 @@ export async function createAgent(_prevState: CreateAgentState, formData: FormDa
       id: agentId,
       workspace_id: workspace.id,
       name,
-      system_prompt: systemPrompt,
+      system_prompt: buildSystemPrompt(config),
+      config,
       evolution_instance_name: agentInstanceNameFor(agentId),
     })
     .select("id")
@@ -78,11 +86,18 @@ export async function refreshAgentStatus(agentId: string) {
   revalidatePath("/agentes");
 }
 
-export async function updateAgentPrompt(agentId: string, systemPrompt: string): Promise<{ error: string | null }> {
+// O prompt final vem explícito (o operador pode editar o texto gerado à mão antes de salvar) —
+// nunca recalculamos por conta própria aqui, senão uma edição manual seria perdida na próxima save.
+export async function updateAgentConfig(agentId: string, rawConfig: AgentConfig, systemPrompt: string): Promise<{ error: string | null }> {
+  const config = normalizeAgentConfig(rawConfig);
+  const prompt = systemPrompt.trim();
+  if (!prompt) return { error: "O prompt final não pode ficar vazio." };
+
   const supabase = await createClient();
-  const { error } = await supabase.from("agents").update({ system_prompt: systemPrompt }).eq("id", agentId);
-  if (error) return { error: "Não foi possível salvar o prompt." };
+  const { error } = await supabase.from("agents").update({ config, system_prompt: prompt }).eq("id", agentId);
+  if (error) return { error: "Não foi possível salvar a configuração." };
   revalidatePath("/agentes");
+  revalidatePath(`/agentes/${agentId}`);
   return { error: null };
 }
 
@@ -175,6 +190,63 @@ export async function uploadAgentMedia(agentId: string, category: string, formDa
   if (count === 0) return { error: "Não foi possível subir as fotos." };
   revalidatePath("/agentes");
   return { error: null, count };
+}
+
+export type UploadKnowledgeResult = { error: string | null; count?: number };
+
+// Material de estudo (PDF/planilha/texto) — extrai o texto e guarda como contexto do agente.
+// Nunca é enviado ao cliente; só entra num bloco extra do prompt (ver src/lib/agent-reply.ts).
+export async function uploadAgentKnowledge(agentId: string, formData: FormData): Promise<UploadKnowledgeResult> {
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { error: "Selecione pelo menos um arquivo." };
+
+  const supabase = await createClient();
+  const [{ data: agent }, { data: existing }] = await Promise.all([
+    supabase.from("agents").select("workspace_id").eq("id", agentId).maybeSingle(),
+    supabase.from("agent_knowledge").select("char_count").eq("agent_id", agentId),
+  ]);
+  if (!agent) return { error: "Agente não encontrado." };
+
+  let totalChars = (existing || []).reduce((sum, r) => sum + r.char_count, 0);
+  let count = 0;
+  const errors: string[] = [];
+  for (const file of files) {
+    if (totalChars >= MAX_TOTAL_CHARS) {
+      errors.push(`${file.name}: limite total de material de estudo desse agente já foi atingido (~${Math.round(MAX_TOTAL_CHARS / 1000)}k caracteres). Remova algo antes de adicionar mais.`);
+      continue;
+    }
+    const { text, error } = await extractKnowledgeText(file);
+    if (error || !text) {
+      errors.push(`${file.name}: ${error || "vazio"}`);
+      continue;
+    }
+    const remaining = MAX_TOTAL_CHARS - totalChars;
+    const finalText = text.length > remaining ? text.slice(0, remaining) + "\n\n[conteúdo truncado — limite total do agente]" : text;
+    const { error: insErr } = await supabase.from("agent_knowledge").insert({
+      agent_id: agentId,
+      workspace_id: agent.workspace_id,
+      file_name: file.name,
+      content: finalText,
+      char_count: finalText.length,
+    });
+    if (!insErr) {
+      count++;
+      totalChars += finalText.length;
+    } else errors.push(`${file.name}: erro ao salvar`);
+  }
+
+  if (count === 0) return { error: errors.join("; ") || "Não foi possível processar os arquivos." };
+  revalidatePath("/agentes");
+  revalidatePath(`/agentes/${agentId}`);
+  return { error: errors.length ? errors.join("; ") : null, count };
+}
+
+export async function deleteAgentKnowledge(id: string): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("agent_knowledge").delete().eq("id", id);
+  if (error) return { error: "Não foi possível remover." };
+  revalidatePath("/agentes");
+  return { error: null };
 }
 
 export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {

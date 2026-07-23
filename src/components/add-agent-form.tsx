@@ -34,7 +34,8 @@ export function AddAgentForm() {
           <div>
             <h2 className="text-lg font-extrabold">Adicionar agente</h2>
             <p className="text-xs text-text-muted mt-1">
-              Cada agente conecta o próprio número de WhatsApp e responde sozinho seguindo o prompt abaixo.
+              Cada agente conecta o próprio número de WhatsApp e responde sozinho. A configuração completa
+              (tom, horários, dados a coletar) fica disponível no card depois de criar.
             </p>
           </div>
 
@@ -52,15 +53,26 @@ export function AddAgentForm() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="agent-prompt" className="text-sm font-semibold">
-              Prompt (pode editar depois)
+            <label htmlFor="agent-company" className="text-sm font-semibold">
+              Nome da empresa
             </label>
-            <textarea
-              id="agent-prompt"
-              name="system_prompt"
-              rows={6}
-              placeholder="Instruções de como esse agente deve conduzir a conversa…"
-              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary resize-y font-mono"
+            <input
+              id="agent-company"
+              name="company_name"
+              placeholder="Ex: Hotel Fazenda Ecoville"
+              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="agent-business-type" className="text-sm font-semibold">
+              Tipo de negócio
+            </label>
+            <input
+              id="agent-business-type"
+              name="business_type"
+              placeholder="Ex: hotel fazenda, clínica odontológica"
+              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
             />
           </div>
 

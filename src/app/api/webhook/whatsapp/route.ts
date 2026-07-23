@@ -4,12 +4,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
 import { generateReply, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
+import { normalizeAgentConfig } from "@/lib/agent-prompt";
 
 // Ferramentas disponíveis pro agente. `enviar_foto` já funciona ponta a ponta (biblioteca de
 // mídia por agente). gerar_link_pagamento e consultar_disponibilidade são os pontos de
 // integração externa por cliente (gateway de pagamento / PMS) — adicionar como novas tools aqui.
-// A lista de pastas (categorias) entra na descrição pra o modelo escolher uma que existe de fato.
-function buildAgentTools(categories: string[]): Anthropic.Tool[] {
+// A lista de pastas (categorias) entra na descrição pra o modelo escolher uma que existe de fato,
+// junto com a nota de "quando usar" configurada no formulário do agente (varia muito por agente).
+function buildAgentTools(categories: string[], folderNotes: Record<string, string>): Anthropic.Tool[] {
+  const listado = categories.map((c) => (folderNotes[c] ? `${c} (usar quando: ${folderNotes[c]})` : c)).join("; ");
   return [
     {
       name: "enviar_arquivo",
@@ -17,8 +20,8 @@ function buildAgentTools(categories: string[]): Anthropic.Tool[] {
         "Envia um ou mais arquivos (fotos ou documentos/PDF) pro cliente no WhatsApp. Use quando o " +
         "cliente pedir pra ver algo (fotos de quartos/áreas, cardápio, tabela de pacotes em PDF, etc.) " +
         "ou quando mostrar o arquivo ajudar a converter. " +
-        `Pastas disponíveis: ${categories.join(", ")}. ` +
-        "Passe em 'categoria' exatamente uma dessas pastas. Não prometa arquivo de pasta que não existe na lista.",
+        `Pastas disponíveis: ${listado}. ` +
+        "Passe em 'categoria' exatamente o nome de uma dessas pastas. Não prometa arquivo de pasta que não existe na lista.",
       input_schema: {
         type: "object",
         properties: {
@@ -30,21 +33,39 @@ function buildAgentTools(categories: string[]): Anthropic.Tool[] {
   ];
 }
 
-function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string): ToolExecutor {
+// Universal (qualquer agente com biblioteca de mídia): nunca reenvia o mesmo arquivo pro mesmo
+// contato duas vezes na conversa — registra em contact_media_sent o que já foi mandado.
+function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string, contactId: string): ToolExecutor {
   return async (name, input) => {
     if (name === "enviar_arquivo") {
       const categoria = String(input.categoria || "").trim();
       if (!categoria) return "Informe qual categoria de arquivo enviar.";
       const { data: media } = await supabase
         .from("agent_media")
-        .select("url, caption, category, media_type, file_name")
+        .select("id, url, caption, category, media_type, file_name")
         .eq("agent_id", agent.id)
         .ilike("category", `%${categoria}%`)
-        .limit(5);
+        .limit(20);
       if (!media || media.length === 0) {
         return `Nenhum arquivo cadastrado para "${categoria}". Não invente que enviou; ofereça outra opção ou diga que vai verificar.`;
       }
-      for (const m of media) {
+
+      const { data: sentRows } = await supabase
+        .from("contact_media_sent")
+        .select("agent_media_id")
+        .eq("contact_id", contactId)
+        .in(
+          "agent_media_id",
+          media.map((m) => m.id)
+        );
+      const alreadySent = new Set((sentRows || []).map((r) => r.agent_media_id));
+      const novos = media.filter((m) => !alreadySent.has(m.id)).slice(0, 5);
+
+      if (novos.length === 0) {
+        return `Todos os arquivos da pasta "${categoria}" já foram enviados antes nessa mesma conversa. Não envie de novo — se o cliente pedir de novo, diga que já mandou antes.`;
+      }
+
+      for (const m of novos) {
         const mediatype = m.media_type === "document" ? "document" : "image";
         await sendMedia(agent.evolution_instance_name, phone, m.url, {
           caption: m.caption || undefined,
@@ -52,7 +73,13 @@ function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string): T
           fileName: m.file_name || undefined,
         }).catch((e) => console.error("Erro ao enviar arquivo:", e));
       }
-      return `${media.length} arquivo(s) da categoria "${categoria}" enviado(s) ao cliente.`;
+      await supabase.from("contact_media_sent").upsert(novos.map((m) => ({ contact_id: contactId, agent_media_id: m.id })));
+
+      const puladas = media.length - novos.length;
+      return (
+        `${novos.length} arquivo(s) novo(s) da categoria "${categoria}" enviado(s) ao cliente.` +
+        (puladas > 0 ? ` (${puladas} já tinham sido enviados antes nessa conversa e foram pulados.)` : "")
+      );
     }
     return `Ferramenta "${name}" não implementada.`;
   };
@@ -174,7 +201,7 @@ async function processWebhook(body: {
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds")
+    .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds")
     .eq("evolution_instance_name", instanceName)
     .maybeSingle();
 
@@ -223,6 +250,7 @@ type Agent = {
   id: string;
   workspace_id: string;
   system_prompt: string;
+  config: unknown;
   status: string;
   evolution_instance_name: string;
   reply_delay_min_seconds: number;
@@ -298,17 +326,29 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
   const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
   const categories = [...new Set((mediaCats || []).map((m) => m.category))];
-  const tools = categories.length ? buildAgentTools(categories) : [];
-  const executor = categories.length ? makeToolExecutor(supabase, agent, phone) : undefined;
+  const { mediaFolderNotes } = normalizeAgentConfig(agent.config);
+  const tools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
+  const executor = categories.length ? makeToolExecutor(supabase, agent, phone, contact.id) : undefined;
 
-  const { reply, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
+  const { data: knowledgeRows } = await supabase.from("agent_knowledge").select("file_name, content").eq("agent_id", agent.id);
+  const knowledgeText = knowledgeRows?.length
+    ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n")
+    : undefined;
+
+  const { reply, needsHuman, collectedData, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
     images,
     tools,
-    executor
+    executor,
+    knowledgeText
   );
+
+  if (Object.keys(collectedData).length) {
+    const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };
+    await supabase.from("contacts").update({ custom_fields: merged }).eq("id", contact.id);
+  }
 
   if (reply) {
     // O agente respondeu — não marca atenção humana mesmo que ele tenha sido cauteloso no texto.
@@ -324,6 +364,15 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
       cache_creation_input_tokens: cacheCreationInputTokens,
       cache_read_input_tokens: cacheReadInputTokens,
     });
+
+    // O agente sinalizou [[PRECISA_HUMANO]] mas continuou respondendo normalmente (nunca revela isso
+    // ao cliente) — só acende um alerta em Conversas pra equipe revisar, sem mutar o agente.
+    if (needsHuman) {
+      await supabase
+        .from("contacts")
+        .update({ flagged_reason: "O agente sinalizou que essa conversa pode precisar de atenção humana." })
+        .eq("id", contact.id);
+    }
 
     // Delay humanizado antes de responder — evita a sensação de bot respondendo instantâneo.
     const { reply_delay_min_seconds: min, reply_delay_max_seconds: max } = agent;

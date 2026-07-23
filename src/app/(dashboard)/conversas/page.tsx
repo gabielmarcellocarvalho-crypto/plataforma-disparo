@@ -34,7 +34,7 @@ export default async function ConversasPage() {
     contactIds.length > 0
       ? await supabase
           .from("contacts")
-          .select("id, name, phone, needs_attention, attention_reason")
+          .select("id, name, phone, needs_attention, attention_reason, flagged_reason")
           .in("id", contactIds)
       : { data: [] };
 
@@ -57,6 +57,9 @@ export default async function ConversasPage() {
 
   const conversations = Array.from(conversationsByKey.values()).sort((a, b) => {
     if (a.contact.needs_attention !== b.contact.needs_attention) return a.contact.needs_attention ? -1 : 1;
+    const aFlag = Boolean(a.contact.flagged_reason);
+    const bFlag = Boolean(b.contact.flagged_reason);
+    if (aFlag !== bFlag) return aFlag ? -1 : 1;
     return (b.messages[0]?.created_at || "").localeCompare(a.messages[0]?.created_at || "");
   });
 

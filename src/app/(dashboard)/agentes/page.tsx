@@ -11,13 +11,11 @@ export default async function AgentesPage() {
   const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: agents }, { data: attentionContacts }, { data: usageRows }, { data: mediaRows }] = workspace
+  const [{ data: agents }, { data: attentionContacts }, { data: usageRows }] = workspace
     ? await Promise.all([
         supabase
           .from("agents")
-          .select(
-            "id, name, system_prompt, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds"
-          )
+          .select("id, name, evolution_instance_name, phone_number, photo_url, connection_status, status")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
         supabase
@@ -31,13 +29,8 @@ export default async function AgentesPage() {
           .select("agent_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
           .eq("workspace_id", workspace.id)
           .not("agent_id", "is", null),
-        supabase
-          .from("agent_media")
-          .select("id, agent_id, category, url, caption, media_type, file_name")
-          .eq("workspace_id", workspace.id)
-          .order("created_at", { ascending: true }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }];
 
   // Soma tokens por agente e converte pra custo estimado em USD (mesma tabela de preço da calculadora).
   const costByAgent = new Map<string, number>();
@@ -50,22 +43,6 @@ export default async function AgentesPage() {
       cacheReadInputTokens: row.cache_read_input_tokens || 0,
     });
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
-  }
-
-  // Agrupa a biblioteca de arquivos por agente.
-  type MediaRow = {
-    id: string;
-    category: string;
-    url: string;
-    caption: string | null;
-    media_type: string;
-    file_name: string | null;
-  };
-  const mediaByAgent = new Map<string, MediaRow[]>();
-  for (const m of mediaRows || []) {
-    const list = mediaByAgent.get(m.agent_id) || [];
-    list.push({ id: m.id, category: m.category, url: m.url, caption: m.caption, media_type: m.media_type, file_name: m.file_name });
-    mediaByAgent.set(m.agent_id, list);
   }
 
   return (
@@ -94,9 +71,7 @@ export default async function AgentesPage() {
             <AgentCard
               key={agent.id}
               agent={agent}
-              model={ANTHROPIC_MODEL}
               totalCostUsd={costByAgent.get(agent.id) || 0}
-              media={mediaByAgent.get(agent.id) || []}
               canManage={isColaborador}
             />
           ))}
