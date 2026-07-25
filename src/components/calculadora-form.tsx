@@ -115,7 +115,7 @@ export function CalculadoraForm({
   const [clientesNaVps, setClientesNaVps] = useState(1);
   const [mensagensOficiais, setMensagensOficiais] = useState(0);
   const [taxaFixaOficial, setTaxaFixaOficial] = useState(0);
-  const [taxaPorMsgOficial, setTaxaPorMsgOficial] = useState(0.027);
+  const [taxaPorMsgOficial, setTaxaPorMsgOficial] = useState(0.037); // estimativa Meta Brasil (~0,68¢ USD); tarifa oficial de out sai até 01/09
   const [salvando, startSalvar] = useTransition();
   const [estimateStatus, setEstimateStatus] = useState<string | null>(null);
 
@@ -276,20 +276,21 @@ export function CalculadoraForm({
           <div>
             <h3 className="font-bold text-[15px]">WhatsApp Oficial (360dialog)</h3>
             <p className="text-xs text-text-muted mt-1 max-w-prose">
-              Diferente da VPS e do Resend, isso <strong>não é rateado</strong> — é um custo fixo por número/cliente conectado no BSP.
-              Já entra somado na estimativa total abaixo. Deixe a taxa fixa em R$ 0 se esse cliente não usa API oficial.
+              Diferente da VPS e do Resend, isso <strong>não é rateado</strong> — é por cliente. São dois custos: a
+              <strong> licença fixa do 360dialog</strong> por número (sem markup) e a <strong>tarifa de entrega da Meta</strong> por
+              mensagem cobrável, que o 360dialog só repassa a custo. Deixe a licença em R$ 0 se esse cliente não usa API oficial.
             </p>
           </div>
 
           <div className="grid sm:grid-cols-3 gap-3">
-            <NumberField label="Mensagens/mês (esse cliente)" value={mensagensOficiais} onChange={setMensagensOficiais} />
-            <NumberField label="Taxa fixa mensal do BSP (R$)" value={taxaFixaOficial} onChange={setTaxaFixaOficial} />
-            <DecimalField label="Taxa por mensagem do BSP (R$)" value={taxaPorMsgOficial} onChange={setTaxaPorMsgOficial} />
+            <NumberField label="Mensagens cobráveis/mês (fora das janelas grátis)" value={mensagensOficiais} onChange={setMensagensOficiais} />
+            <NumberField label="Licença 360dialog (R$/mês por número)" value={taxaFixaOficial} onChange={setTaxaFixaOficial} />
+            <DecimalField label="Tarifa de entrega Meta (R$/msg)" value={taxaPorMsgOficial} onChange={setTaxaPorMsgOficial} />
           </div>
 
           <div className="border-t border-border pt-3 flex flex-col gap-1">
             <div className="flex justify-between text-sm">
-              <span className="text-text-muted">Fixo + variável</span>
+              <span className="text-text-muted">Licença fixa + entrega Meta</span>
               <span className="font-bold">
                 R$ {oficial.custoFixoBrl.toFixed(2)} + R$ {oficial.custoVariavelBrl.toFixed(2)}
               </span>
@@ -299,7 +300,7 @@ export function CalculadoraForm({
               <span className="font-bold text-primary-strong">R$ {oficial.custoTotalMensalBrl.toFixed(2)}/mês</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-text-muted">≈ por mensagem</span>
+              <span className="text-text-muted">≈ entrega Meta por mensagem</span>
               <span className="font-bold">R$ {oficial.custoPorMensagemBrl.toFixed(4)}</span>
             </div>
             <p className="text-xs text-text-muted mt-1">{oficial.observacao}</p>
@@ -314,7 +315,7 @@ export function CalculadoraForm({
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
         <h3 className="font-bold text-[15px] mb-1">Qual conector usar pra cada cliente</h3>
-        <p className="text-xs text-text-muted mb-4">Comparativo de referência — só a Evolution API está de fato implementada na plataforma hoje.</p>
+        <p className="text-xs text-text-muted mb-4">Comparativo de referência pra escolher o canal por cliente.</p>
         <div className="grid md:grid-cols-2 gap-4">
           {CONNECTOR_GUIDES.map((c) => (
             <div key={c.nome} className="border border-border rounded-md p-4 flex flex-col gap-2">

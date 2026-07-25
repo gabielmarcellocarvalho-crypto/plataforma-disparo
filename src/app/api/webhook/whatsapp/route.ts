@@ -250,6 +250,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Garante no máximo `max` bolhas — se o modelo quebrou demais, junta o excedente na última bolha
+// (não descarta texto). `max` já vem saneado (1..4) pela normalizeAgentConfig.
+function capBubbles(parts: string[], max: number): string[] {
+  if (parts.length <= max) return parts;
+  const kept = parts.slice(0, max - 1);
+  const rest = parts.slice(max - 1).join("\n");
+  return [...kept, rest];
+}
+
 type AdminClient = ReturnType<typeof createAdminClient>;
 type Agent = {
   id: string;
@@ -331,7 +340,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
   const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
   const categories = [...new Set((mediaCats || []).map((m) => m.category))];
-  const { mediaFolderNotes } = normalizeAgentConfig(agent.config);
+  const { mediaFolderNotes, maxBubbles } = normalizeAgentConfig(agent.config);
   const tools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
   const executor = categories.length ? makeToolExecutor(supabase, agent, phone, contact.id) : undefined;
 
@@ -340,7 +349,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n")
     : undefined;
 
-  const { replyParts, needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
+  const gen = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
@@ -349,6 +358,11 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     executor,
     knowledgeText
   );
+  const { needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = gen;
+
+  // Cap de bolhas (custo): a Meta cobra por mensagem enviada a partir de 01/10/2026, então se o modelo
+  // quebrou em mais bolhas que o configurado, junta o excedente na última em vez de mandar cobrança extra.
+  const replyParts = capBubbles(gen.replyParts, maxBubbles);
 
   if (Object.keys(collectedData).length) {
     const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };

@@ -149,18 +149,23 @@ export type OfficialWhatsappEstimate = {
   observacao: string;
 };
 
-// API oficial via BSP (360dialog) — AO CONTRÁRIO da VPS/Resend, isso NÃO é rateado entre clientes:
-// é uma taxa fixa mensal por número/WABA conectado + uma taxa por mensagem de plataforma, cobrada
-// por cliente. Cada cliente novo na API oficial soma esse valor inteiro, não divide com os outros.
+// API oficial via BSP (360dialog) — AO CONTRÁRIO da VPS/Resend, isso NÃO é rateado entre clientes.
+// São DOIS custos distintos, ambos por cliente:
+//  1. Licença mensal fixa do 360dialog por número hospedado (o BSP cobra só isso de "próprio"; sem
+//     markup, sem comissão, sem taxa por conversa/mensagem — a doc deles é explícita nisso).
+//  2. Tarifa de entrega da Meta por mensagem cobrável, REPASSADA a custo pelo 360dialog (cliente paga
+//     o 360dialog, o 360dialog paga a Meta). Só incide em mensagem cobrável: template sempre, e
+//     mensagem de serviço a partir de 01/10/2026. Dentro das janelas grátis (24h até out/2026, e as
+//     72h do entry point de anúncio CTWA) essa tarifa é ZERO — por isso é editável por cenário.
 export function estimateOfficialWhatsappCost(
-  mensagensPorMes: number,
-  taxaFixaMensalBrl: number,
-  taxaPorMensagemBrl: number
+  mensagensCobraveisPorMes: number,
+  licencaFixaMensalBrl: number,
+  tarifaEntregaMetaPorMsgBrl: number
 ): OfficialWhatsappEstimate {
-  const custoFixoBrl = Math.max(0, taxaFixaMensalBrl);
-  const custoVariavelBrl = Math.max(0, mensagensPorMes) * Math.max(0, taxaPorMensagemBrl);
+  const custoFixoBrl = Math.max(0, licencaFixaMensalBrl);
+  const custoVariavelBrl = Math.max(0, mensagensCobraveisPorMes) * Math.max(0, tarifaEntregaMetaPorMsgBrl);
   const custoTotalMensalBrl = custoFixoBrl + custoVariavelBrl;
-  const custoPorMensagemBrl = mensagensPorMes > 0 ? custoTotalMensalBrl / mensagensPorMes : 0;
+  const custoPorMensagemBrl = mensagensCobraveisPorMes > 0 ? custoVariavelBrl / mensagensCobraveisPorMes : 0;
 
   return {
     custoFixoBrl: Math.round(custoFixoBrl * 100) / 100,
@@ -168,9 +173,9 @@ export function estimateOfficialWhatsappCost(
     custoTotalMensalBrl: Math.round(custoTotalMensalBrl * 100) / 100,
     custoPorMensagemBrl: Math.round(custoPorMensagemBrl * 10000) / 10000,
     observacao:
-      "Custo só desse cliente — diferente da VPS/Resend, o BSP cobra por número conectado, não divide com outros clientes. " +
-      "Ainda não confirmado com o 360dialog se a taxa por mensagem incide também sobre as mensagens de serviço (grátis pra Meta) — " +
-      "essa conta assume que sim, por segurança.",
+      "Licença do 360dialog é fixa por número (sem markup — o BSP só repassa a tarifa da Meta a custo). " +
+      "A tarifa de entrega por mensagem é da Meta: só conta pra mensagem cobrável (template, e serviço a partir de 01/10/2026) — " +
+      "dentro das janelas grátis (24h até out/2026, e 72h do entry point de anúncio CTWA) é zero. Tarifa Brasil de outubro só sai até 01/09/2026.",
   };
 }
 
@@ -233,8 +238,8 @@ export const CONNECTOR_GUIDES: ConnectorGuide[] = [
     indicadoPara: "Atendimento contínuo com cliente pagante, volume alto, ou operação que não pode correr risco de bloqueio.",
     risco: "Não tem risco de bloqueio por detecção — mas tem restrição por política (nota de qualidade, templates aprovados) se usada fora das regras da Meta.",
     custo:
-      "Mensagem de serviço (resposta dentro de 24h) é grátis pra Meta, mas o 360dialog cobra ~R$265/mês fixo por número + ~R$0,027/msg de plataforma — " +
-      "por CLIENTE, não é rateado como a VPS. Processo de verificação de negócio na Meta.",
+      "360dialog cobra só a licença fixa (~R$265/mês por número), sem markup — repassa a tarifa da Meta a custo. " +
+      "A Meta cobra entrega por mensagem de serviço a partir de 01/10/2026 (~R$0,037/msg no Brasil, zero dentro das 72h de anúncio CTWA). Por CLIENTE, não rateado.",
     implementado: false,
   },
 ];

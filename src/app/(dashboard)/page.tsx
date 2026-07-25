@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { MessagesAreaChart } from "@/components/charts/messages-area-chart";
+import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
 
 const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 
@@ -19,7 +20,7 @@ function StatCard({ label, value, icon }: { label: string; value: number | strin
 }
 
 export default async function OverviewPage() {
-  const { workspace } = await getCurrentWorkspace();
+  const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const now = new Date();
@@ -63,12 +64,54 @@ export default async function OverviewPage() {
     mensagens: c,
   }));
 
+  // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
+  let costAlert: { ratioPct: number; costBrl: number; budgetBrl: number } | null = null;
+  if (workspace && isColaborador) {
+    const { data: budgetRow } = await supabase
+      .from("workspaces")
+      .select("monthly_cost_budget_brl, cost_alert_pct")
+      .eq("id", workspace.id)
+      .maybeSingle();
+    if (budgetRow?.monthly_cost_budget_brl) {
+      const costUsd = await getMonthToDateAgentCostUsd(workspace.id);
+      const status = evalCostBudget(costUsd, budgetRow.monthly_cost_budget_brl, budgetRow.cost_alert_pct ?? 80);
+      if (status.isOver && status.ratioPct !== null && status.budgetBrl !== null) {
+        costAlert = { ratioPct: status.ratioPct, costBrl: status.costBrl, budgetBrl: status.budgetBrl };
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-[26px] font-extrabold tracking-tight">Visão geral</h1>
         <p className="text-text-muted text-sm mt-1">Resumo de {workspace?.name ?? "—"}.</p>
       </div>
+
+      {costAlert && (
+        <a
+          href="/metricas"
+          className={`flex items-center gap-3 rounded-2xl px-5 py-4 border ${
+            costAlert.ratioPct >= 100 ? "bg-danger-soft border-danger/30" : "bg-warning-soft border-warning-text/20"
+          }`}
+        >
+          <span className={`grid place-items-center w-9 h-9 rounded-xl shrink-0 ${costAlert.ratioPct >= 100 ? "text-danger" : "text-warning-text"}`} aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12" y2="17" />
+            </svg>
+          </span>
+          <div className={costAlert.ratioPct >= 100 ? "text-danger" : "text-warning-text"}>
+            <p className="text-sm font-bold">
+              Custo de IA em {costAlert.ratioPct.toFixed(0)}% do orçamento do mês
+            </p>
+            <p className="text-xs font-semibold opacity-80">
+              R$ {costAlert.costBrl.toFixed(2)} de R$ {costAlert.budgetBrl.toFixed(2)} — ver detalhes em Métricas.
+            </p>
+          </div>
+        </a>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard

@@ -53,6 +53,29 @@ export async function saveVolumeEstimate(
   return { error: null };
 }
 
+// Orçamento mensal de custo de IA + limite de alerta (%) — colaborador define por workspace.
+// Alimenta o alerta na Visão geral/Métricas. budget null/0 = desliga o alerta desse cliente.
+export async function saveCostBudget(
+  workspaceId: string,
+  budgetBrl: number | null,
+  thresholdPct: number
+): Promise<SaveEstimateResult> {
+  const budget = budgetBrl && budgetBrl > 0 ? budgetBrl : null;
+  const pct = Math.min(100, Math.max(1, Math.round(thresholdPct || 80)));
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ monthly_cost_budget_brl: budget, cost_alert_pct: pct })
+    .eq("id", workspaceId);
+
+  if (error) return { error: "Não foi possível salvar o orçamento." };
+
+  revalidatePath("/metricas");
+  revalidatePath("/");
+  return { error: null };
+}
+
 // Volta a usar o volume real (fila de campanhas) desse workspace na conta, descartando a estimativa manual.
 export async function clearVolumeEstimate(workspaceId: string): Promise<SaveEstimateResult> {
   const supabase = await createClient();

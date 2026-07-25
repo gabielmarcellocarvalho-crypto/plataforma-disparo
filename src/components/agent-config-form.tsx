@@ -41,7 +41,7 @@ function ToneField({ value, onChange }: { value: AgentConfig["tone"]; onChange: 
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-bold text-text-muted">Tom de voz</span>
       <div className="flex gap-2">
-        {(["formal", "informal"] as const).map((opt) => (
+        {(["formal", "humanizado"] as const).map((opt) => (
           <button
             key={opt}
             type="button"
@@ -187,6 +187,28 @@ export function AgentConfigForm({
           placeholder="Ex: quando o cliente pedir desconto fora da tabela ou reclamar, passe pra um humano."
           className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary resize-y"
         />
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Máximo de mensagens por resposta</span>
+        <div className="flex gap-2">
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => set("maxBubbles", n)}
+              className={`flex-1 text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
+                config.maxBubbles === n ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+              }`}
+            >
+              {n === 1 ? "1 (mensagem única)" : `até ${n}`}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-text-muted">
+          Quebrar a resposta em várias bolhas parece mais humano, mas a partir de 01/10/2026 a Meta cobra por mensagem
+          enviada — cada bolha extra vira uma cobrança. Use 1 pra cliente de alto volume onde o custo pesa mais que o estilo.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">

@@ -31,13 +31,19 @@ export type CollectField = { key: string; label: string; mode: CollectFieldMode 
 export type AgentConfig = {
   companyName: string;
   businessType: string;
-  tone: "" | "formal" | "informal";
+  tone: "" | "formal" | "humanizado";
   address: string;
   hours: WeekHours;
   handoffBehavior: string;
   collectFields: CollectField[];
   mediaFolderNotes: Record<string, string>;
+  // Máximo de bolhas por resposta. A partir de 01/10/2026 a Meta cobra por mensagem enviada, então
+  // cada bolha extra é uma cobrança de serviço a mais — 1 = uma mensagem só (sem quebrar).
+  maxBubbles: number;
 };
+
+export const MAX_BUBBLES_DEFAULT = 3;
+export const MAX_BUBBLES_CAP = 4;
 
 export const EMPTY_AGENT_CONFIG: AgentConfig = {
   companyName: "",
@@ -48,6 +54,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   handoffBehavior: "",
   collectFields: [],
   mediaFolderNotes: {},
+  maxBubbles: MAX_BUBBLES_DEFAULT,
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -72,7 +79,8 @@ function normalizeWeekHours(raw: unknown): WeekHours {
 // texto livre, ou colunas faltando).
 export function normalizeAgentConfig(raw: unknown): AgentConfig {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const tone = r.tone === "formal" || r.tone === "informal" ? r.tone : "";
+  // "informal" era o nome antigo de "humanizado" — mantém compatibilidade com agente já salvo assim.
+  const tone = r.tone === "formal" || r.tone === "humanizado" ? r.tone : r.tone === "informal" ? "humanizado" : "";
   return {
     companyName: typeof r.companyName === "string" ? r.companyName : "",
     businessType: typeof r.businessType === "string" ? r.businessType : "",
@@ -91,7 +99,15 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
       : [],
     mediaFolderNotes:
       r.mediaFolderNotes && typeof r.mediaFolderNotes === "object" ? (r.mediaFolderNotes as Record<string, string>) : {},
+    // Agente antigo sem esse campo cai no padrão 3 (mantém o comportamento que já tinha).
+    maxBubbles: clampBubbles(r.maxBubbles),
   };
+}
+
+function clampBubbles(raw: unknown): number {
+  const n = typeof raw === "number" ? Math.floor(raw) : MAX_BUBBLES_DEFAULT;
+  if (!Number.isFinite(n)) return MAX_BUBBLES_DEFAULT;
+  return Math.min(MAX_BUBBLES_CAP, Math.max(1, n));
 }
 
 // Agrupa dias consecutivos com o mesmo horário (ex: "Segunda a sábado: 08:00–20:00. Domingo: fechado.").
@@ -131,21 +147,28 @@ export function buildSystemPrompt(config: AgentConfig): string {
       "de verdade. Nunca use travessão (—) — nenhum humano digita travessão no WhatsApp; troque por vírgula, ponto, ou " +
       "reformule a frase."
   );
-  lines.push(
-    "Seja direto e vá ao ponto — sem repetir o que o cliente já disse, sem enrolar antes de responder, sem gastar frase " +
-      "à toa. Se a resposta tiver mais de uma ideia (por exemplo, uma pergunta e depois uma explicação, ou vários itens de " +
-      "uma lista), quebre em até 3 mensagens curtas usando a marca [[NOVA_MSG]] entre elas, ao invés de mandar tudo numa " +
-      "mensagem só enorme com parágrafos — igual uma pessoa real manda várias bolhas seguidas no WhatsApp, não um bloco de texto."
-  );
+  if (config.maxBubbles <= 1) {
+    lines.push(
+      "Seja direto e vá ao ponto — sem repetir o que o cliente já disse, sem enrolar antes de responder, sem gastar frase " +
+        "à toa. Responda sempre em uma única mensagem, curta e objetiva; nunca quebre a resposta em várias mensagens."
+    );
+  } else {
+    lines.push(
+      "Seja direto e vá ao ponto — sem repetir o que o cliente já disse, sem enrolar antes de responder, sem gastar frase " +
+        `à toa. Se a resposta tiver mais de uma ideia (por exemplo, uma pergunta e depois uma explicação), quebre em até ${config.maxBubbles} ` +
+        "mensagens curtas usando a marca [[NOVA_MSG]] entre elas, ao invés de mandar tudo numa mensagem só enorme com parágrafos — " +
+        "igual uma pessoa real manda várias bolhas seguidas no WhatsApp. Quebre só quando fizer sentido; se uma mensagem curta já resolve, mande uma só."
+    );
+  }
 
   if (config.tone === "formal") {
     lines.push(
       'Tom de voz: formal e profissional. Você age claramente como um atendente representando a empresa — linguagem ' +
         'cuidada, cortês, sem gírias, sem emojis. Trate o cliente por "senhor(a)".'
     );
-  } else if (config.tone === "informal") {
+  } else if (config.tone === "humanizado") {
     lines.push(
-      "Tom de voz: bem informal — responda exatamente como uma pessoa de verdade trocando mensagem no WhatsApp, nunca " +
+      "Tom de voz: humanizado — responda exatamente como uma pessoa de verdade trocando mensagem no WhatsApp, nunca " +
         "como um atendente ou robô. Frases curtas, jeito de escrever do dia a dia (pode abreviar, começar frase com " +
         "minúscula, ser direto), sem soar automático ou institucional. Nunca use emojis. Trate o cliente por \"você\"."
     );
