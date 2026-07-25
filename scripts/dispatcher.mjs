@@ -128,6 +128,15 @@ async function dispatchOne({ campaign, recipient, contact, instanceName }) {
       .from("campaign_recipients")
       .update({ status: "enviado", sent_at: new Date().toISOString() })
       .eq("id", recipient.id);
+
+    // CRM: sem IA lendo resposta nesse canal, então só avança automaticamente o card de "não
+    // abordado" pra "abordado" no primeiro envio — dali em diante é manual (arrastar no Kanban).
+    await supabase
+      .from("contacts")
+      .update({ stage: "abordado", stage_changed_at: new Date().toISOString() })
+      .eq("id", contact.id)
+      .eq("stage", "nao_abordado");
+
     await supabase.from("messages").insert({
       workspace_id: campaign.workspace_id,
       contact_id: contact.id,

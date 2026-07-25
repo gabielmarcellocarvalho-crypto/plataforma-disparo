@@ -5,6 +5,7 @@ import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
 import { generateReply, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { normalizeAgentConfig } from "@/lib/agent-prompt";
+import { canAdvanceStage } from "@/lib/crm-stages";
 
 // Ferramentas disponíveis pro agente. `enviar_foto` já funciona ponta a ponta (biblioteca de
 // mídia por agente). gerar_link_pagamento e consultar_disponibilidade são os pontos de
@@ -87,6 +88,10 @@ function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string, co
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
+// Intervalo entre bolhas de uma mesma resposta (quando o agente quebra em várias mensagens) —
+// bem mais curto que o delay de "pensar" antes da primeira, só pra não parecer instantâneo/colado.
+const BUBBLE_GAP_MS = 1100;
+const BUBBLE_GAP_JITTER_MS = 1400;
 
 // Resposta roda em background após o 200 já ter sido devolvido pra Evolution — mas ainda dentro
 // da mesma invocação serverless, incluindo o delay humanizado + a chamada da Anthropic. Aumenta o
@@ -261,7 +266,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir.
   let { data: contact } = await supabase
     .from("contacts")
-    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention")
+    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage")
     .eq("workspace_id", agent.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -270,7 +275,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     const { data: created } = await supabase
       .from("contacts")
       .insert({ workspace_id: agent.workspace_id, phone, name: data.pushName || null })
-      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention")
+      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage")
       .maybeSingle();
     contact = created;
   }
@@ -335,7 +340,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n")
     : undefined;
 
-  const { reply, needsHuman, collectedData, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
+  const { replyParts, needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = await generateReply(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields },
     history,
@@ -350,20 +355,15 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     await supabase.from("contacts").update({ custom_fields: merged }).eq("id", contact.id);
   }
 
-  if (reply) {
+  // O agente classifica o estágio do funil a cada resposta — só avança o card no Kanban, nunca regride
+  // (evita flicker por ruído do modelo), exceto pros estados terminais (concluído/descartado).
+  if (stage && canAdvanceStage(contact.stage, stage)) {
+    await supabase.from("contacts").update({ stage, stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
+  }
+
+  if (replyParts.length > 0) {
     // O agente respondeu — não marca atenção humana mesmo que ele tenha sido cauteloso no texto.
     // "Precisa de atenção" fica só pros casos em que ele realmente NÃO conseguiu responder (abaixo).
-    await supabase.from("messages").insert({
-      workspace_id: agent.workspace_id,
-      contact_id: contact.id,
-      agent_id: agent.id,
-      role: "assistant",
-      content: reply,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      cache_creation_input_tokens: cacheCreationInputTokens,
-      cache_read_input_tokens: cacheReadInputTokens,
-    });
 
     // O agente sinalizou [[PRECISA_HUMANO]] mas continuou respondendo normalmente (nunca revela isso
     // ao cliente) — só acende um alerta em Conversas pra equipe revisar, sem mutar o agente.
@@ -374,14 +374,34 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
         .eq("id", contact.id);
     }
 
-    // Delay humanizado antes de responder — evita a sensação de bot respondendo instantâneo.
+    // Delay humanizado antes da primeira bolha — evita a sensação de bot respondendo instantâneo.
     const { reply_delay_min_seconds: min, reply_delay_max_seconds: max } = agent;
     const delaySeconds = min + Math.random() * Math.max(0, max - min);
     await sleep(delaySeconds * 1000);
 
-    await sendText(agent.evolution_instance_name, phone, reply).catch((err) =>
-      console.error("Erro ao enviar resposta do agente:", err)
-    );
+    // Cada "ideia" vira uma bolha separada (mesma geração da Anthropic — custo de token já contabilizado
+    // abaixo só na primeira, pra não somar o mesmo gasto várias vezes). Intervalo curto entre bolhas
+    // imita alguém mandando mensagens seguidas, diferente do delay de "pensar" antes da primeira.
+    for (let i = 0; i < replyParts.length; i++) {
+      const part = replyParts[i];
+      await supabase.from("messages").insert({
+        workspace_id: agent.workspace_id,
+        contact_id: contact.id,
+        agent_id: agent.id,
+        role: "assistant",
+        content: part,
+        input_tokens: i === 0 ? inputTokens : null,
+        output_tokens: i === 0 ? outputTokens : null,
+        cache_creation_input_tokens: i === 0 ? cacheCreationInputTokens : null,
+        cache_read_input_tokens: i === 0 ? cacheReadInputTokens : null,
+      });
+
+      await sendText(agent.evolution_instance_name, phone, part).catch((err) =>
+        console.error("Erro ao enviar resposta do agente:", err)
+      );
+
+      if (i < replyParts.length - 1) await sleep(BUBBLE_GAP_MS + Math.random() * BUBBLE_GAP_JITTER_MS);
+    }
   } else {
     // Só aqui é atenção humana de verdade: o agente não produziu nenhuma resposta.
     await supabase

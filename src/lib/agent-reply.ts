@@ -1,15 +1,25 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { STATUS_TAG_TO_STAGE, type ContactStage } from "@/lib/crm-stages";
 
 const client = new Anthropic();
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 const ATTENTION_TAG = /\[\[PRECISA_HUMANO\]\]/i;
-// Tag de classificação de status da conversa (ex.: [[STATUS: interessado]]) — o prompt do agente
-// instrui a sempre incluir isso, mas é só pra uso interno; nunca deveria chegar no texto pro cliente.
-const STATUS_TAG = /\[\[STATUS:\s*[a-zà-ú]+\s*\]\]/i;
+// Tag de classificação de estágio do funil (ex.: [[STATUS: interessado]]) — o prompt do agente
+// instrui a sempre incluir isso; nunca deveria chegar no texto pro cliente. Alimenta o Kanban do CRM.
+const STATUS_TAG = /\[\[STATUS:\s*([a-zà-ú_]+)\s*\]\]/i;
+
+function parseStage(text: string): ContactStage | null {
+  const match = text.match(STATUS_TAG);
+  if (!match) return null;
+  return STATUS_TAG_TO_STAGE[match[1].toLowerCase()] ?? null;
+}
 // Dados que o agente coletou do contato (config "informações que preciso") — vira update em
 // contacts.custom_fields. Formato: [[DADOS: chave=valor; chave2=valor2]].
 const DADOS_TAG = /\[\[DADOS:\s*([^\]]*)\]\]/i;
+// Marca que o prompt instrui o modelo a usar quando a resposta deveria virar mais de uma bolha do
+// WhatsApp (em vez de um parágrafo só) — mesma geração, sem chamar a API de novo, custo extra desprezível.
+const MESSAGE_SPLIT_TAG = /\[\[NOVA_MSG\]\]/gi;
 
 function parseCollectedData(text: string): Record<string, string> {
   const match = text.match(DADOS_TAG);
@@ -36,9 +46,10 @@ export type AgentReplyContact = {
 };
 
 export type AgentReply = {
-  reply: string;
+  replyParts: string[];
   needsHuman: boolean;
   collectedData: Record<string, string>;
+  stage: ContactStage | null;
   inputTokens: number;
   outputTokens: number;
   cacheCreationInputTokens: number;
@@ -128,9 +139,10 @@ export async function generateReply(
 
     if (response.stop_reason === "refusal") {
       return {
-        reply: "Vou confirmar isso com a equipe e já retorno.",
+        replyParts: ["Vou confirmar isso com a equipe e já retorno."],
         needsHuman: true,
         collectedData: {},
+        stage: null,
         inputTokens,
         outputTokens,
         cacheCreationInputTokens,
@@ -169,7 +181,13 @@ export async function generateReply(
 
   needsHuman = needsHuman || ATTENTION_TAG.test(finalText);
   const collectedData = parseCollectedData(finalText);
+  const stage = parseStage(finalText);
   finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").trim();
 
-  return { reply: finalText, needsHuman, collectedData, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
+  const replyParts = finalText
+    .split(MESSAGE_SPLIT_TAG)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return { replyParts, needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
 }

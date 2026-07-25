@@ -63,4 +63,15 @@ export async function isCurrentUserColaborador(): Promise<boolean> {
   return profile?.role === "colaborador";
 }
 
+// Nome de quem está logado agora — usado pra assinar observações deixadas num lead do CRM.
+export async function getCurrentUserName(): Promise<string> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "alguém";
+  const { data: profile } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+  return profile?.full_name || user.email || "alguém";
+}
+
 export { ACTIVE_WORKSPACE_COOKIE };

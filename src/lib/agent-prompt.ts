@@ -1,6 +1,7 @@
 // Configuração estruturada do agente (formulário) → gera o system_prompt enxuto que vai pra
 // Anthropic. Evita prompt gigante escrito à mão; o operador preenche campos, isso vira texto —
 // mas o texto final continua editável (o gerado é só um ponto de partida).
+import { STATUS_TAG_TO_STAGE } from "@/lib/crm-stages";
 
 export type DayKey = "seg" | "ter" | "qua" | "qui" | "sex" | "sab" | "dom";
 export const DAY_KEYS: DayKey[] = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
@@ -124,10 +125,23 @@ export function buildSystemPrompt(config: AgentConfig): string {
       "objetiva e humana — nunca revele que é uma IA a menos que perguntem diretamente."
   );
 
+  lines.push(
+    "Regras de formatação (o WhatsApp não renderiza markdown, então isso quebra a mensagem pro cliente): nunca use " +
+      "negrito, itálico, títulos, listas com traço ou emoji como marcador. Escreva texto corrido, como alguém digitando " +
+      "de verdade. Nunca use travessão (—) — nenhum humano digita travessão no WhatsApp; troque por vírgula, ponto, ou " +
+      "reformule a frase."
+  );
+  lines.push(
+    "Seja direto e vá ao ponto — sem repetir o que o cliente já disse, sem enrolar antes de responder, sem gastar frase " +
+      "à toa. Se a resposta tiver mais de uma ideia (por exemplo, uma pergunta e depois uma explicação, ou vários itens de " +
+      "uma lista), quebre em até 3 mensagens curtas usando a marca [[NOVA_MSG]] entre elas, ao invés de mandar tudo numa " +
+      "mensagem só enorme com parágrafos — igual uma pessoa real manda várias bolhas seguidas no WhatsApp, não um bloco de texto."
+  );
+
   if (config.tone === "formal") {
     lines.push(
       'Tom de voz: formal e profissional. Você age claramente como um atendente representando a empresa — linguagem ' +
-        'cuidada, cortês, sem gírias. Trate o cliente por "senhor(a)".'
+        'cuidada, cortês, sem gírias, sem emojis. Trate o cliente por "senhor(a)".'
     );
   } else if (config.tone === "informal") {
     lines.push(
@@ -171,6 +185,16 @@ export function buildSystemPrompt(config: AgentConfig): string {
         "Só inclua a tag quando tiver uma informação nova pra registrar."
     );
   }
+
+  const statusVocab = Object.keys(STATUS_TAG_TO_STAGE).filter((w) => w !== "fechando_proposta").join(", ");
+  lines.push(
+    "Classificação do funil (uso interno, essencial): ao final de TODA resposta, depois de qualquer outra tag, adicione " +
+      `[[STATUS: <palavra>]] usando exatamente uma destas palavras: ${statusVocab}. Use "abordado" enquanto ainda está ` +
+      'entendendo a necessidade, "interessado" quando o cliente demonstrar interesse real, "encaminhamento" quando estiver ' +
+      'perto de fechar ou precisar de humano, "proposta" quando já enviou valores/condições, "concluido" quando fechou ou ' +
+      'confirmou o que precisava, "descartado" quando o cliente claramente não é o público ou desistiu. Nunca deixe de ' +
+      "incluir essa tag; ela nunca aparece pro cliente."
+  );
 
   lines.push(
     "Nunca invente informação que você não tem certeza. Se não souber responder algo, seja honesto e ofereça encaminhar pra um humano."

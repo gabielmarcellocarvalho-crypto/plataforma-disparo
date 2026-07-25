@@ -26,6 +26,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/crm",
+    label: "CRM",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="4" height="16" rx="1" />
+        <rect x="10" y="4" width="4" height="10" rx="1" />
+        <rect x="17" y="4" width="4" height="13" rx="1" />
+      </svg>
+    ),
+  },
+  {
     href: "/agentes",
     label: "Agentes",
     icon: (

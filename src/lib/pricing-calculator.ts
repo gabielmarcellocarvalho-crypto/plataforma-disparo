@@ -141,6 +141,39 @@ export function estimateWhatsappCost(
   };
 }
 
+export type OfficialWhatsappEstimate = {
+  custoFixoBrl: number;
+  custoVariavelBrl: number;
+  custoTotalMensalBrl: number;
+  custoPorMensagemBrl: number;
+  observacao: string;
+};
+
+// API oficial via BSP (360dialog) — AO CONTRÁRIO da VPS/Resend, isso NÃO é rateado entre clientes:
+// é uma taxa fixa mensal por número/WABA conectado + uma taxa por mensagem de plataforma, cobrada
+// por cliente. Cada cliente novo na API oficial soma esse valor inteiro, não divide com os outros.
+export function estimateOfficialWhatsappCost(
+  mensagensPorMes: number,
+  taxaFixaMensalBrl: number,
+  taxaPorMensagemBrl: number
+): OfficialWhatsappEstimate {
+  const custoFixoBrl = Math.max(0, taxaFixaMensalBrl);
+  const custoVariavelBrl = Math.max(0, mensagensPorMes) * Math.max(0, taxaPorMensagemBrl);
+  const custoTotalMensalBrl = custoFixoBrl + custoVariavelBrl;
+  const custoPorMensagemBrl = mensagensPorMes > 0 ? custoTotalMensalBrl / mensagensPorMes : 0;
+
+  return {
+    custoFixoBrl: Math.round(custoFixoBrl * 100) / 100,
+    custoVariavelBrl: Math.round(custoVariavelBrl * 100) / 100,
+    custoTotalMensalBrl: Math.round(custoTotalMensalBrl * 100) / 100,
+    custoPorMensagemBrl: Math.round(custoPorMensagemBrl * 10000) / 10000,
+    observacao:
+      "Custo só desse cliente — diferente da VPS/Resend, o BSP cobra por número conectado, não divide com outros clientes. " +
+      "Ainda não confirmado com o 360dialog se a taxa por mensagem incide também sobre as mensagens de serviço (grátis pra Meta) — " +
+      "essa conta assume que sim, por segurança.",
+  };
+}
+
 export type RiskLevel = "baixo" | "medio" | "alto";
 
 export type WhatsappRiskAssessment = {
@@ -196,10 +229,12 @@ export const CONNECTOR_GUIDES: ConnectorGuide[] = [
     implementado: true,
   },
   {
-    nome: "API Oficial (WhatsApp Cloud API) — Meta",
-    indicadoPara: "Volume alto, ou cliente sem apego a manter o número atual, ou operação que não pode correr risco de bloqueio.",
+    nome: "API Oficial via 360dialog (BSP) — Meta",
+    indicadoPara: "Atendimento contínuo com cliente pagante, volume alto, ou operação que não pode correr risco de bloqueio.",
     risco: "Não tem risco de bloqueio por detecção — mas tem restrição por política (nota de qualidade, templates aprovados) se usada fora das regras da Meta.",
-    custo: "Cobrança por conversa (varia por tipo/país) + processo de verificação de negócio.",
+    custo:
+      "Mensagem de serviço (resposta dentro de 24h) é grátis pra Meta, mas o 360dialog cobra ~R$265/mês fixo por número + ~R$0,027/msg de plataforma — " +
+      "por CLIENTE, não é rateado como a VPS. Processo de verificação de negócio na Meta.",
     implementado: false,
   },
 ];

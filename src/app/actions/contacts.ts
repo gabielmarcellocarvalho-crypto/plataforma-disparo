@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
 import { normalizePhone, parseContactsFile } from "@/lib/import-contacts";
+import { isContactStage } from "@/lib/crm-stages";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -89,6 +90,125 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
     skippedInvalid: parsed.skippedNoPhoneOrEmail,
     total: parsed.total,
   };
+}
+
+// Mover o card manualmente no Kanban — vale pra contato de qualquer canal (agente, disparo em
+// massa ou e-mail), já que o estágio é um campo só, compartilhado.
+export async function updateContactStage(contactId: string, stage: string): Promise<ActionResult> {
+  if (!isContactStage(stage)) return { error: "Estágio inválido." };
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("contacts")
+    .update({ stage, stage_changed_at: new Date().toISOString() })
+    .eq("id", contactId)
+    .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível mover o contato." };
+
+  revalidatePath("/crm");
+  return { error: null, ok: true };
+}
+
+export type ContactDetail = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  stage: string;
+  stage_changed_at: string;
+  custom_fields: Record<string, string> | null;
+  needs_attention: boolean;
+  attention_reason: string | null;
+  flagged_reason: string | null;
+  created_at: string;
+};
+export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
+
+// Puxa o contato + histórico de observações pro painel de detalhe do CRM (aberto ao clicar no card).
+export async function getContactDetail(contactId: string): Promise<{ contact: ContactDetail; notes: ContactNote[] } | null> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return null;
+
+  const supabase = await createClient();
+  const [{ data: contact }, { data: notes }] = await Promise.all([
+    supabase
+      .from("contacts")
+      .select("id, name, phone, email, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at")
+      .eq("id", contactId)
+      .eq("workspace_id", workspace.id)
+      .maybeSingle(),
+    supabase
+      .from("contact_notes")
+      .select("id, author_name, content, created_at")
+      .eq("contact_id", contactId)
+      .order("created_at", { ascending: false }),
+  ]);
+  if (!contact) return null;
+
+  return { contact, notes: notes || [] };
+}
+
+// Edição manual de "infos pessoais" — nome/telefone/e-mail e os campos customizados (chave/valor
+// livre, tipo gênero/cidade), pra dar de preencher isso mesmo em contato que não veio do agente.
+export async function updateContactInfo(
+  contactId: string,
+  fields: { name: string; phone: string; email: string; customFields: Record<string, string> }
+): Promise<ActionResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const phone = fields.phone.trim() ? normalizePhone(fields.phone) : null;
+  if (fields.phone.trim() && !phone) return { error: "Telefone inválido." };
+
+  const cleanFields = Object.fromEntries(
+    Object.entries(fields.customFields)
+      .map(([k, v]) => [k.trim(), v.trim()])
+      .filter(([k, v]) => k && v)
+  );
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("contacts")
+    .update({
+      name: fields.name.trim() || null,
+      phone,
+      email: fields.email.trim() || null,
+      custom_fields: cleanFields,
+    })
+    .eq("id", contactId)
+    .eq("workspace_id", workspace.id);
+  if (error) {
+    if (error.code === "23505") return { error: "Já existe outro contato com esse telefone/e-mail." };
+    return { error: "Não foi possível salvar." };
+  }
+
+  revalidatePath("/crm");
+  revalidatePath("/contatos");
+  return { error: null, ok: true };
+}
+
+// Observação interna do time — vira uma linha no histórico, nunca some/sobrescreve a anterior.
+export async function addContactNote(contactId: string, content: string): Promise<ActionResult> {
+  const trimmed = content.trim();
+  if (!trimmed) return { error: "Escreva alguma coisa." };
+
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const authorName = await getCurrentUserName();
+  const supabase = await createClient();
+  const { error } = await supabase.from("contact_notes").insert({
+    contact_id: contactId,
+    workspace_id: workspace.id,
+    author_name: authorName,
+    content: trimmed,
+  });
+  if (error) return { error: "Não foi possível salvar a observação." };
+
+  revalidatePath("/crm");
+  return { error: null, ok: true };
 }
 
 export async function deleteContact(id: string) {

@@ -1,7 +1,14 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { estimateSharedEmailCost, estimateWhatsappCost, assessWhatsappRisk, CONNECTOR_GUIDES, type RiskLevel } from "@/lib/pricing-calculator";
+import {
+  estimateSharedEmailCost,
+  estimateWhatsappCost,
+  estimateOfficialWhatsappCost,
+  assessWhatsappRisk,
+  CONNECTOR_GUIDES,
+  type RiskLevel,
+} from "@/lib/pricing-calculator";
 import { saveVolumeEstimate, clearVolumeEstimate } from "@/app/actions/workspace";
 
 const USD_TO_BRL = 5.4; // referência aproximada — ajuste conforme o câmbio do dia
@@ -52,6 +59,42 @@ function NumberField({
   );
 }
 
+// Igual ao NumberField, mas aceita casas decimais (taxa por mensagem do BSP costuma ser fracionária, ex: 0,027).
+function DecimalField({
+  label,
+  value,
+  onChange,
+  className,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  className?: string;
+}) {
+  const [text, setText] = useState(String(value));
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-sm font-semibold">{label}</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => {
+          const raw = e.target.value.replace(",", ".");
+          setText(e.target.value);
+          const n = parseFloat(raw);
+          onChange(Number.isFinite(n) ? n : 0);
+        }}
+        onBlur={() => {
+          if (text.trim() === "") setText(String(value));
+        }}
+        className={className || "border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"}
+      />
+    </div>
+  );
+}
+
 export function CalculadoraForm({
   workspaceId = null,
   initialEmailsCliente = 0,
@@ -70,6 +113,9 @@ export function CalculadoraForm({
   const [whatsappPorMes, setWhatsappPorMes] = useState(initialWhatsappCliente);
   const [custoVps, setCustoVps] = useState(40);
   const [clientesNaVps, setClientesNaVps] = useState(1);
+  const [mensagensOficiais, setMensagensOficiais] = useState(0);
+  const [taxaFixaOficial, setTaxaFixaOficial] = useState(0);
+  const [taxaPorMsgOficial, setTaxaPorMsgOficial] = useState(0.027);
   const [salvando, startSalvar] = useTransition();
   const [estimateStatus, setEstimateStatus] = useState<string | null>(null);
 
@@ -101,9 +147,14 @@ export function CalculadoraForm({
   );
   const risco = useMemo(() => assessWhatsappRisk(whatsappPorMes), [whatsappPorMes]);
   const riscoStyle = RISK_STYLES[risco.nivel];
+  const oficial = useMemo(
+    () => estimateOfficialWhatsappCost(mensagensOficiais, taxaFixaOficial, taxaPorMsgOficial),
+    [mensagensOficiais, taxaFixaOficial, taxaPorMsgOficial]
+  );
 
   const emailCustoTotalBrl = email.custoTotalMensalUsd * USD_TO_BRL;
   const emailCustoClienteBrl = email.custoClienteMensalUsd * USD_TO_BRL;
+  const totalMensalBrl = emailCustoClienteBrl + whatsapp.custoTotalMensalBrl + oficial.custoTotalMensalBrl;
 
   return (
     <div className="flex flex-col gap-6">
@@ -220,13 +271,45 @@ export function CalculadoraForm({
             <p className="text-xs text-text-muted mt-1">{whatsapp.observacao}</p>
           </div>
         </div>
+
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-4 md:col-span-2">
+          <div>
+            <h3 className="font-bold text-[15px]">WhatsApp Oficial (360dialog)</h3>
+            <p className="text-xs text-text-muted mt-1 max-w-prose">
+              Diferente da VPS e do Resend, isso <strong>não é rateado</strong> — é um custo fixo por número/cliente conectado no BSP.
+              Já entra somado na estimativa total abaixo. Deixe a taxa fixa em R$ 0 se esse cliente não usa API oficial.
+            </p>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <NumberField label="Mensagens/mês (esse cliente)" value={mensagensOficiais} onChange={setMensagensOficiais} />
+            <NumberField label="Taxa fixa mensal do BSP (R$)" value={taxaFixaOficial} onChange={setTaxaFixaOficial} />
+            <DecimalField label="Taxa por mensagem do BSP (R$)" value={taxaPorMsgOficial} onChange={setTaxaPorMsgOficial} />
+          </div>
+
+          <div className="border-t border-border pt-3 flex flex-col gap-1">
+            <div className="flex justify-between text-sm">
+              <span className="text-text-muted">Fixo + variável</span>
+              <span className="font-bold">
+                R$ {oficial.custoFixoBrl.toFixed(2)} + R$ {oficial.custoVariavelBrl.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-text-muted">Custo total desse cliente</span>
+              <span className="font-bold text-primary-strong">R$ {oficial.custoTotalMensalBrl.toFixed(2)}/mês</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-text-muted">≈ por mensagem</span>
+              <span className="font-bold">R$ {oficial.custoPorMensagemBrl.toFixed(4)}</span>
+            </div>
+            <p className="text-xs text-text-muted mt-1">{oficial.observacao}</p>
+          </div>
+        </div>
       </div>
 
       <div className="bg-primary-faint border border-border rounded-lg p-5 flex items-center justify-between">
         <span className="text-sm font-bold">Estimativa total mensal pra esse cliente</span>
-        <span className="text-xl font-extrabold text-primary-strong">
-          R$ {(emailCustoClienteBrl + whatsapp.custoTotalMensalBrl).toFixed(2)}
-        </span>
+        <span className="text-xl font-extrabold text-primary-strong">R$ {totalMensalBrl.toFixed(2)}</span>
       </div>
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
