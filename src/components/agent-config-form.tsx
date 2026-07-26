@@ -349,15 +349,20 @@ export function AgentConfigForm({
             Regenerar a partir da configuração acima
           </button>
         </div>
-        <textarea
-          value={finalPrompt}
-          onChange={(e) => {
-            setFinalPrompt(e.target.value);
-            setSaved(false);
-          }}
-          rows={10}
-          className="border border-border rounded-md px-3 py-2.5 text-xs font-mono outline-none focus:border-primary resize-y"
-        />
+        <div className="relative">
+          <textarea
+            value={finalPrompt}
+            onChange={(e) => {
+              setFinalPrompt(e.target.value);
+              setSaved(false);
+            }}
+            rows={10}
+            className="w-full border border-border rounded-md px-3 py-2.5 pb-6 text-xs font-mono outline-none focus:border-primary resize-y"
+          />
+          <span className="absolute bottom-1.5 right-2.5 text-[10px] font-mono text-text-muted bg-surface/90 px-1 rounded pointer-events-none">
+            {finalPrompt.length.toLocaleString("pt-BR")} caracteres · ~{Math.round(finalPrompt.length / 4).toLocaleString("pt-BR")} tokens
+          </span>
+        </div>
         <p className="text-xs text-text-muted">
           É esse texto que vai direto pro modelo. Os campos acima só geram (ou regeneram) esse texto — editar aqui não
           muda os campos, e mudar os campos não edita isso automaticamente até você clicar em &quot;Regenerar&quot;.

@@ -88,6 +88,11 @@ function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string, co
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
+// Rate limit por CONTATO+AGENTE (nunca global) — protege contra loop/abuso de um número específico
+// gerando chamada paga à Anthropic sem limite, sem punir outros clientes: cada conversa tem seu
+// próprio contador independente, escala junto com o número de clientes na plataforma.
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_MESSAGES = 8; // generoso pra humano real digitando rápido; aperta bot/loop
 // Intervalo entre bolhas de uma mesma resposta (quando o agente quebra em várias mensagens) —
 // bem mais curto que o delay de "pensar" antes da primeira, só pra não parecer instantâneo/colado.
 const BUBBLE_GAP_MS = 1100;
@@ -324,6 +329,26 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   if (contact.needs_attention) return; // humano já assumiu essa conversa — agente não responde até ser resolvido
   if (agent.status !== "ativo") return;
 
+  const rateLimitSince = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+  const { count: recentUserMessages } = await supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("agent_id", agent.id)
+    .eq("contact_id", contact.id)
+    .eq("role", "user")
+    .gte("created_at", rateLimitSince);
+
+  if ((recentUserMessages || 0) > RATE_LIMIT_MAX_MESSAGES) {
+    await supabase
+      .from("contacts")
+      .update({
+        needs_attention: true,
+        attention_reason: "Muitas mensagens em pouco tempo (possível loop ou abuso) — agente pausado pra esse contato até revisão.",
+      })
+      .eq("id", contact.id);
+    return;
+  }
+
   const { data: historyRows } = await supabase
     .from("messages")
     .select("role, content")
@@ -368,10 +393,18 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };
     const updates: Record<string, unknown> = { custom_fields: merged };
 
-    // "nome" é tratado à parte: também vira o nome principal do lead (aparece em Contatos, CRM,
-    // Conversas), não só um campo dentro de custom_fields — mantém sincronizado a cada atualização.
-    const nomeKey = Object.keys(collectedData).find((k) => k.trim().toLowerCase() === "nome");
+    // "nome" e "email" são tratados à parte: também viram os campos principais do lead (aparecem em
+    // Contatos, CRM, Conversas), não só um campo dentro de custom_fields — sincroniza a cada atualização.
+    // "telefone" fica de fora de propósito: contact.phone já é o número real do WhatsApp de origem,
+    // sobrescrever com o que o agente ouviu poderia divergir do número que a gente realmente usa pra enviar.
+    const findKey = (name: string) => Object.keys(collectedData).find((k) => k.trim().toLowerCase() === name);
+
+    const nomeKey = findKey("nome");
     if (nomeKey && collectedData[nomeKey]) updates.name = collectedData[nomeKey];
+
+    const emailKey = findKey("email");
+    const emailValue = emailKey ? collectedData[emailKey].trim() : "";
+    if (emailValue && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) updates.email = emailValue;
 
     await supabase.from("contacts").update(updates).eq("id", contact.id);
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
 
 type Contact = {
@@ -26,8 +27,18 @@ function formatTime(iso: string) {
 }
 
 export function ConversationsPanel({ conversations }: { conversations: Conversation[] }) {
+  const searchParams = useSearchParams();
+  const contactParam = searchParams.get("contact");
+
   const [query, setQuery] = useState("");
-  const [selectedKey, setSelectedKey] = useState<string | null>(conversations[0] ? keyOf(conversations[0]) : null);
+  // Vindo do CRM (?contact=<id>), abre direto a conversa dessa pessoa; senão, a mais recente.
+  const [selectedKey, setSelectedKey] = useState<string | null>(() => {
+    if (contactParam) {
+      const found = conversations.find((c) => c.contact.id === contactParam);
+      if (found) return keyOf(found);
+    }
+    return conversations[0] ? keyOf(conversations[0]) : null;
+  });
   const [draft, setDraft] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);

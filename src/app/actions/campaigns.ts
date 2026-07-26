@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
+import { STAGE_ORDER } from "@/lib/crm-stages";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -60,9 +61,17 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   return { error: null, ok: true };
 }
 
-// Popula a fila de disparo com os contatos ativos do workspace (respeitando opt-out do canal)
-// e marca a campanha como ativa.
-export async function activateCampaign(campaignId: string): Promise<ActionResult> {
+export type ActivateCampaignFilters = {
+  onlyAbordados: boolean; // só quem já saiu de "não abordado" (exclui descartado) — pra remarketing/nutrição
+  sinceDays: number | null; // só quem mudou de fase do CRM nos últimos N dias (null = sem limite)
+};
+
+// Popula a fila de disparo com os contatos do workspace (respeitando opt-out do canal e, opcionalmente,
+// segmentando pelo estágio do CRM) e marca a campanha como ativa.
+export async function activateCampaign(
+  campaignId: string,
+  filters: ActivateCampaignFilters = { onlyAbordados: false, sinceDays: null }
+): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
 
@@ -79,15 +88,28 @@ export async function activateCampaign(campaignId: string): Promise<ActionResult
   const optOutColumn = campaign.channel === "whatsapp" ? "opt_out_whatsapp" : "opt_out_email";
   const contactColumn = campaign.channel === "whatsapp" ? "phone" : "email";
 
-  const { data: contacts } = await supabase
+  let query = supabase
     .from("contacts")
     .select("id")
     .eq("workspace_id", workspace.id)
     .eq(optOutColumn, false)
     .not(contactColumn, "is", null);
 
+  if (filters.onlyAbordados) {
+    // "Abordado ou além", nunca descartado — quem foi descartado é justamente pra não receber mais nada.
+    const abordadoIdx = STAGE_ORDER.indexOf("abordado");
+    const eligibleStages = STAGE_ORDER.slice(abordadoIdx).filter((s) => s !== "descartado");
+    query = query.in("stage", eligibleStages);
+  }
+  if (filters.sinceDays && filters.sinceDays > 0) {
+    const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();
+    query = query.gte("stage_changed_at", since);
+  }
+
+  const { data: contacts } = await query;
+
   if (!contacts || contacts.length === 0) {
-    return { error: `Nenhum contato com ${contactColumn === "phone" ? "telefone" : "e-mail"} válido e sem opt-out.` };
+    return { error: `Nenhum contato encontrado com esse filtro e ${contactColumn === "phone" ? "telefone" : "e-mail"} válido, sem opt-out.` };
   }
 
   const recipients = contacts.map((c) => ({ campaign_id: campaignId, contact_id: c.id }));

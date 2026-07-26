@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { getContactDetail, updateContactInfo, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
 import { daysSince, type ContactStage } from "@/lib/crm-stages";
 
@@ -132,7 +133,21 @@ export function CrmLeadDrawer({
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-6">
-              <div className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</div>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</span>
+                {contact.stage !== "nao_abordado" && (
+                  <Link
+                    href={`/conversas?contact=${contact.id}`}
+                    className="text-xs font-bold text-primary-strong hover:underline flex items-center gap-1"
+                  >
+                    Ver conversa
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                      <polyline points="12 5 19 12 12 19" />
+                    </svg>
+                  </Link>
+                )}
+              </div>
 
               {(contact.needs_attention || contact.flagged_reason) && (
                 <div className="text-xs font-semibold rounded-lg px-3 py-2.5 bg-warning-soft text-warning-text">
