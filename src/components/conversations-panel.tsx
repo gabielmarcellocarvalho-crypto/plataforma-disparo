@@ -132,25 +132,25 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold truncate flex items-center gap-1">
+                      <span className="text-[15px] font-semibold truncate flex items-center gap-1">
                         {c.contact.needs_attention && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger shrink-0" aria-hidden>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger shrink-0" aria-hidden>
                             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
                             <line x1="12" y1="9" x2="12" y2="13" />
                             <line x1="12" y1="17" x2="12" y2="17" />
                           </svg>
                         )}
                         {!c.contact.needs_attention && c.contact.flagged_reason && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-warning-text shrink-0" aria-hidden>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-warning-text shrink-0" aria-hidden>
                             <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
                             <line x1="4" y1="22" x2="4" y2="15" />
                           </svg>
                         )}
                         {c.contact.name || c.contact.phone || "sem nome"}
                       </span>
-                      {last && <time className="text-[11px] text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
+                      {last && <time className="text-xs text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
                     </div>
-                    <p className="text-xs text-text-muted truncate">
+                    <p className="text-sm text-text-muted truncate">
                       {c.contact.needs_attention
                         ? c.contact.attention_reason || "Precisa de atenção"
                         : c.contact.flagged_reason || last?.content || ""}
@@ -173,8 +173,8 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                 {initials(selected.contact.name, selected.contact.phone)}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold truncate">{selected.contact.name || selected.contact.phone}</div>
-                <div className="text-xs text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
+                <div className="text-base font-bold truncate">{selected.contact.name || selected.contact.phone}</div>
+                <div className="text-sm text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
               </div>
               <button
                 type="button"
@@ -221,12 +221,12 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
               {orderedMessages.map((m) => (
                 <div
                   key={m.id}
-                  className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
+                  className={`max-w-[75%] rounded-lg px-3.5 py-2.5 text-[15px] leading-relaxed ${
                     m.role === "user" ? "bg-bg self-start" : "bg-primary-soft text-primary-strong self-end"
                   }`}
                 >
                   {m.content}
-                  <div className="text-[10px] text-text-muted mt-1">{formatTime(m.created_at)}</div>
+                  <div className="text-xs text-text-muted mt-1">{formatTime(m.created_at)}</div>
                 </div>
               ))}
             </div>
@@ -243,7 +243,7 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                 onChange={(e) => setDraft(e.target.value)}
                 disabled={!selected.contact.needs_attention || pending}
                 placeholder={selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
-                className="flex-1 border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary disabled:opacity-60"
+                className="flex-1 border border-border rounded-md px-3.5 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
               />
               <button
                 type="submit"
