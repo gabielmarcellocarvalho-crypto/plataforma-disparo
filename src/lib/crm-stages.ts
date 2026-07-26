@@ -76,6 +76,10 @@ export function resolveStageLabels(overrides: unknown): Record<ContactStage, str
 // avançar (nunca regredir), exceto pros dois estados terminais que fazem sentido a qualquer momento.
 export function canAdvanceStage(current: ContactStage, next: ContactStage): boolean {
   if (next === current) return false;
+  // Descartado/concluído são estados finais, mas revivíveis: se o cliente reengaja depois (mudou de
+  // ideia, quer fechar afinal, quer comprar de novo), o agente pode tirar de lá pra qualquer fase —
+  // sem isso, "descartado" ficava travado pra sempre (não contava como avanço sair dele).
+  if (current === "descartado" || current === "concluido") return true;
   if (next === "descartado" || next === "concluido") return true;
   return STAGE_ORDER.indexOf(next) > STAGE_ORDER.indexOf(current);
 }

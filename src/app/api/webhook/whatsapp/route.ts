@@ -366,7 +366,14 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   if (Object.keys(collectedData).length) {
     const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };
-    await supabase.from("contacts").update({ custom_fields: merged }).eq("id", contact.id);
+    const updates: Record<string, unknown> = { custom_fields: merged };
+
+    // "nome" é tratado à parte: também vira o nome principal do lead (aparece em Contatos, CRM,
+    // Conversas), não só um campo dentro de custom_fields — mantém sincronizado a cada atualização.
+    const nomeKey = Object.keys(collectedData).find((k) => k.trim().toLowerCase() === "nome");
+    if (nomeKey && collectedData[nomeKey]) updates.name = collectedData[nomeKey];
+
+    await supabase.from("contacts").update(updates).eq("id", contact.id);
   }
 
   // O agente classifica o estágio do funil a cada resposta — só avança o card no Kanban, nunca regride
