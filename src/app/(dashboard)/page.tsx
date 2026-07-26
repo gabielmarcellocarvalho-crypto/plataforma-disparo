@@ -29,7 +29,7 @@ export default async function OverviewPage() {
   startOfDay.setUTCHours(0, 0, 0, 0);
   const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getDate();
 
-  const [{ count: contatos }, { count: campanhasAtivas }, { count: mensagensHoje }, { count: workspaces }, { data: monthMsgs }] =
+  const [{ count: contatos }, { count: campanhasAtivas }, { count: mensagensHoje }, { data: conversationPairs }, { data: monthMsgs }] =
     workspace
       ? await Promise.all([
           supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
@@ -40,7 +40,12 @@ export default async function OverviewPage() {
             .eq("workspace_id", workspace.id)
             .eq("role", "assistant")
             .gte("created_at", startOfDay.toISOString()),
-          supabase.from("workspaces").select("id", { count: "exact", head: true }),
+          supabase
+            .from("messages")
+            .select("contact_id, agent_id")
+            .eq("workspace_id", workspace.id)
+            .not("agent_id", "is", null)
+            .limit(20000),
           supabase
             .from("messages")
             .select("created_at")
@@ -49,7 +54,10 @@ export default async function OverviewPage() {
             .gte("created_at", startOfMonth.toISOString())
             .limit(20000),
         ])
-      : [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }, { data: [] }];
+      : [{ count: 0 }, { count: 0 }, { count: 0 }, { data: [] }, { data: [] }];
+
+  // Conversa = par único contato+agente (mesma definição usada em Conversas).
+  const totalConversas = new Set((conversationPairs || []).map((m) => `${m.contact_id}:${m.agent_id}`)).size;
 
   // Distribui as mensagens do mês por dia.
   const counts = new Array(daysInMonth).fill(0);
@@ -145,14 +153,12 @@ export default async function OverviewPage() {
           }
         />
         <StatCard
-          label="workspaces"
-          value={workspaces ?? 0}
+          label="conversas"
+          value={totalConversas}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <path d="M17 8h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1v3l-3-3h-5a1 1 0 0 1-1-1v-1" />
+              <path d="M14 3H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1v3l3-3h7a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1Z" />
             </svg>
           }
         />

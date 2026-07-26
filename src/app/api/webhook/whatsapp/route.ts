@@ -93,10 +93,6 @@ const HISTORY_LIMIT = 20;
 // próprio contador independente, escala junto com o número de clientes na plataforma.
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_MESSAGES = 5; // 5-6 mensagens/min já é padrão de abuso; ainda dá folga pro humano real digitando rápido
-// Mensagem idêntica repetida N vezes seguidas = padrão claro de teste/loop, trava bem antes do limite
-// de volume acima (que só reage depois de várias chamadas pagas). 2 = precisa de 3 iguais em sequência
-// (as 2 anteriores + a atual) pra não confundir um humano reenviando "oi" uma vez por impaciência.
-const DUPLICATE_STREAK_LIMIT = 2;
 // Intervalo entre bolhas de uma mesma resposta (quando o agente quebra em várias mensagens) —
 // bem mais curto que o delay de "pensar" antes da primeira, só pra não parecer instantâneo/colado.
 const BUBBLE_GAP_MS = 1100;
@@ -284,7 +280,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir.
   let { data: contact } = await supabase
     .from("contacts")
-    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage")
+    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours")
     .eq("workspace_id", agent.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -293,7 +289,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     const { data: created } = await supabase
       .from("contacts")
       .insert({ workspace_id: agent.workspace_id, phone, name: data.pushName || null })
-      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage")
+      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours")
       .maybeSingle();
     contact = created;
   }
@@ -318,9 +314,10 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   const userContent = text || "[o cliente enviou uma foto]";
 
   // Detecta mensagem repetida ANTES de logar a atual (a query já exclui ela por construção) — pega
-  // loop/teste (copy-paste da mesma mensagem) muito mais rápido que o limite de volume geral, que só
-  // reage depois de várias chamadas pagas. Precisa de DUPLICATE_STREAK_LIMIT repetições seguidas
-  // IDÊNTICAS antes da atual pra não confundir um humano reenviando "oi" por impaciência.
+  // loop/teste (copy-paste da mesma mensagem) sem esperar o limite de volume geral. Dois níveis:
+  // 1ª repetição (2 iguais seguidas) = já responde igual antes, então pula silenciosamente (zero custo
+  // extra, zero flag — pode ser só um humano reenviando por impaciência); 2ª repetição (3 iguais
+  // seguidas) = aí sim escala pra atenção humana. No máximo 1 chamada paga pra qualquer streak de repetição.
   const { data: lastUserMsgs } = await supabase
     .from("messages")
     .select("content")
@@ -328,11 +325,11 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     .eq("contact_id", contact.id)
     .eq("role", "user")
     .order("created_at", { ascending: false })
-    .limit(DUPLICATE_STREAK_LIMIT);
+    .limit(2);
   const normalizedCurrent = userContent.trim().toLowerCase();
-  const isDuplicateStreak =
-    (lastUserMsgs || []).length === DUPLICATE_STREAK_LIMIT &&
-    lastUserMsgs!.every((m) => (m.content as string).trim().toLowerCase() === normalizedCurrent);
+  const priorContents = (lastUserMsgs || []).map((m) => (m.content as string).trim().toLowerCase());
+  const isFirstRepeat = priorContents[0] === normalizedCurrent;
+  const isSecondRepeat = isFirstRepeat && priorContents[1] === normalizedCurrent;
 
   await supabase.from("messages").insert({
     workspace_id: agent.workspace_id,
@@ -352,10 +349,20 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   const agentConfig = normalizeAgentConfig(agent.config);
   // Checagem REAL de horário — não é só o texto do prompt (o modelo pode ignorar). Fora do horário
-  // configurado, não responde nada mesmo (sem marcar atenção — não é erro, é esperado).
-  if (!isWithinBusinessHours(agentConfig.hours)) return;
+  // configurado, não responde nada mesmo (sem marcar atenção — não é erro, é esperado). Marca
+  // missed_offhours pra, quando o cliente mandar mensagem de novo dentro do horário, o agente abrir
+  // com uma recapitulação curta em vez de agir como se nada tivesse ficado sem resposta.
+  if (!isWithinBusinessHours(agentConfig.hours)) {
+    if (!contact.missed_offhours) await supabase.from("contacts").update({ missed_offhours: true }).eq("id", contact.id);
+    return;
+  }
 
-  if (isDuplicateStreak) {
+  // 1ª repetição: já respondeu igual há pouco, pular silenciosamente evita gastar outra chamada paga
+  // pra dizer a mesma coisa de novo (zero custo, zero flag — pode ser só impaciência do cliente).
+  if (isFirstRepeat && !isSecondRepeat) return;
+
+  // 2ª repetição seguida (3 mensagens iguais no total): agora sim é padrão de teste/loop, escala.
+  if (isSecondRepeat) {
     await supabase
       .from("contacts")
       .update({
@@ -413,7 +420,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   const gen = await generateReply(
     agent.system_prompt,
-    { name: contact.name, custom_fields: contact.custom_fields },
+    { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,
     tools,
@@ -425,6 +432,9 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // Cap de bolhas (custo): a Meta cobra por mensagem enviada a partir de 01/10/2026, então se o modelo
   // quebrou em mais bolhas que o configurado, junta o excedente na última em vez de mandar cobrança extra.
   const replyParts = capBubbles(gen.replyParts, maxBubbles);
+
+  // Já recapitulou (ou tentou) a mensagem perdida fora do horário — não repete isso nas próximas respostas.
+  if (contact.missed_offhours) await supabase.from("contacts").update({ missed_offhours: false }).eq("id", contact.id);
 
   if (Object.keys(collectedData).length) {
     const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };

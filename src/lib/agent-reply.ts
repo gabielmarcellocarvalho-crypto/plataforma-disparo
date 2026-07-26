@@ -43,6 +43,9 @@ export type AgentImage = { base64: string; mediaType: "image/jpeg" | "image/png"
 export type AgentReplyContact = {
   name: string | null;
   custom_fields: Record<string, unknown> | null;
+  // Cliente mandou mensagem fora do horário configurado e não foi respondido — instrui o agente a
+  // recapitular brevemente antes de continuar, em vez de agir como se nada tivesse ficado pendente.
+  missedOffHours?: boolean;
 };
 
 export type AgentReply = {
@@ -78,7 +81,12 @@ export async function generateReply(
   const camposExtras = contact.custom_fields && Object.keys(contact.custom_fields).length
     ? ` Dados adicionais: ${JSON.stringify(contact.custom_fields)}.`
     : "";
-  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}`;
+  const missedNote = contact.missedOffHours
+    ? " O cliente mandou mensagem fora do horário de atendimento e ainda não foi respondido. Antes de continuar, " +
+      "mande uma mensagem BEM curta reconhecendo isso (algo como 'oi, vi sua mensagem, retomando agora' — sem repetir " +
+      "o horário todo) e só depois siga a conversa normalmente."
+    : "";
+  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${missedNote}`;
 
   const historyMessages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
 

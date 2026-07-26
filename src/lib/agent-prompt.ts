@@ -312,7 +312,9 @@ export function buildSystemPrompt(config: AgentConfig): string {
   if (discretos.length) {
     lines.push(
       "Anote discretamente, sem perguntar diretamente — só quando o cliente mencionar naturalmente na conversa: " +
-        `${discretos.map((f) => `${f.key} (${f.label})`).join(", ")}.`
+        `${discretos.map((f) => `${f.key} (${f.label})`).join(", ")}. Quando o campo puder ser inferido com segurança ` +
+        "pelo próprio contexto (ex.: gênero a partir de um nome claramente masculino ou feminino), pode registrar direto, " +
+        "sem esperar o cliente confirmar — nunca invente o que não dá pra saber."
     );
   }
   if (perguntar.length) {
