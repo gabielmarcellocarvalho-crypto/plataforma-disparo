@@ -2,9 +2,10 @@
 // Usado na Visão geral (banner de alerta) e nas Métricas (card de orçamento). Colaborador-only.
 import { createClient } from "@/lib/supabase/server";
 import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
+import { COST_USD_TO_BRL, DEFAULT_DELIVERY_RATE_BRL } from "@/lib/cost-constants";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
-export const COST_USD_TO_BRL = 5.4; // mesma referência usada no resto do painel
+export { COST_USD_TO_BRL };
 
 function startOfMonthIso(): string {
   const start = new Date();
@@ -73,6 +74,45 @@ export async function getMonthToDateCostByAgent(workspaceId: string): Promise<Ag
   return [...acc.entries()]
     .map(([agentId, v]) => ({ agentId, name: nameById.get(agentId) || "agente removido", costUsd: v.costUsd, messages: v.messages, conversations: v.conv.size }))
     .sort((a, b) => b.costUsd - a.costUsd);
+}
+
+export type DailyCostPoint = { date: string; ia: number; entrega: number };
+
+// Custo por dia no mês corrente (workspace inteiro), quebrado em IA (medido) + entrega estimada
+// (mensagens do dia × tarifa padrão da API oficial) — alimenta o gráfico de barras em Métricas.
+export async function getMonthToDateDailyCost(workspaceId: string): Promise<DailyCostPoint[]> {
+  const supabase = await createClient();
+  const now = new Date();
+  const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getDate();
+
+  const { data } = await supabase
+    .from("messages")
+    .select("created_at, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
+    .eq("workspace_id", workspaceId)
+    .eq("role", "assistant")
+    .not("agent_id", "is", null)
+    .gte("created_at", startOfMonthIso())
+    .limit(20000);
+
+  const perDayUsd = new Array(daysInMonth).fill(0);
+  const perDayMessages = new Array(daysInMonth).fill(0);
+  for (const row of data || []) {
+    const day = new Date(row.created_at as string).getUTCDate();
+    if (day < 1 || day > daysInMonth) continue;
+    perDayUsd[day - 1] += estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
+      inputTokens: row.input_tokens || 0,
+      outputTokens: row.output_tokens || 0,
+      cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
+      cacheReadInputTokens: row.cache_read_input_tokens || 0,
+    });
+    perDayMessages[day - 1] += 1;
+  }
+
+  return perDayUsd.map((usd, idx) => ({
+    date: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), idx + 1)).toISOString(),
+    ia: Math.round(usd * COST_USD_TO_BRL * 100) / 100,
+    entrega: Math.round(perDayMessages[idx] * DEFAULT_DELIVERY_RATE_BRL * 100) / 100,
+  }));
 }
 
 export type CostBudgetStatus = {

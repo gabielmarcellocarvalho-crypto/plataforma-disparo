@@ -1,7 +1,9 @@
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createClient } from "@/lib/supabase/server";
-import { getMonthToDateCostByAgent, COST_USD_TO_BRL } from "@/lib/cost-monitor";
+import { getMonthToDateCostByAgent, getMonthToDateDailyCost, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 import { CostBudgetCard } from "@/components/cost-budget-card";
+import { DeliveryCostEstimate } from "@/components/delivery-cost-estimate";
+import { CostStackedBarChart } from "@/components/charts/cost-stacked-bar-chart";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
@@ -11,18 +13,21 @@ export default async function MetricasPage() {
   // Custo (por agente) e orçamento só fazem sentido pra colaborador — cliente nunca vê custo/margem.
   const showCost = Boolean(workspace && isColaborador);
 
-  const [agentCosts, budgetRow] = showCost
+  const [agentCosts, budgetRow, dailyCost] = showCost
     ? await Promise.all([
         getMonthToDateCostByAgent(workspace!.id),
         createClient().then((s) =>
           s.from("workspaces").select("monthly_cost_budget_brl, cost_alert_pct").eq("id", workspace!.id).maybeSingle()
         ),
+        getMonthToDateDailyCost(workspace!.id),
       ])
-    : [[], { data: null }];
+    : [[], { data: null }, []];
 
   const totalCostUsd = agentCosts.reduce((sum, a) => sum + a.costUsd, 0);
+  const totalCostBrl = totalCostUsd * COST_USD_TO_BRL;
   const totalMessages = agentCosts.reduce((sum, a) => sum + a.messages, 0);
   const totalConversations = agentCosts.reduce((sum, a) => sum + a.conversations, 0);
+  const avgCostPerConversationBrl = totalConversations > 0 ? totalCostBrl / totalConversations : 0;
   const budget = (budgetRow as { data: { monthly_cost_budget_brl: number | null; cost_alert_pct: number | null } | null }).data;
 
   return (
@@ -33,12 +38,42 @@ export default async function MetricasPage() {
       </div>
 
       {showCost && (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">Custo de IA (mês)</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {totalCostBrl.toFixed(2)}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">Custo médio de IA por conversa</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {avgCostPerConversationBrl.toFixed(3)}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">Mensagens de agente (mês)</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">{totalMessages}</b>
+          </div>
+        </div>
+      )}
+
+      {showCost && (
         <CostBudgetCard
           workspaceId={workspace!.id}
-          costBrl={totalCostUsd * COST_USD_TO_BRL}
+          costBrl={totalCostBrl}
           initialBudgetBrl={budget?.monthly_cost_budget_brl ?? null}
           initialThresholdPct={budget?.cost_alert_pct ?? 80}
         />
+      )}
+
+      {showCost && <DeliveryCostEstimate totalMessages={totalMessages} iaCostBrl={totalCostBrl} />}
+
+      {showCost && (
+        <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
+          <h3 className="font-bold text-[15px] mb-1">Custo por dia (mês)</h3>
+          <p className="text-xs text-text-muted mb-4">
+            IA é custo medido de verdade; entrega é estimativa (tarifa padrão da API oficial × mensagens do dia) — ajuda
+            a ver se algum dia teve pico fora do padrão e quanto do custo total viria de cada parte.
+          </p>
+          <CostStackedBarChart data={dailyCost} />
+        </div>
       )}
 
       {showCost && (
@@ -51,7 +86,7 @@ export default async function MetricasPage() {
               </p>
             </div>
             <div className="text-right">
-              <div className="text-lg font-extrabold">R$ {(totalCostUsd * COST_USD_TO_BRL).toFixed(2)}</div>
+              <div className="text-lg font-extrabold">R$ {totalCostBrl.toFixed(2)}</div>
               <div className="text-xs text-text-muted">total do mês</div>
             </div>
           </div>
