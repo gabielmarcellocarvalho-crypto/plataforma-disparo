@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { getContactDetail, updateContactInfo, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
-import { STAGE_LABELS, daysSince, type ContactStage } from "@/lib/crm-stages";
+import { daysSince, type ContactStage } from "@/lib/crm-stages";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -13,7 +13,15 @@ function formatDateTime(iso: string) {
 
 type FieldRow = { key: string; value: string };
 
-export function CrmLeadDrawer({ contactId, onClose }: { contactId: string | null; onClose: () => void }) {
+export function CrmLeadDrawer({
+  contactId,
+  onClose,
+  stageLabels,
+}: {
+  contactId: string | null;
+  onClose: () => void;
+  stageLabels: Record<ContactStage, string>;
+}) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [loading, setLoading] = useState(false);
@@ -110,7 +118,7 @@ export function CrmLeadDrawer({ contactId, onClose }: { contactId: string | null
                 <h2 className="text-lg font-extrabold truncate">{contact.name || contact.phone || contact.email || "sem nome"}</h2>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                   <span className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong">
-                    {STAGE_LABELS[contact.stage as ContactStage]}
+                    {stageLabels[contact.stage as ContactStage]}
                   </span>
                   <span className="text-xs text-text-muted">há {daysSince(contact.stage_changed_at)}d nessa fase</span>
                 </div>

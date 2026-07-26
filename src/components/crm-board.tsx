@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { updateContactStage } from "@/app/actions/contacts";
-import { STAGE_ORDER, STAGE_LABELS, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
+import { updateContactStage, updateCrmStageSettings } from "@/app/actions/contacts";
+import { STAGE_ORDER, HIDEABLE_STAGES, getVisibleStages, displayStageFor, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 
 type Contact = {
@@ -36,6 +36,99 @@ function initials(name: string | null, phone: string | null, email: string | nul
 }
 function formatDateShort(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+function StageLabelsEditor({
+  workspaceId,
+  labels,
+  hiddenStages,
+  onSaved,
+  onClose,
+}: {
+  workspaceId: string;
+  labels: Record<ContactStage, string>;
+  hiddenStages: ContactStage[];
+  onSaved: (labels: Record<ContactStage, string>, hiddenStages: ContactStage[]) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(labels);
+  const [hiddenDraft, setHiddenDraft] = useState(hiddenStages);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function toggleHidden(stage: ContactStage) {
+    setHiddenDraft((h) => (h.includes(stage) ? h.filter((s) => s !== stage) : [...h, stage]));
+  }
+
+  function handleSave() {
+    setError(null);
+    startTransition(async () => {
+      const result = await updateCrmStageSettings(workspaceId, draft, hiddenDraft);
+      if (result.error) setError(result.error);
+      else {
+        onSaved(draft, hiddenDraft);
+        onClose();
+      }
+    });
+  }
+
+  return (
+    <div className="bg-surface border border-border rounded-xl shadow-sm p-4 flex flex-col gap-3 shrink-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-bold">Personalizar fases</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            Renomeie o texto e esconda as fases do meio que esse cliente não usa. As 4 âncoras (chegada, primeiro
+            contato, sucesso e descarte) sempre existem — o sinal que o agente classifica não muda, só a exibição.
+          </p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Fechar" className="text-text-muted hover:text-text cursor-pointer p-1 shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+        </button>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        {STAGE_ORDER.map((stage) => {
+          const hideable = (HIDEABLE_STAGES as string[]).includes(stage);
+          const hidden = hiddenDraft.includes(stage);
+          return (
+            <div key={stage} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-mono text-text-muted">{stage}</label>
+                {hideable && (
+                  <button
+                    type="button"
+                    onClick={() => toggleHidden(stage)}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer ${
+                      hidden ? "bg-bg text-text-muted" : "bg-primary-faint text-primary-strong"
+                    }`}
+                  >
+                    {hidden ? "oculta" : "visível"}
+                  </button>
+                )}
+              </div>
+              <input
+                value={draft[stage]}
+                onChange={(e) => setDraft((d) => ({ ...d, [stage]: e.target.value }))}
+                disabled={hidden}
+                className="border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-50"
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={pending}
+          className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-md cursor-pointer disabled:opacity-60"
+        >
+          Salvar
+        </button>
+        {error && <span className="text-xs text-danger font-medium">{error}</span>}
+      </div>
+    </div>
+  );
 }
 
 function ContactCard({
@@ -101,8 +194,22 @@ function ContactCard({
   );
 }
 
-export function CrmBoard({ contacts }: { contacts: Contact[] }) {
+export function CrmBoard({
+  contacts,
+  stageLabels: initialStageLabels,
+  hiddenStages: initialHiddenStages,
+  workspaceId,
+}: {
+  contacts: Contact[];
+  stageLabels: Record<ContactStage, string>;
+  hiddenStages: ContactStage[];
+  workspaceId: string;
+}) {
   const [items, setItems] = useState(contacts);
+  const [stageLabels, setStageLabels] = useState(initialStageLabels);
+  const [hiddenStages, setHiddenStages] = useState(initialHiddenStages);
+  const [labelsEditorOpen, setLabelsEditorOpen] = useState(false);
+  const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -226,6 +333,17 @@ export function CrmBoard({ contacts }: { contacts: Contact[] }) {
               limpar
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setLabelsEditorOpen((v) => !v)}
+            className="ml-auto text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+            personalizar fases
+          </button>
         </div>
 
         {filtersOpen && (
@@ -257,10 +375,23 @@ export function CrmBoard({ contacts }: { contacts: Contact[] }) {
         )}
       </div>
 
+      {labelsEditorOpen && (
+        <StageLabelsEditor
+          workspaceId={workspaceId}
+          labels={stageLabels}
+          hiddenStages={hiddenStages}
+          onSaved={(labels, hidden) => {
+            setStageLabels(labels);
+            setHiddenStages(hidden);
+          }}
+          onClose={() => setLabelsEditorOpen(false)}
+        />
+      )}
+
       <div className="flex-1 min-h-0 overflow-x-auto">
         <div className="flex gap-4 h-full pb-2" style={{ minWidth: "max-content" }}>
-          {STAGE_ORDER.map((stage) => {
-            const cards = filtered.filter((c) => c.stage === stage);
+          {visibleStages.map((stage) => {
+            const cards = filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage);
             return (
               <div
                 key={stage}
@@ -270,7 +401,7 @@ export function CrmBoard({ contacts }: { contacts: Contact[] }) {
               >
                 <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[stage]}`} aria-hidden />
-                  <span className="text-xs font-bold flex-1">{STAGE_LABELS[stage]}</span>
+                  <span className="text-xs font-bold flex-1">{stageLabels[stage]}</span>
                   <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
@@ -288,7 +419,7 @@ export function CrmBoard({ contacts }: { contacts: Contact[] }) {
         </div>
       </div>
 
-      <CrmLeadDrawer contactId={openId} onClose={() => setOpenId(null)} />
+      <CrmLeadDrawer contactId={openId} onClose={() => setOpenId(null)} stageLabels={stageLabels} />
     </div>
   );
 }

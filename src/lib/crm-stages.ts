@@ -34,6 +34,44 @@ export function isContactStage(value: string): value is ContactStage {
   return (STAGE_ORDER as string[]).includes(value);
 }
 
+// As 4 âncoras (chegada, primeiro contato, sucesso, descarte) sempre existem — todo funil precisa
+// delas. As 3 do meio são opcionais: cliente com processo simples pode esconder as que não usa.
+export const HIDEABLE_STAGES: ContactStage[] = ["interessado", "encaminhamento", "fechando_proposta"];
+
+export function resolveHiddenStages(raw: unknown): ContactStage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is ContactStage => typeof v === "string" && (HIDEABLE_STAGES as string[]).includes(v));
+}
+
+export function getVisibleStages(hidden: ContactStage[]): ContactStage[] {
+  return STAGE_ORDER.filter((s) => !hidden.includes(s));
+}
+
+// Pra exibir no Kanban: se o estágio real do contato está oculto, mostra ele na fase visível
+// ANTERIOR mais próxima (nunca avança pra frente na exibição) — evita dar a impressão de que o
+// lead avançou mais do que o cliente escolheu acompanhar. O dado real (contact.stage) não muda.
+export function displayStageFor(stage: ContactStage, visible: ContactStage[]): ContactStage {
+  if (visible.includes(stage)) return stage;
+  const idx = STAGE_ORDER.indexOf(stage);
+  for (let i = idx - 1; i >= 0; i--) {
+    if (visible.includes(STAGE_ORDER[i])) return STAGE_ORDER[i];
+  }
+  return visible[0] ?? stage;
+}
+
+// Cada workspace pode renomear os rótulos exibidos no Kanban (ex.: "concluido" vira "Fechado" pra
+// um cliente de vendas, ou "Passou pro vendedor" pra um de recepção) — a ORDEM e a chave interna que
+// o agente classifica continuam fixas; só o texto muda. Overrides ausentes/vazios caem no padrão.
+export function resolveStageLabels(overrides: unknown): Record<ContactStage, string> {
+  const o = (overrides && typeof overrides === "object" ? overrides : {}) as Record<string, unknown>;
+  const labels = { ...STAGE_LABELS };
+  for (const stage of STAGE_ORDER) {
+    const custom = o[stage];
+    if (typeof custom === "string" && custom.trim()) labels[stage] = custom.trim();
+  }
+  return labels;
+}
+
 // O agente classifica a cada resposta, então pode "errar pra trás" por ruído do modelo — só deixa
 // avançar (nunca regredir), exceto pros dois estados terminais que fazem sentido a qualquer momento.
 export function canAdvanceStage(current: ContactStage, next: ContactStage): boolean {

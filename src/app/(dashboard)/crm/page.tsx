@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
+import { resolveStageLabels, resolveHiddenStages } from "@/lib/crm-stages";
 import { CrmBoard } from "@/components/crm-board";
 
 const CONTACT_LIMIT = 500;
@@ -8,7 +9,7 @@ export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: contacts }, { count }] = workspace
+  const [{ data: contacts }, { count }, { data: workspaceRow }] = workspace
     ? await Promise.all([
         supabase
           .from("contacts")
@@ -17,11 +18,14 @@ export default async function CrmPage() {
           .order("created_at", { ascending: false })
           .limit(CONTACT_LIMIT),
         supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
+        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
       ])
-    : [{ data: [] }, { count: 0 }];
+    : [{ data: [] }, { count: 0 }, { data: null }];
 
   const rows = contacts ?? [];
   const total = count ?? rows.length;
+  const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
+  const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
 
   return (
     <div className="flex flex-col gap-5 h-[calc(100vh-7.5rem)] min-h-0">
@@ -32,7 +36,7 @@ export default async function CrmPage() {
           {total > rows.length ? ` Mostrando os ${rows.length} contatos mais recentes de ${total}.` : ""}
         </p>
       </div>
-      <CrmBoard contacts={rows} />
+      <CrmBoard contacts={rows} stageLabels={stageLabels} hiddenStages={hiddenStages} workspaceId={workspace?.id ?? ""} />
     </div>
   );
 }

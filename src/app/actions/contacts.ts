@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
 import { normalizePhone, parseContactsFile } from "@/lib/import-contacts";
-import { isContactStage } from "@/lib/crm-stages";
+import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, type ContactStage } from "@/lib/crm-stages";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -106,6 +106,35 @@ export async function updateContactStage(contactId: string, stage: string): Prom
     .eq("id", contactId)
     .eq("workspace_id", workspace.id);
   if (error) return { error: "Não foi possível mover o contato." };
+
+  revalidatePath("/crm");
+  return { error: null, ok: true };
+}
+
+// Renomeia os rótulos do funil pra esse workspace (o sinal interno que o agente classifica não muda,
+// só o texto exibido) e escolhe quais das 3 fases opcionais do meio ficam visíveis — as 4 âncoras
+// (não abordado, abordado, concluído, descartado) nunca podem ser escondidas.
+export async function updateCrmStageSettings(
+  workspaceId: string,
+  labels: Record<string, string>,
+  hiddenStages: string[]
+): Promise<ActionResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace || workspace.id !== workspaceId) return { error: "Nenhum workspace ativo." };
+
+  const cleanLabels: Record<string, string> = {};
+  for (const stage of STAGE_ORDER) {
+    const v = labels[stage];
+    if (typeof v === "string" && v.trim()) cleanLabels[stage] = v.trim().slice(0, 40);
+  }
+  const cleanHidden = hiddenStages.filter((s): s is ContactStage => (HIDEABLE_STAGES as string[]).includes(s));
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ crm_stage_labels: cleanLabels, crm_hidden_stages: cleanHidden })
+    .eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar as fases." };
 
   revalidatePath("/crm");
   return { error: null, ok: true };
