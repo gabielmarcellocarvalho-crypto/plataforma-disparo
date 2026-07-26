@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
 import { generateReply, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
-import { normalizeAgentConfig } from "@/lib/agent-prompt";
+import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 
 // Ferramentas disponíveis pro agente. `enviar_foto` já funciona ponta a ponta (biblioteca de
@@ -92,7 +92,11 @@ const HISTORY_LIMIT = 20;
 // gerando chamada paga à Anthropic sem limite, sem punir outros clientes: cada conversa tem seu
 // próprio contador independente, escala junto com o número de clientes na plataforma.
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_MESSAGES = 8; // generoso pra humano real digitando rápido; aperta bot/loop
+const RATE_LIMIT_MAX_MESSAGES = 5; // 5-6 mensagens/min já é padrão de abuso; ainda dá folga pro humano real digitando rápido
+// Mensagem idêntica repetida N vezes seguidas = padrão claro de teste/loop, trava bem antes do limite
+// de volume acima (que só reage depois de várias chamadas pagas). 2 = precisa de 3 iguais em sequência
+// (as 2 anteriores + a atual) pra não confundir um humano reenviando "oi" uma vez por impaciência.
+const DUPLICATE_STREAK_LIMIT = 2;
 // Intervalo entre bolhas de uma mesma resposta (quando o agente quebra em várias mensagens) —
 // bem mais curto que o delay de "pensar" antes da primeira, só pra não parecer instantâneo/colado.
 const BUBBLE_GAP_MS = 1100;
@@ -313,6 +317,23 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // imagem de fato via `images`, mas o registro guarda um marcador legível pra revisão humana.
   const userContent = text || "[o cliente enviou uma foto]";
 
+  // Detecta mensagem repetida ANTES de logar a atual (a query já exclui ela por construção) — pega
+  // loop/teste (copy-paste da mesma mensagem) muito mais rápido que o limite de volume geral, que só
+  // reage depois de várias chamadas pagas. Precisa de DUPLICATE_STREAK_LIMIT repetições seguidas
+  // IDÊNTICAS antes da atual pra não confundir um humano reenviando "oi" por impaciência.
+  const { data: lastUserMsgs } = await supabase
+    .from("messages")
+    .select("content")
+    .eq("agent_id", agent.id)
+    .eq("contact_id", contact.id)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(DUPLICATE_STREAK_LIMIT);
+  const normalizedCurrent = userContent.trim().toLowerCase();
+  const isDuplicateStreak =
+    (lastUserMsgs || []).length === DUPLICATE_STREAK_LIMIT &&
+    lastUserMsgs!.every((m) => (m.content as string).trim().toLowerCase() === normalizedCurrent);
+
   await supabase.from("messages").insert({
     workspace_id: agent.workspace_id,
     contact_id: contact.id,
@@ -328,6 +349,22 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   if (contact.needs_attention) return; // humano já assumiu essa conversa — agente não responde até ser resolvido
   if (agent.status !== "ativo") return;
+
+  const agentConfig = normalizeAgentConfig(agent.config);
+  // Checagem REAL de horário — não é só o texto do prompt (o modelo pode ignorar). Fora do horário
+  // configurado, não responde nada mesmo (sem marcar atenção — não é erro, é esperado).
+  if (!isWithinBusinessHours(agentConfig.hours)) return;
+
+  if (isDuplicateStreak) {
+    await supabase
+      .from("contacts")
+      .update({
+        needs_attention: true,
+        attention_reason: "Mensagem repetida várias vezes seguidas (possível teste ou loop) — agente pausado pra esse contato até revisão.",
+      })
+      .eq("id", contact.id);
+    return;
+  }
 
   const rateLimitSince = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
   const { count: recentUserMessages } = await supabase
@@ -365,7 +402,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
   const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
   const categories = [...new Set((mediaCats || []).map((m) => m.category))];
-  const { mediaFolderNotes, maxBubbles } = normalizeAgentConfig(agent.config);
+  const { mediaFolderNotes, maxBubbles } = agentConfig;
   const tools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
   const executor = categories.length ? makeToolExecutor(supabase, agent, phone, contact.id) : undefined;
 

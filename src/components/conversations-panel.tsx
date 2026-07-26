@@ -134,7 +134,7 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-semibold truncate flex items-center gap-1">
                         {c.contact.needs_attention && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-warning-text shrink-0" aria-hidden>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger shrink-0" aria-hidden>
                             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
                             <line x1="12" y1="9" x2="12" y2="13" />
                             <line x1="12" y1="17" x2="12" y2="17" />
@@ -198,7 +198,7 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
             </div>
 
             {selected.contact.needs_attention && (
-              <div className="bg-warning-soft text-warning-text text-xs font-semibold px-4 py-2">
+              <div className="bg-danger-soft text-danger text-xs font-semibold px-4 py-2">
                 {selected.contact.attention_reason || "Conversa assumida manualmente."} O agente não responde até você devolver.
               </div>
             )}

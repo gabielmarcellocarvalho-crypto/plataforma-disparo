@@ -203,6 +203,49 @@ export function formatWeekHours(hours: WeekHours): string {
     .join(". ");
 }
 
+const WEEKDAY_TO_DAY_KEY: Record<string, DayKey> = {
+  Mon: "seg",
+  Tue: "ter",
+  Wed: "qua",
+  Thu: "qui",
+  Fri: "sex",
+  Sat: "sab",
+  Sun: "dom",
+};
+
+// Checagem REAL de horário (não só o texto que vai pro prompt) — o modelo pode ignorar instrução de
+// horário, então o webhook usa isso pra decidir se responde ou não. Fuso fixo América/São Paulo (todo
+// cliente hoje é Brasil); se nenhum dia estiver marcado (config default, ninguém mexeu), não restringe
+// nada — mantém o comportamento de sempre pros agentes que nunca configuraram horário.
+export function isWithinBusinessHours(hours: WeekHours, now: Date = new Date()): boolean {
+  const hasSchedule = DAY_KEYS.some((d) => hours[d].enabled);
+  if (!hasSchedule) return true;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const weekday = parts.find((p) => p.type === "weekday")?.value || "";
+  const dayKey = WEEKDAY_TO_DAY_KEY[weekday];
+  if (!dayKey) return true; // não deveria acontecer, mas falha aberto pra nunca travar tudo por bug de fuso
+
+  const day = hours[dayKey];
+  if (!day.enabled) return false;
+
+  // "24" no formatToParts do Node vem como "24:MM" em vez de "00:MM" pra meia-noite — normaliza.
+  const hour = Number(parts.find((p) => p.type === "hour")?.value) % 24;
+  const minute = Number(parts.find((p) => p.type === "minute")?.value);
+  const nowMinutes = hour * 60 + minute;
+
+  const [openH, openM] = day.open.split(":").map(Number);
+  const [closeH, closeM] = day.close.split(":").map(Number);
+  return nowMinutes >= openH * 60 + openM && nowMinutes < closeH * 60 + closeM;
+}
+
 export function buildSystemPrompt(config: AgentConfig): string {
   const lines: string[] = [];
 
