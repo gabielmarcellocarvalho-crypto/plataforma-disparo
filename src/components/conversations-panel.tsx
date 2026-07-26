@@ -130,7 +130,7 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                           </svg>
                         )}
                         {!c.contact.needs_attention && c.contact.flagged_reason && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-info-text shrink-0" aria-hidden>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-warning-text shrink-0" aria-hidden>
                             <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
                             <line x1="4" y1="22" x2="4" y2="15" />
                           </svg>
@@ -193,7 +193,7 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
             )}
 
             {!selected.contact.needs_attention && selected.contact.flagged_reason && (
-              <div className="bg-info-soft text-info-text text-xs font-semibold px-4 py-2 flex items-center justify-between gap-3">
+              <div className="bg-warning-soft text-warning-text text-xs font-semibold px-4 py-2 flex items-center justify-between gap-3">
                 <span>{selected.contact.flagged_reason} O agente continua respondendo normalmente.</span>
                 <button
                   type="button"

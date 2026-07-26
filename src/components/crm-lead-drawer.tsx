@@ -135,7 +135,7 @@ export function CrmLeadDrawer({
               <div className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</div>
 
               {(contact.needs_attention || contact.flagged_reason) && (
-                <div className={`text-xs font-semibold rounded-lg px-3 py-2.5 ${contact.needs_attention ? "bg-warning-soft text-warning-text" : "bg-info-soft text-info-text"}`}>
+                <div className="text-xs font-semibold rounded-lg px-3 py-2.5 bg-warning-soft text-warning-text">
                   {contact.needs_attention ? contact.attention_reason || "Precisa de atenção humana." : contact.flagged_reason}
                 </div>
               )}

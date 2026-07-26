@@ -172,7 +172,7 @@ function ContactCard({
 
       <div className="flex items-center gap-1.5 flex-wrap">
         {contact.needs_attention && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">precisa de atenção</span>}
-        {!contact.needs_attention && contact.flagged_reason && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-info-soft text-info-text">alerta do agente</span>}
+        {!contact.needs_attention && contact.flagged_reason && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">alerta do agente</span>}
         {stale && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">parado {ageInStage}d</span>}
       </div>
 

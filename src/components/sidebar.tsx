@@ -125,7 +125,19 @@ const COLABORADOR_NAV_ITEMS = [
   },
 ];
 
-function NavLink({ href, label, icon, active }: { href: string; label: string; icon: React.ReactNode; active: boolean }) {
+function NavLink({
+  href,
+  label,
+  icon,
+  active,
+  badge,
+}: {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  badge?: number;
+}) {
   return (
     <Link
       href={href}
@@ -134,13 +146,31 @@ function NavLink({ href, label, icon, active }: { href: string; label: string; i
       }`}
     >
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full bg-primary" aria-hidden />}
-      <span className={active ? "text-white" : "text-sidebar-muted group-hover:text-white transition-colors"}>{icon}</span>
+      <span className={`relative ${active ? "text-white" : "text-sidebar-muted group-hover:text-white transition-colors"}`}>
+        {icon}
+        {Boolean(badge) && (
+          <span
+            className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-danger text-white text-[10px] font-bold leading-4 text-center"
+            aria-label={`${badge} ponto(s) de atenção`}
+          >
+            {badge! > 9 ? "9+" : badge}
+          </span>
+        )}
+      </span>
       {label}
     </Link>
   );
 }
 
-export function Sidebar({ workspaceSlot, isColaborador }: { workspaceSlot: React.ReactNode; isColaborador: boolean }) {
+export function Sidebar({
+  workspaceSlot,
+  isColaborador,
+  attentionCount = 0,
+}: {
+  workspaceSlot: React.ReactNode;
+  isColaborador: boolean;
+  attentionCount?: number;
+}) {
   const pathname = usePathname();
 
   return (
@@ -163,7 +193,7 @@ export function Sidebar({ workspaceSlot, isColaborador }: { workspaceSlot: React
 
       <nav className="flex flex-col gap-1">
         {NAV_ITEMS.map((item) => (
-          <NavLink key={item.href} {...item} active={pathname === item.href} />
+          <NavLink key={item.href} {...item} active={pathname === item.href} badge={item.href === "/conversas" ? attentionCount : undefined} />
         ))}
       </nav>
 

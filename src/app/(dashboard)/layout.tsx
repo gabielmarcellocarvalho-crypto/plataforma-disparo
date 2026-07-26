@@ -14,6 +14,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { workspace, isColaborador, allWorkspaces } = await getCurrentWorkspace();
 
+  // Pontos de atenção (agente travado ou só sinalizando) desse workspace — vira o badge da aba Conversas.
+  const { count: attentionCount } = workspace
+    ? await supabase
+        .from("contacts")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspace.id)
+        .or("needs_attention.eq.true,flagged_reason.not.is.null")
+    : { count: 0 };
+
   // Nenhum workspace existe ainda: só um colaborador consegue criar o primeiro.
   if (!workspace) {
     return (
@@ -44,7 +53,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar workspaceSlot={workspaceSlot} isColaborador={isColaborador} />
+      <Sidebar workspaceSlot={workspaceSlot} isColaborador={isColaborador} attentionCount={attentionCount ?? 0} />
       <div className="flex-1 flex flex-col ml-[250px] min-w-0">
         <header className="h-16 border-b border-border bg-surface/80 backdrop-blur-sm flex items-center justify-between px-7 gap-4 sticky top-0 z-30">
           <div className="flex items-center gap-2.5 min-w-0">
