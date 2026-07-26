@@ -4,7 +4,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserColaborador } from "@/lib/workspace";
 
 export type CreateWorkspaceState = { error: string | null };
 
@@ -30,6 +31,26 @@ export async function setActiveWorkspace(workspaceId: string) {
   const cookieStore = await cookies();
   cookieStore.set(ACTIVE_WORKSPACE_COOKIE, workspaceId, { httpOnly: true, sameSite: "lax", path: "/" });
   redirect("/");
+}
+
+// Remove um workspace inteiro — apaga em cascata TODOS os dados dele (contatos, agentes, conversas,
+// campanhas). Só colaborador (equipe da agência). Usa o admin client porque não há policy de DELETE
+// em workspaces (RLS bloquearia o client do usuário); a autorização é feita aqui, no servidor.
+export async function deleteWorkspace(workspaceId: string): Promise<{ error: string | null }> {
+  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode remover um workspace." };
+
+  const admin = createAdminClient();
+  const { error } = await admin.from("workspaces").delete().eq("id", workspaceId);
+  if (error) return { error: "Não foi possível remover o workspace." };
+
+  // Se o removido era o ativo, limpa o cookie pra getCurrentWorkspace cair no próximo disponível.
+  const cookieStore = await cookies();
+  if (cookieStore.get(ACTIVE_WORKSPACE_COOKIE)?.value === workspaceId) {
+    cookieStore.delete(ACTIVE_WORKSPACE_COOKIE);
+  }
+
+  revalidatePath("/", "layout");
+  return { error: null };
 }
 
 export type SaveEstimateResult = { error: string | null };

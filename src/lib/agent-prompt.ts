@@ -28,7 +28,12 @@ export function emptyWeekHours(): WeekHours {
 export type CollectFieldMode = "discreto" | "perguntar";
 export type CollectField = { key: string; label: string; mode: CollectFieldMode };
 
+export type AgentMode = "" | "recepcionista" | "sdr" | "closer";
+
 export type AgentConfig = {
+  // Objetivo do agente na conversa (Recepcionista/SDR/Closer). "Ativo vs passivo" (quem inicia) é
+  // resolvido pelas campanhas, não aqui — um agente "ativo" é uma campanha modo-agente com um desses objetivos.
+  mode: AgentMode;
   companyName: string;
   businessType: string;
   tone: "" | "formal" | "humanizado";
@@ -42,10 +47,75 @@ export type AgentConfig = {
   maxBubbles: number;
 };
 
+export type AgentModeDef = {
+  key: Exclude<AgentMode, "">;
+  label: string;
+  short: string; // descrição de uma linha pra UI
+  objective: string; // bloco injetado no prompt (objetivo + onde parar)
+  defaultHandoff: string;
+  defaultCollectFields: CollectField[];
+};
+
+// Modos = escopo do agente tratado como produto (mesmo motor, objetivo diferente), pra implantação
+// não virar projeto sob medida a cada cliente. Cada modo define o objetivo, onde a conversa termina,
+// e defaults sensatos (editáveis) de dados a coletar e de encaminhamento humano.
+export const AGENT_MODES: AgentModeDef[] = [
+  {
+    key: "recepcionista",
+    label: "Recepcionista",
+    short: "Acolhe, tira dúvidas e separa curioso de comprador. Passa pro vendedor com o que entendeu.",
+    objective:
+      "Seu objetivo é recepcionar: acolher quem chega, responder dúvidas e separar curioso de quem tem intenção real. " +
+      "Você NÃO negocia preço nem fecha venda. Quando o lead demonstrar intenção real de comprar ou avançar, conduza a " +
+      "conversa normalmente e sinalize internamente pra um vendedor humano assumir.",
+    defaultHandoff: "quando o lead demonstrar intenção real de compra ou pedir falar com um vendedor.",
+    defaultCollectFields: [
+      { key: "nome", label: "nome do cliente", mode: "discreto" },
+      { key: "telefone", label: "telefone de contato", mode: "discreto" },
+    ],
+  },
+  {
+    key: "sdr",
+    label: "SDR",
+    short: "Qualifica, quebra a objeção inicial e leva pro próximo passo (agendar com o time).",
+    objective:
+      "Seu objetivo é qualificar o lead: entender a necessidade, o momento e o orçamento, quebrar a objeção inicial e " +
+      "levar pra um próximo passo (agendar uma conversa/reunião com o time). Você NÃO apresenta preço final nem fecha a venda. " +
+      "Quando o lead estiver qualificado e quente, conduza pro agendamento e sinalize internamente pra um humano assumir.",
+    defaultHandoff: "quando o lead estiver qualificado e quente (pronto pra agendar ou falar com um vendedor).",
+    defaultCollectFields: [
+      { key: "nome", label: "nome do cliente", mode: "discreto" },
+      { key: "telefone", label: "telefone de contato", mode: "discreto" },
+      { key: "interesse", label: "o que o cliente procura", mode: "discreto" },
+      { key: "orcamento", label: "faixa de orçamento / momento de compra", mode: "perguntar" },
+    ],
+  },
+  {
+    key: "closer",
+    label: "Closer",
+    short: "Apresenta preço na faixa autorizada, negocia e conduz ao fechamento.",
+    objective:
+      "Seu objetivo é conduzir até a venda: apresentar preço e condições dentro da faixa autorizada, contornar objeções e " +
+      "levar o cliente ao fechamento. Se o cliente pedir desconto fora da faixa autorizada, ou quando chegar a hora de gerar " +
+      "o pagamento/finalizar, conduza normalmente e sinalize internamente pra um humano assumir esse passo.",
+    defaultHandoff: "quando o cliente pedir desconto fora da faixa autorizada ou estiver pronto pra pagar/fechar.",
+    defaultCollectFields: [
+      { key: "nome", label: "nome do cliente", mode: "discreto" },
+      { key: "telefone", label: "telefone de contato", mode: "discreto" },
+      { key: "produto", label: "produto/pacote de interesse", mode: "discreto" },
+    ],
+  },
+];
+
+export function getAgentMode(key: string): AgentModeDef | undefined {
+  return AGENT_MODES.find((m) => m.key === key);
+}
+
 export const MAX_BUBBLES_DEFAULT = 3;
 export const MAX_BUBBLES_CAP = 4;
 
 export const EMPTY_AGENT_CONFIG: AgentConfig = {
+  mode: "",
   companyName: "",
   businessType: "",
   tone: "",
@@ -81,7 +151,9 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   // "informal" era o nome antigo de "humanizado" — mantém compatibilidade com agente já salvo assim.
   const tone = r.tone === "formal" || r.tone === "humanizado" ? r.tone : r.tone === "informal" ? "humanizado" : "";
+  const mode = getAgentMode(String(r.mode)) ? (r.mode as AgentMode) : "";
   return {
+    mode,
     companyName: typeof r.companyName === "string" ? r.companyName : "",
     businessType: typeof r.businessType === "string" ? r.businessType : "",
     tone,
@@ -140,6 +212,9 @@ export function buildSystemPrompt(config: AgentConfig): string {
     `Você é o atendente virtual de ${empresa}${negocio}. Atende clientes pelo WhatsApp em português, de forma natural, ` +
       "objetiva e humana — nunca revele que é uma IA a menos que perguntem diretamente."
   );
+
+  const modeDef = getAgentMode(config.mode);
+  if (modeDef) lines.push(modeDef.objective);
 
   lines.push(
     "Regras de formatação (o WhatsApp não renderiza markdown, então isso quebra a mensagem pro cliente): nunca use " +

@@ -4,9 +4,12 @@ import { useState, useTransition } from "react";
 import { updateAgentConfig } from "@/app/actions/agents";
 import {
   buildSystemPrompt,
+  getAgentMode,
+  AGENT_MODES,
   DAY_KEYS,
   DAY_LABELS,
   type AgentConfig,
+  type AgentMode,
   type CollectField,
   type CollectFieldMode,
   type WeekHours,
@@ -138,6 +141,21 @@ export function AgentConfigForm({
     setSaved(false);
   }
 
+  // Escolher um modo injeta o objetivo no prompt e sugere defaults — mas só preenche campos que ainda
+  // estão vazios, pra nunca apagar o que você já configurou num agente existente.
+  function handleModeSelect(key: AgentMode) {
+    setConfig((c) => {
+      const def = getAgentMode(key);
+      const next: AgentConfig = { ...c, mode: key };
+      if (def) {
+        if (c.collectFields.length === 0) next.collectFields = def.defaultCollectFields.map((f) => ({ ...f }));
+        if (!c.handoffBehavior.trim()) next.handoffBehavior = def.defaultHandoff;
+      }
+      return next;
+    });
+    setSaved(false);
+  }
+
   function addField(preset?: (typeof PRESET_FIELDS)[number]) {
     set("collectFields", [...config.collectFields, preset ? { key: preset.key, label: preset.label, mode: preset.mode } : { key: "", label: "", mode: "discreto" }]);
   }
@@ -167,7 +185,33 @@ export function AgentConfigForm({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid sm:grid-cols-2 gap-4">
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-bold text-text-muted">Modo do agente (objetivo)</span>
+        <div className="grid sm:grid-cols-3 gap-2">
+          {AGENT_MODES.map((m) => {
+            const active = config.mode === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => handleModeSelect(active ? "" : m.key)}
+                className={`text-left p-3 rounded-lg border cursor-pointer transition-colors ${
+                  active ? "border-primary-strong bg-primary-faint" : "border-border hover:border-primary-soft"
+                }`}
+              >
+                <div className={`text-sm font-bold ${active ? "text-primary-strong" : ""}`}>{m.label}</div>
+                <div className="text-[11px] text-text-muted mt-0.5 leading-snug">{m.short}</div>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-text-muted">
+          Define o objetivo do agente e sugere campos e encaminhamento (tudo editável). Se o cliente inicia o contato, o
+          agente espera; pra ele abordar ativamente, use uma campanha no modo agente com esse mesmo objetivo.
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4 border-t border-border pt-4">
         <TextField label="Nome da empresa" value={config.companyName} onChange={(v) => set("companyName", v)} placeholder="Ex: Hotel Fazenda Ecoville" />
         <TextField label="Tipo de negócio" value={config.businessType} onChange={(v) => set("businessType", v)} placeholder="Ex: hotel fazenda" />
         <ToneField value={config.tone} onChange={(v) => set("tone", v)} />
