@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
+import { resolveStageLabels } from "@/lib/crm-stages";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
 
 const MESSAGE_LIMIT = 500;
@@ -29,12 +29,10 @@ export default async function ConversasPage() {
       .not("agent_id", "is", null)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),
-    supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
+    supabase.from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
   ]);
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
-  const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
-  const visibleStages = getVisibleStages(hiddenStages);
 
   const contactIds = Array.from(new Set((messages || []).map((m) => m.contact_id)));
   const { data: contacts } =
@@ -76,7 +74,7 @@ export default async function ConversasPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Conversas</h1>
         <p className="text-text-muted text-sm mt-1">Acompanhe e assuma as conversas dos agentes em tempo real.</p>
       </div>
-      <ConversationsPanel conversations={conversations} stageLabels={stageLabels} visibleStages={visibleStages} />
+      <ConversationsPanel conversations={conversations} stageLabels={stageLabels} />
     </div>
   );
 }

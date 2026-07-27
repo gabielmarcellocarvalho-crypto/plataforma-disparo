@@ -3,7 +3,18 @@
 import { useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
-import { updateContactStage } from "@/app/actions/contacts";
+
+// Mesma leitura de cor por etapa do Kanban — só exibe aqui, quem move o card é o CRM (arrastar) ou
+// o agente de IA sozinho ([[STATUS: ...]]), nunca essa tela.
+const STAGE_BADGE: Record<string, string> = {
+  nao_abordado: "bg-bg text-text-muted",
+  abordado: "bg-primary-soft text-primary-strong",
+  interessado: "bg-info-soft text-info-text",
+  encaminhamento: "bg-warning-soft text-warning-text",
+  fechando_proposta: "bg-primary-soft text-primary-strong",
+  concluido: "bg-success-soft text-success",
+  descartado: "bg-danger-soft text-danger",
+};
 
 type Contact = {
   id: string;
@@ -31,11 +42,9 @@ function formatTime(iso: string) {
 export function ConversationsPanel({
   conversations,
   stageLabels,
-  visibleStages,
 }: {
   conversations: Conversation[];
   stageLabels: Record<string, string>;
-  visibleStages: string[];
 }) {
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
@@ -76,14 +85,6 @@ export function ConversationsPanel({
     setError(null);
     startTransition(async () => {
       const result = await resolveAttention(contactId);
-      if (result.error) setError(result.error);
-    });
-  }
-
-  function handleStageChange(contactId: string, stage: string) {
-    setError(null);
-    startTransition(async () => {
-      const result = await updateContactStage(contactId, stage);
       if (result.error) setError(result.error);
     });
   }
@@ -137,14 +138,10 @@ export function ConversationsPanel({
               const last = c.messages[0];
               const active = key === selectedKey;
               return (
-                <div
+                <button
                   key={key}
-                  role="button"
-                  tabIndex={0}
+                  type="button"
                   onClick={() => setSelectedKey(key)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") setSelectedKey(key);
-                  }}
                   className={`w-full text-left flex items-center gap-3 px-3 py-3 border-b border-border cursor-pointer ${
                     active ? "bg-primary-faint" : "hover:bg-bg"
                   }`}
@@ -170,31 +167,21 @@ export function ConversationsPanel({
                         )}
                         <span className="truncate">{c.contact.name || c.contact.phone || "sem nome"}</span>
                       </span>
+                      <span
+                        title="Etapa do funil (muda pelo Kanban ou automaticamente pelo agente)"
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
+                      >
+                        {stageLabels[c.contact.stage] || c.contact.stage}
+                      </span>
                       {last && <time className="text-xs text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
                     </div>
-                    <div className="flex items-center justify-between gap-2 mt-0.5">
-                      <p className="text-sm text-text-muted truncate">
-                        {c.contact.needs_attention
-                          ? c.contact.attention_reason || "Precisa de atenção"
-                          : c.contact.flagged_reason || last?.content || ""}
-                      </p>
-                      <select
-                        value={c.contact.stage}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => handleStageChange(c.contact.id, e.target.value)}
-                        disabled={pending}
-                        title="Etiqueta do funil — move o card no CRM"
-                        className="text-[11px] font-bold px-1.5 py-1 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
-                      >
-                        {(visibleStages.includes(c.contact.stage) ? visibleStages : [...visibleStages, c.contact.stage]).map((s) => (
-                          <option key={s} value={s}>
-                            {stageLabels[s] || s}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <p className="text-sm text-text-muted truncate mt-0.5">
+                      {c.contact.needs_attention
+                        ? c.contact.attention_reason || "Precisa de atenção"
+                        : c.contact.flagged_reason || last?.content || ""}
+                    </p>
                   </div>
-                </div>
+                </button>
               );
             })
           )}
