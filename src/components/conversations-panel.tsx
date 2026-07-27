@@ -3,11 +3,13 @@
 import { useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
+import { updateContactStage } from "@/app/actions/contacts";
 
 type Contact = {
   id: string;
   name: string | null;
   phone: string | null;
+  stage: string;
   needs_attention: boolean;
   attention_reason: string | null;
   flagged_reason: string | null;
@@ -26,7 +28,15 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
-export function ConversationsPanel({ conversations }: { conversations: Conversation[] }) {
+export function ConversationsPanel({
+  conversations,
+  stageLabels,
+  visibleStages,
+}: {
+  conversations: Conversation[];
+  stageLabels: Record<string, string>;
+  visibleStages: string[];
+}) {
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
 
@@ -66,6 +76,14 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
     setError(null);
     startTransition(async () => {
       const result = await resolveAttention(contactId);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleStageChange(contactId: string, stage: string) {
+    setError(null);
+    startTransition(async () => {
+      const result = await updateContactStage(contactId, stage);
       if (result.error) setError(result.error);
     });
   }
@@ -176,6 +194,19 @@ export function ConversationsPanel({ conversations }: { conversations: Conversat
                 <div className="text-base font-bold truncate">{selected.contact.name || selected.contact.phone}</div>
                 <div className="text-sm text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
               </div>
+              <select
+                value={selected.contact.stage}
+                onChange={(e) => handleStageChange(selected.contact.id, e.target.value)}
+                disabled={pending}
+                title="Etiqueta do funil — move o card no CRM"
+                className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary"
+              >
+                {(visibleStages.includes(selected.contact.stage) ? visibleStages : [...visibleStages, selected.contact.stage]).map((s) => (
+                  <option key={s} value={s}>
+                    {stageLabels[s] || s}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 onClick={() => handleClearHistory(selected.contact.id, selected.agent.id)}

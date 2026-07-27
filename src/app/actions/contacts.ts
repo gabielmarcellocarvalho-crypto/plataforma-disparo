@@ -108,6 +108,7 @@ export async function updateContactStage(contactId: string, stage: string): Prom
   if (error) return { error: "Não foi possível mover o contato." };
 
   revalidatePath("/crm");
+  revalidatePath("/conversas");
   return { error: null, ok: true };
 }
 

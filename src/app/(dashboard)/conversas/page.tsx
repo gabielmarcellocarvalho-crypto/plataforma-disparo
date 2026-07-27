@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
+import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
 
 const MESSAGE_LIMIT = 500;
@@ -16,25 +17,31 @@ export default async function ConversasPage() {
     );
   }
 
-  const { data: agents } = await supabase
-    .from("agents")
-    .select("id, name, photo_url, evolution_instance_name")
-    .eq("workspace_id", workspace.id);
+  const [{ data: agents }, { data: messages }, { data: workspaceRow }] = await Promise.all([
+    supabase
+      .from("agents")
+      .select("id, name, photo_url, evolution_instance_name")
+      .eq("workspace_id", workspace.id),
+    supabase
+      .from("messages")
+      .select("id, contact_id, agent_id, role, content, created_at")
+      .eq("workspace_id", workspace.id)
+      .not("agent_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(MESSAGE_LIMIT),
+    supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
+  ]);
 
-  const { data: messages } = await supabase
-    .from("messages")
-    .select("id, contact_id, agent_id, role, content, created_at")
-    .eq("workspace_id", workspace.id)
-    .not("agent_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(MESSAGE_LIMIT);
+  const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
+  const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
+  const visibleStages = getVisibleStages(hiddenStages);
 
   const contactIds = Array.from(new Set((messages || []).map((m) => m.contact_id)));
   const { data: contacts } =
     contactIds.length > 0
       ? await supabase
           .from("contacts")
-          .select("id, name, phone, needs_attention, attention_reason, flagged_reason")
+          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason")
           .in("id", contactIds)
       : { data: [] };
 
@@ -69,7 +76,7 @@ export default async function ConversasPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Conversas</h1>
         <p className="text-text-muted text-sm mt-1">Acompanhe e assuma as conversas dos agentes em tempo real.</p>
       </div>
-      <ConversationsPanel conversations={conversations} />
+      <ConversationsPanel conversations={conversations} stageLabels={stageLabels} visibleStages={visibleStages} />
     </div>
   );
 }
