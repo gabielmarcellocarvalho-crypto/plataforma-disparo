@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { updateAgentConfig } from "@/app/actions/agents";
+import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import {
   buildSystemPrompt,
   getAgentMode,
@@ -185,6 +186,7 @@ export function AgentConfigForm({
 
   return (
     <div className="flex flex-col gap-5">
+      <ToggleGooeyFilter />
       <div className="flex flex-col gap-2">
         <span className="text-xs font-bold text-text-muted">Modo do agente (objetivo)</span>
         <div className="grid sm:grid-cols-3 gap-2">
@@ -258,20 +260,11 @@ export function AgentConfigForm({
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold">Follow-up automático</span>
-          <button
-            type="button"
-            onClick={() => set("followUp", { ...config.followUp, enabled: !config.followUp.enabled })}
-            className={`relative w-[42px] h-[22px] rounded-full cursor-pointer transition-colors shrink-0 ${
-              config.followUp.enabled ? "bg-primary-strong" : "bg-border"
-            }`}
-            aria-label={config.followUp.enabled ? "Desativar follow-up automático" : "Ativar follow-up automático"}
-          >
-            <span
-              className={`absolute top-[2px] w-[18px] h-[18px] rounded-full bg-white shadow-sm transition-transform ${
-                config.followUp.enabled ? "translate-x-[22px]" : "translate-x-[2px]"
-              }`}
-            />
-          </button>
+          <ToggleSwitch
+            checked={config.followUp.enabled}
+            onCheckedChange={(v) => set("followUp", { ...config.followUp, enabled: v })}
+            ariaLabel={config.followUp.enabled ? "Desativar follow-up automático" : "Ativar follow-up automático"}
+          />
         </div>
         <p className="text-xs text-text-muted">
           Se o contato parar de responder depois de uma mensagem do agente, retoma a conversa sozinho de tempos em
