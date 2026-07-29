@@ -269,6 +269,8 @@ export function AgentConfigForm({
         <p className="text-xs text-text-muted">
           Se o contato parar de responder depois de uma mensagem do agente, retoma a conversa sozinho de tempos em
           tempos, até um limite de tentativas — depois disso, move o contato pra &quot;descartado&quot; no CRM sozinho.
+          Não vale pra todo lead: <strong className="text-text">não atua em quem já está concluído, descartado, com
+          atendimento pausado (atenção humana) ou que pediu pra não receber mais mensagens.</strong>
         </p>
         {config.followUp.enabled && (
           <div className="grid grid-cols-2 gap-3 mt-1">

@@ -14,10 +14,10 @@ const styles = {
     [backface-visibility:hidden]
     [perspective:1000]`,
   input: `h-full w-full cursor-pointer appearance-none rounded-full
-    bg-[--c-default] outline-none transition-colors duration-500
-    hover:bg-[--c-default-dark]
+    bg-[var(--c-default)] outline-none transition-colors duration-500
+    hover:bg-[var(--c-default-dark)]
     [transform:translate3d(0,0,0)]
-    data-[checked=true]:bg-[--c-background]
+    data-[checked=true]:bg-[var(--c-background)]
     data-[checked=true]:hover:opacity-90`,
   svg: `pointer-events-none absolute inset-0 fill-white
     [transform:translate3d(0,0,0)]`,
