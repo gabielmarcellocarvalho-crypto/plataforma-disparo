@@ -3,7 +3,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { MessagesAreaChart } from "@/components/charts/messages-area-chart";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { getMonthToDateAgentCostUsd, getConversationsInRange, evalCostBudget } from "@/lib/cost-monitor";
-import { resolvePeriod, eachDayUtc, dayKeyUtc } from "@/lib/period";
+import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
 
 function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
@@ -46,14 +46,14 @@ export default async function OverviewPage({
     : [{ count: 0 }, { count: 0 }, { data: [] }, 0];
 
   // Distribui as mensagens do período por dia.
-  const days = eachDayUtc(period.from, period.to);
+  const days = eachDayBrt(period.from, period.to);
   const msgByDay = new Map(days.map((d) => [d, 0]));
   for (const m of periodMsgs || []) {
-    const key = dayKeyUtc(m.created_at as string);
+    const key = dayKeyBrt(m.created_at as string);
     if (msgByDay.has(key)) msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
   const totalPeriodo = periodMsgs?.length ?? 0;
-  const chartData = days.map((d) => ({ date: `${d}T00:00:00.000Z`, mensagens: msgByDay.get(d) || 0 }));
+  const chartData = days.map((d) => ({ date: `${d}T12:00:00.000Z`, mensagens: msgByDay.get(d) || 0 }));
 
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
   // Continua sempre "mês corrente", independente do período escolhido no filtro: orçamento é mensal por natureza.

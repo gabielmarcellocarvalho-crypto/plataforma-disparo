@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
 import { COST_USD_TO_BRL, DEFAULT_DELIVERY_RATE_BRL } from "@/lib/cost-constants";
-import { eachDayUtc, dayKeyUtc } from "@/lib/period";
+import { eachDayBrt, dayKeyBrt } from "@/lib/period";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 export { COST_USD_TO_BRL };
@@ -96,19 +96,19 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
     .lte("created_at", range.to.toISOString())
     .limit(20000);
 
-  const days = eachDayUtc(range.from, range.to);
+  const days = eachDayBrt(range.from, range.to);
   const usdByDay = new Map(days.map((d) => [d, 0]));
   const msgByDay = new Map(days.map((d) => [d, 0]));
 
   for (const row of data || []) {
-    const key = dayKeyUtc(row.created_at as string);
+    const key = dayKeyBrt(row.created_at as string);
     if (!usdByDay.has(key)) continue;
     usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row));
     msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
 
   return days.map((d) => ({
-    date: `${d}T00:00:00.000Z`,
+    date: `${d}T12:00:00.000Z`,
     ia: Math.round((usdByDay.get(d) || 0) * COST_USD_TO_BRL * 100) / 100,
     entrega: Math.round((msgByDay.get(d) || 0) * DEFAULT_DELIVERY_RATE_BRL * 100) / 100,
   }));
