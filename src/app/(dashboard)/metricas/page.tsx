@@ -1,27 +1,36 @@
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createClient } from "@/lib/supabase/server";
-import { getMonthToDateCostByAgent, getMonthToDateDailyCost, COST_USD_TO_BRL } from "@/lib/cost-monitor";
+import { getCostByAgentInRange, getDailyCostInRange, getConversationsInRange, COST_USD_TO_BRL } from "@/lib/cost-monitor";
+import { resolvePeriod } from "@/lib/period";
+import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { CostBudgetCard } from "@/components/cost-budget-card";
 import { DeliveryCostEstimate } from "@/components/delivery-cost-estimate";
 import { CostStackedBarChart } from "@/components/charts/cost-stacked-bar-chart";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
-export default async function MetricasPage() {
+export default async function MetricasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ preset?: string; from?: string; to?: string }>;
+}) {
+  const sp = await searchParams;
+  const period = resolvePeriod(sp);
   const { workspace, isColaborador } = await getCurrentWorkspace();
 
   // Custo (por agente) e orçamento só fazem sentido pra colaborador — cliente nunca vê custo/margem.
   const showCost = Boolean(workspace && isColaborador);
 
-  const [agentCosts, budgetRow, dailyCost] = showCost
+  const [agentCosts, budgetRow, dailyCost, conversationsInPeriod] = showCost
     ? await Promise.all([
-        getMonthToDateCostByAgent(workspace!.id),
+        getCostByAgentInRange(workspace!.id, period),
         createClient().then((s) =>
           s.from("workspaces").select("monthly_cost_budget_brl, cost_alert_pct").eq("id", workspace!.id).maybeSingle()
         ),
-        getMonthToDateDailyCost(workspace!.id),
+        getDailyCostInRange(workspace!.id, period),
+        getConversationsInRange(workspace!.id, period),
       ])
-    : [[], { data: null }, []];
+    : [[], { data: null }, [], 0];
 
   const totalCostUsd = agentCosts.reduce((sum, a) => sum + a.costUsd, 0);
   const totalCostBrl = totalCostUsd * COST_USD_TO_BRL;
@@ -34,13 +43,15 @@ export default async function MetricasPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Métricas</h1>
-        <p className="text-text-muted text-sm mt-1">Custo e desempenho do workspace atual — custos referem-se ao mês corrente.</p>
+        <p className="text-text-muted text-sm mt-1">Custo e desempenho do workspace atual.</p>
       </div>
 
+      <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
+
       {showCost && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold text-text-muted">Custo de IA (mês)</span>
+            <span className="text-xs font-semibold text-text-muted">Custo de IA ({period.label})</span>
             <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {totalCostBrl.toFixed(2)}</b>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
@@ -48,8 +59,12 @@ export default async function MetricasPage() {
             <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {avgCostPerConversationBrl.toFixed(3)}</b>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold text-text-muted">Mensagens de agente (mês)</span>
+            <span className="text-xs font-semibold text-text-muted">Mensagens de agente ({period.label})</span>
             <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">{totalMessages}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">Conversas ({period.label})</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">{conversationsInPeriod}</b>
           </div>
         </div>
       )}
@@ -67,7 +82,7 @@ export default async function MetricasPage() {
 
       {showCost && (
         <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
-          <h3 className="font-bold text-[15px] mb-1">Custo por dia (mês)</h3>
+          <h3 className="font-bold text-[15px] mb-1">Custo por dia ({period.label})</h3>
           <p className="text-xs text-text-muted mb-4">
             IA é custo medido de verdade; entrega é estimativa (tarifa padrão da API oficial × mensagens do dia) — ajuda
             a ver se algum dia teve pico fora do padrão e quanto do custo total viria de cada parte.
@@ -80,19 +95,19 @@ export default async function MetricasPage() {
         <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
           <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
             <div>
-              <h3 className="font-bold text-[15px]">Custo de IA por agente (mês)</h3>
+              <h3 className="font-bold text-[15px]">Custo de IA por agente ({period.label})</h3>
               <p className="text-xs text-text-muted mt-0.5">
                 {totalMessages} resposta(s) em {totalConversations} conversa(s) — modelo {ANTHROPIC_MODEL}.
               </p>
             </div>
             <div className="text-right">
               <div className="text-lg font-extrabold">R$ {totalCostBrl.toFixed(2)}</div>
-              <div className="text-xs text-text-muted">total do mês</div>
+              <div className="text-xs text-text-muted">total do período</div>
             </div>
           </div>
 
           {agentCosts.length === 0 ? (
-            <p className="text-sm text-text-muted text-center py-6">Nenhuma resposta de agente este mês ainda.</p>
+            <p className="text-sm text-text-muted text-center py-6">Nenhuma resposta de agente nesse período.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -101,7 +116,7 @@ export default async function MetricasPage() {
                     <th className="px-3 py-2">Agente</th>
                     <th className="px-3 py-2 text-right">Mensagens</th>
                     <th className="px-3 py-2 text-right">Conversas</th>
-                    <th className="px-3 py-2 text-right">Custo (mês)</th>
+                    <th className="px-3 py-2 text-right">Custo</th>
                     <th className="px-3 py-2 text-right">Média/conversa</th>
                   </tr>
                 </thead>

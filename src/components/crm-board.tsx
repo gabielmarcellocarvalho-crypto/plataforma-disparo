@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { updateContactStage, updateCrmStageSettings } from "@/app/actions/contacts";
 import { STAGE_ORDER, HIDEABLE_STAGES, getVisibleStages, displayStageFor, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
+import { GlassDateRangePicker, formatBr } from "@/components/glass-date-range-picker";
 
 type Contact = {
   id: string;
@@ -291,11 +292,21 @@ export function CrmBoard({
             />
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-border rounded-md px-2 py-2 text-xs outline-none focus:border-primary" />
-            <span className="text-xs text-text-muted">até</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-border rounded-md px-2 py-2 text-xs outline-none focus:border-primary" />
-          </div>
+          <GlassDateRangePicker
+            triggerLabel={dateFrom && dateTo ? `${formatBr(dateFrom)} – ${formatBr(dateTo)}` : "Data de entrada"}
+            from={dateFrom}
+            to={dateTo}
+            showPresets={false}
+            allowClear
+            onApplyRange={(start, end) => {
+              setDateFrom(start);
+              setDateTo(end);
+            }}
+            onClear={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          />
 
           <button
             type="button"

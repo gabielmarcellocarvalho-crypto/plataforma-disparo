@@ -1,9 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { MessagesAreaChart } from "@/components/charts/messages-area-chart";
-import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
-
-const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+import { PeriodFilterBar } from "@/components/period-filter-bar";
+import { getMonthToDateAgentCostUsd, getConversationsInRange, evalCostBudget } from "@/lib/cost-monitor";
+import { resolvePeriod, eachDayUtc, dayKeyUtc } from "@/lib/period";
 
 function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
@@ -19,60 +19,44 @@ function StatCard({ label, value, icon }: { label: string; value: number | strin
   );
 }
 
-export default async function OverviewPage() {
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ preset?: string; from?: string; to?: string }>;
+}) {
+  const sp = await searchParams;
+  const period = resolvePeriod(sp);
   const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const now = new Date();
-  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const startOfDay = new Date();
-  startOfDay.setUTCHours(0, 0, 0, 0);
-  const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getDate();
+  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, conversasNoPeriodo] = workspace
+    ? await Promise.all([
+        supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
+        supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("status", "ativa"),
+        supabase
+          .from("messages")
+          .select("created_at")
+          .eq("workspace_id", workspace.id)
+          .eq("role", "assistant")
+          .gte("created_at", period.from.toISOString())
+          .lte("created_at", period.to.toISOString())
+          .limit(20000),
+        getConversationsInRange(workspace.id, period),
+      ])
+    : [{ count: 0 }, { count: 0 }, { data: [] }, 0];
 
-  const [{ count: contatos }, { count: campanhasAtivas }, { count: mensagensHoje }, { data: conversationPairs }, { data: monthMsgs }] =
-    workspace
-      ? await Promise.all([
-          supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
-          supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("status", "ativa"),
-          supabase
-            .from("messages")
-            .select("id", { count: "exact", head: true })
-            .eq("workspace_id", workspace.id)
-            .eq("role", "assistant")
-            .gte("created_at", startOfDay.toISOString()),
-          supabase
-            .from("messages")
-            .select("contact_id, agent_id")
-            .eq("workspace_id", workspace.id)
-            .not("agent_id", "is", null)
-            .limit(20000),
-          supabase
-            .from("messages")
-            .select("created_at")
-            .eq("workspace_id", workspace.id)
-            .eq("role", "assistant")
-            .gte("created_at", startOfMonth.toISOString())
-            .limit(20000),
-        ])
-      : [{ count: 0 }, { count: 0 }, { count: 0 }, { data: [] }, { data: [] }];
-
-  // Conversa = par único contato+agente (mesma definição usada em Conversas).
-  const totalConversas = new Set((conversationPairs || []).map((m) => `${m.contact_id}:${m.agent_id}`)).size;
-
-  // Distribui as mensagens do mês por dia.
-  const counts = new Array(daysInMonth).fill(0);
-  for (const m of monthMsgs || []) {
-    const d = new Date(m.created_at as string);
-    const day = d.getUTCDate();
-    if (day >= 1 && day <= daysInMonth) counts[day - 1] += 1;
+  // Distribui as mensagens do período por dia.
+  const days = eachDayUtc(period.from, period.to);
+  const msgByDay = new Map(days.map((d) => [d, 0]));
+  for (const m of periodMsgs || []) {
+    const key = dayKeyUtc(m.created_at as string);
+    if (msgByDay.has(key)) msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
-  const totalMes = counts.reduce((a, b) => a + b, 0);
-  const chartData = counts.map((c, idx) => ({
-    date: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), idx + 1)).toISOString(),
-    mensagens: c,
-  }));
+  const totalPeriodo = periodMsgs?.length ?? 0;
+  const chartData = days.map((d) => ({ date: `${d}T00:00:00.000Z`, mensagens: msgByDay.get(d) || 0 }));
 
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
+  // Continua sempre "mês corrente", independente do período escolhido no filtro: orçamento é mensal por natureza.
   let costAlert: { ratioPct: number; costBrl: number; budgetBrl: number } | null = null;
   if (workspace && isColaborador) {
     const { data: budgetRow } = await supabase
@@ -95,6 +79,8 @@ export default async function OverviewPage() {
         <h1 className="text-[26px] font-extrabold tracking-tight">Visão geral</h1>
         <p className="text-text-muted text-sm mt-1">Resumo de {workspace?.name ?? "—"}.</p>
       </div>
+
+      <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
 
       {costAlert && (
         <a
@@ -144,8 +130,8 @@ export default async function OverviewPage() {
           }
         />
         <StatCard
-          label="mensagens hoje"
-          value={mensagensHoje ?? 0}
+          label={`mensagens (${period.label})`}
+          value={totalPeriodo}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -153,8 +139,8 @@ export default async function OverviewPage() {
           }
         />
         <StatCard
-          label="conversas"
-          value={totalConversas}
+          label={`conversas (${period.label})`}
+          value={conversasNoPeriodo}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 8h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1v3l-3-3h-5a1 1 0 0 1-1-1v-1" />
@@ -168,13 +154,11 @@ export default async function OverviewPage() {
         <div className="flex items-start justify-between flex-wrap gap-2 mb-4">
           <div>
             <h3 className="font-bold text-[15px]">Mensagens enviadas por dia</h3>
-            <p className="text-xs text-text-muted mt-0.5">
-              {MESES[now.getUTCMonth()]} de {now.getUTCFullYear()}
-            </p>
+            <p className="text-xs text-text-muted mt-0.5 capitalize">{period.label}</p>
           </div>
           <div className="text-right">
-            <b className="block text-2xl font-extrabold tracking-tight leading-none text-primary-strong">{totalMes}</b>
-            <span className="text-xs font-semibold text-text-muted">no mês</span>
+            <b className="block text-2xl font-extrabold tracking-tight leading-none text-primary-strong">{totalPeriodo}</b>
+            <span className="text-xs font-semibold text-text-muted">no período</span>
           </div>
         </div>
         <MessagesAreaChart data={chartData} />

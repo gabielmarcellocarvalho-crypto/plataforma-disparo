@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
 import { COST_USD_TO_BRL, DEFAULT_DELIVERY_RATE_BRL } from "@/lib/cost-constants";
+import { eachDayUtc, dayKeyUtc } from "@/lib/period";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 export { COST_USD_TO_BRL };
@@ -25,23 +26,31 @@ export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<n
     .not("agent_id", "is", null)
     .gte("created_at", startOfMonthIso());
 
-  let usd = 0;
-  for (const row of data || []) {
-    usd += estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
-      inputTokens: row.input_tokens || 0,
-      outputTokens: row.output_tokens || 0,
-      cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
-      cacheReadInputTokens: row.cache_read_input_tokens || 0,
-    });
-  }
-  return usd;
+  return (data || []).reduce((sum, row) => sum + costRowUsd(row), 0);
 }
 
 export type AgentCostRow = { agentId: string; name: string; costUsd: number; messages: number; conversations: number };
+export type DailyCostPoint = { date: string; ia: number; entrega: number };
+export type Range = { from: Date; to: Date };
 
-// Custo de IA do mês corrente quebrado POR AGENTE (um workspace pode ter vários) — pra saber qual
-// agente está puxando o custo, não só o total do cliente.
-export async function getMonthToDateCostByAgent(workspaceId: string): Promise<AgentCostRow[]> {
+function costRowUsd(row: {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  cache_read_input_tokens: number | null;
+}): number {
+  return estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
+    inputTokens: row.input_tokens || 0,
+    outputTokens: row.output_tokens || 0,
+    cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
+    cacheReadInputTokens: row.cache_read_input_tokens || 0,
+  });
+}
+
+// Versões com período arbitrário (filtro de Métricas/Visão geral) — as funções "MonthToDate" acima
+// continuam existindo à parte porque o orçamento (`monthly_cost_budget_brl`) é um conceito
+// inerentemente mensal, independente do período que o usuário está navegando na tela.
+export async function getCostByAgentInRange(workspaceId: string, range: Range): Promise<AgentCostRow[]> {
   const supabase = await createClient();
   const [{ data: msgs }, { data: agents }] = await Promise.all([
     supabase
@@ -50,7 +59,9 @@ export async function getMonthToDateCostByAgent(workspaceId: string): Promise<Ag
       .eq("workspace_id", workspaceId)
       .eq("role", "assistant")
       .not("agent_id", "is", null)
-      .gte("created_at", startOfMonthIso()),
+      .gte("created_at", range.from.toISOString())
+      .lte("created_at", range.to.toISOString())
+      .limit(20000),
     supabase.from("agents").select("id, name").eq("workspace_id", workspaceId),
   ]);
 
@@ -60,12 +71,7 @@ export async function getMonthToDateCostByAgent(workspaceId: string): Promise<Ag
   for (const m of msgs || []) {
     const id = m.agent_id as string;
     const bucket = acc.get(id) || { costUsd: 0, messages: 0, conv: new Set<string>() };
-    bucket.costUsd += estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
-      inputTokens: m.input_tokens || 0,
-      outputTokens: m.output_tokens || 0,
-      cacheCreationInputTokens: m.cache_creation_input_tokens || 0,
-      cacheReadInputTokens: m.cache_read_input_tokens || 0,
-    });
+    bucket.costUsd += costRowUsd(m);
     bucket.messages += 1;
     bucket.conv.add(m.contact_id as string);
     acc.set(id, bucket);
@@ -76,43 +82,52 @@ export async function getMonthToDateCostByAgent(workspaceId: string): Promise<Ag
     .sort((a, b) => b.costUsd - a.costUsd);
 }
 
-export type DailyCostPoint = { date: string; ia: number; entrega: number };
-
-// Custo por dia no mês corrente (workspace inteiro), quebrado em IA (medido) + entrega estimada
-// (mensagens do dia × tarifa padrão da API oficial) — alimenta o gráfico de barras em Métricas.
-export async function getMonthToDateDailyCost(workspaceId: string): Promise<DailyCostPoint[]> {
+// Custo por dia dentro do período (qualquer duração) — mesma decomposição IA medida + entrega
+// estimada do gráfico de Métricas, só que sem travar em "mês corrente".
+export async function getDailyCostInRange(workspaceId: string, range: Range): Promise<DailyCostPoint[]> {
   const supabase = await createClient();
-  const now = new Date();
-  const daysInMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() + 1, 0).getDate();
-
   const { data } = await supabase
     .from("messages")
     .select("created_at, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
     .eq("workspace_id", workspaceId)
     .eq("role", "assistant")
     .not("agent_id", "is", null)
-    .gte("created_at", startOfMonthIso())
+    .gte("created_at", range.from.toISOString())
+    .lte("created_at", range.to.toISOString())
     .limit(20000);
 
-  const perDayUsd = new Array(daysInMonth).fill(0);
-  const perDayMessages = new Array(daysInMonth).fill(0);
+  const days = eachDayUtc(range.from, range.to);
+  const usdByDay = new Map(days.map((d) => [d, 0]));
+  const msgByDay = new Map(days.map((d) => [d, 0]));
+
   for (const row of data || []) {
-    const day = new Date(row.created_at as string).getUTCDate();
-    if (day < 1 || day > daysInMonth) continue;
-    perDayUsd[day - 1] += estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
-      inputTokens: row.input_tokens || 0,
-      outputTokens: row.output_tokens || 0,
-      cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
-      cacheReadInputTokens: row.cache_read_input_tokens || 0,
-    });
-    perDayMessages[day - 1] += 1;
+    const key = dayKeyUtc(row.created_at as string);
+    if (!usdByDay.has(key)) continue;
+    usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row));
+    msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
 
-  return perDayUsd.map((usd, idx) => ({
-    date: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), idx + 1)).toISOString(),
-    ia: Math.round(usd * COST_USD_TO_BRL * 100) / 100,
-    entrega: Math.round(perDayMessages[idx] * DEFAULT_DELIVERY_RATE_BRL * 100) / 100,
+  return days.map((d) => ({
+    date: `${d}T00:00:00.000Z`,
+    ia: Math.round((usdByDay.get(d) || 0) * COST_USD_TO_BRL * 100) / 100,
+    entrega: Math.round((msgByDay.get(d) || 0) * DEFAULT_DELIVERY_RATE_BRL * 100) / 100,
   }));
+}
+
+// Conversas (par único contato+agente) que tiveram resposta de agente dentro do período — mesma
+// definição usada na tela de Conversas e na Visão geral.
+export async function getConversationsInRange(workspaceId: string, range: Range): Promise<number> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("messages")
+    .select("contact_id, agent_id")
+    .eq("workspace_id", workspaceId)
+    .not("agent_id", "is", null)
+    .gte("created_at", range.from.toISOString())
+    .lte("created_at", range.to.toISOString())
+    .limit(20000);
+
+  return new Set((data || []).map((m) => `${m.contact_id}:${m.agent_id}`)).size;
 }
 
 export type CostBudgetStatus = {
