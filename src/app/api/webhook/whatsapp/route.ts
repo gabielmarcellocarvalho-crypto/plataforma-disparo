@@ -2,7 +2,7 @@ import { NextResponse, after } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
-import { generateReply, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
+import { generateReply, capBubbles, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
@@ -253,15 +253,6 @@ async function processWebhook(body: {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Garante no máximo `max` bolhas — se o modelo quebrou demais, junta o excedente na última bolha
-// (não descarta texto). `max` já vem saneado (1..4) pela normalizeAgentConfig.
-function capBubbles(parts: string[], max: number): string[] {
-  if (parts.length <= max) return parts;
-  const kept = parts.slice(0, max - 1);
-  const rest = parts.slice(max - 1).join("\n");
-  return [...kept, rest];
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;

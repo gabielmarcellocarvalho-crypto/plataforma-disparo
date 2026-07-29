@@ -256,6 +256,56 @@ export function AgentConfigForm({
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold">Follow-up automático</span>
+          <button
+            type="button"
+            onClick={() => set("followUp", { ...config.followUp, enabled: !config.followUp.enabled })}
+            className={`relative w-[42px] h-[22px] rounded-full cursor-pointer transition-colors shrink-0 ${
+              config.followUp.enabled ? "bg-primary-strong" : "bg-border"
+            }`}
+            aria-label={config.followUp.enabled ? "Desativar follow-up automático" : "Ativar follow-up automático"}
+          >
+            <span
+              className={`absolute top-[2px] w-[18px] h-[18px] rounded-full bg-white shadow-sm transition-transform ${
+                config.followUp.enabled ? "translate-x-[22px]" : "translate-x-[2px]"
+              }`}
+            />
+          </button>
+        </div>
+        <p className="text-xs text-text-muted">
+          Se o contato parar de responder depois de uma mensagem do agente, retoma a conversa sozinho de tempos em
+          tempos, até um limite de tentativas — depois disso, move o contato pra &quot;descartado&quot; no CRM sozinho.
+        </p>
+        {config.followUp.enabled && (
+          <div className="grid grid-cols-2 gap-3 mt-1">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-text-muted">A cada quantos dias de silêncio</span>
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={config.followUp.intervalDays}
+                onChange={(e) => set("followUp", { ...config.followUp, intervalDays: Math.max(1, Math.min(30, Number(e.target.value) || 1)) })}
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-text-muted">Quantas tentativas antes de parar</span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={config.followUp.maxCount}
+                onChange={(e) => set("followUp", { ...config.followUp, maxCount: Math.max(1, Math.min(10, Number(e.target.value) || 1)) })}
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+            </label>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-border pt-4">
         <span className="text-sm font-bold">Informações que preciso</span>
         <p className="text-xs text-text-muted">
           Dados que o agente deve descobrir na conversa e salvar no contato (aparecem depois em Contatos/CRM). Se não

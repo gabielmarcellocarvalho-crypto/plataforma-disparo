@@ -35,6 +35,16 @@ function parseCollectedData(text: string): Record<string, string> {
   return data;
 }
 
+// Garante no máximo `max` bolhas — se o modelo quebrou demais, junta o excedente na última bolha
+// (não descarta texto). `max` já vem saneado (1..4) pela normalizeAgentConfig. Compartilhado entre o
+// webhook (resposta normal) e o worker de follow-up.
+export function capBubbles(parts: string[], max: number): string[] {
+  if (parts.length <= max) return parts;
+  const kept = parts.slice(0, max - 1);
+  const rest = parts.slice(max - 1).join("\n");
+  return [...kept, rest];
+}
+
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 
 // Foto que o cliente mandou nessa mensagem, pra o modelo enxergar (Claude tem visão nativa).
@@ -76,7 +86,10 @@ export async function generateReply(
   currentImages: AgentImage[] = [],
   tools: Anthropic.Tool[] = [],
   executeTool?: ToolExecutor,
-  knowledgeText?: string
+  knowledgeText?: string,
+  // Presente só na chamada do worker de follow-up: instrui o modelo a gerar uma retomada (em vez de
+  // responder a algo que o cliente disse) — nunca aparece na conversa salva, só no bloco de sistema.
+  followUpNudge?: string
 ): Promise<AgentReply> {
   const camposExtras = contact.custom_fields && Object.keys(contact.custom_fields).length
     ? ` Dados adicionais: ${JSON.stringify(contact.custom_fields)}.`
@@ -121,6 +134,9 @@ export async function generateReply(
         `literalmente nem diga "de acordo com meus arquivos"):\n\n${knowledgeText}`,
       cache_control: { type: "ephemeral" },
     });
+  }
+  if (followUpNudge) {
+    systemBlocks.push({ type: "text", text: followUpNudge });
   }
 
   let inputTokens = 0;

@@ -45,6 +45,11 @@ export type AgentConfig = {
   // Máximo de bolhas por resposta. A partir de 01/10/2026 a Meta cobra por mensagem enviada, então
   // cada bolha extra é uma cobrança de serviço a mais — 1 = uma mensagem só (sem quebrar).
   maxBubbles: number;
+  // Follow-up automático: se o contato parar de responder depois de uma resposta do agente, manda
+  // uma retomada a cada `intervalDays` dias, até `maxCount` vezes — depois disso desiste (o worker de
+  // cron move o contato pra "descartado" sozinho). Roda fora da geração normal do prompt (não é texto
+  // injetado no system_prompt); é configuração operacional lida direto pelo cron.
+  followUp: { enabled: boolean; intervalDays: number; maxCount: number };
 };
 
 export type AgentModeDef = {
@@ -114,6 +119,11 @@ export function getAgentMode(key: string): AgentModeDef | undefined {
 export const MAX_BUBBLES_DEFAULT = 3;
 export const MAX_BUBBLES_CAP = 4;
 
+export const FOLLOWUP_INTERVAL_DEFAULT = 2;
+export const FOLLOWUP_INTERVAL_MAX = 30;
+export const FOLLOWUP_MAX_COUNT_DEFAULT = 3;
+export const FOLLOWUP_MAX_COUNT_CAP = 10;
+
 export const EMPTY_AGENT_CONFIG: AgentConfig = {
   mode: "",
   companyName: "",
@@ -125,6 +135,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   collectFields: [],
   mediaFolderNotes: {},
   maxBubbles: MAX_BUBBLES_DEFAULT,
+  followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT },
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -173,6 +184,18 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
       r.mediaFolderNotes && typeof r.mediaFolderNotes === "object" ? (r.mediaFolderNotes as Record<string, string>) : {},
     // Agente antigo sem esse campo cai no padrão 3 (mantém o comportamento que já tinha).
     maxBubbles: clampBubbles(r.maxBubbles),
+    followUp: normalizeFollowUp(r.followUp),
+  };
+}
+
+function normalizeFollowUp(raw: unknown): AgentConfig["followUp"] {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const intervalDays = typeof f.intervalDays === "number" && Number.isFinite(f.intervalDays) ? f.intervalDays : FOLLOWUP_INTERVAL_DEFAULT;
+  const maxCount = typeof f.maxCount === "number" && Number.isFinite(f.maxCount) ? f.maxCount : FOLLOWUP_MAX_COUNT_DEFAULT;
+  return {
+    enabled: Boolean(f.enabled),
+    intervalDays: Math.min(FOLLOWUP_INTERVAL_MAX, Math.max(1, Math.floor(intervalDays))),
+    maxCount: Math.min(FOLLOWUP_MAX_COUNT_CAP, Math.max(0, Math.floor(maxCount))),
   };
 }
 
