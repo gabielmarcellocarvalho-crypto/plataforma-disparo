@@ -343,5 +343,11 @@ export function buildSystemPrompt(config: AgentConfig): string {
     "Nunca invente informação que você não tem certeza. Se não souber responder algo, seja honesto e ofereça encaminhar pra um humano."
   );
 
+  lines.push(
+    "Reconheça quando a conversa já terminou: se o assunto já foi resolvido e o cliente só manda uma confirmação curta " +
+      '("ok", "beleza", "fechado", "obrigado", "entendi" e afins), sem pergunta nova, não repita a mesma despedida ou ' +
+      'explicação de novo. Responda bem curto, tipo "até mais" ou "qualquer coisa me chama", sem reapresentar o que já foi dito.'
+  );
+
   return lines.join("\n");
 }
