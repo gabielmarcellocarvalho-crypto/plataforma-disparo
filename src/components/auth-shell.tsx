@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef } from "react";
 
 // Casca visual compartilhada pelas telas de autenticação (login, esqueci senha, redefinir senha) —
@@ -102,7 +103,15 @@ export function AuthShell({
         <span className="text-xs font-bold tracking-[0.16em] uppercase text-sidebar-text">V4 Operator</span>
       </div>
 
-      <div className="relative h-full w-full grid place-items-center px-4">
+      <div className="relative h-full w-full flex flex-col items-center justify-center px-4 py-6 overflow-y-auto">
+        <Image
+          src="/logo-v4.png"
+          alt="V4"
+          width={452}
+          height={464}
+          className="w-[clamp(90px,14vh,160px)] h-auto mb-6 shrink-0"
+          priority
+        />
         <div className="login-card w-full max-w-sm bg-surface/[0.98] backdrop-blur-sm border border-white/10 rounded-2xl shadow-lg p-7 flex flex-col gap-5">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-text">{title}</h1>
