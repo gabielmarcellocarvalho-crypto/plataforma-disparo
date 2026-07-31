@@ -1,10 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { MessagesAreaChart } from "@/components/charts/messages-area-chart";
 import { FunnelChart } from "@/components/charts/funnel-chart";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
+import { OverviewInsightsBox } from "@/components/overview-insights-box";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
-import { getVolumeMetrics, getConversionMetrics, getFunnelData } from "@/lib/overview-metrics";
+import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel } from "@/lib/workspace-plan";
 import { getAttentionAlerts } from "@/lib/attention-center";
@@ -20,25 +20,6 @@ function StatCard({ label, value, icon }: { label: string; value: number | strin
       </div>
       <b className="block text-[26px] font-extrabold tracking-tight mt-3 leading-none">{value}</b>
       <span className="text-xs font-semibold text-text-muted">{label}</span>
-    </div>
-  );
-}
-
-function RateCard({ label, value, hint }: { label: string; value: number | null; hint: string }) {
-  return (
-    <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
-      <b className="block text-[26px] font-extrabold tracking-tight leading-none">{value === null ? "—" : `${value.toFixed(1)}%`}</b>
-      <span className="text-xs font-semibold text-text-muted block mt-2">{label}</span>
-      <span className="text-[11px] text-text-muted/80 block mt-0.5">{hint}</span>
-    </div>
-  );
-}
-
-function SectionHeading({ title, subtitle }: { title: string; subtitle?: string }) {
-  return (
-    <div className="mt-2">
-      <h2 className="text-sm font-extrabold uppercase tracking-wide text-text-muted">{title}</h2>
-      {subtitle && <p className="text-xs text-text-muted/80 mt-0.5">{subtitle}</p>}
     </div>
   );
 }
@@ -68,7 +49,7 @@ export default async function OverviewPage({
   const plan = resolveWorkspacePlan(workspacePlanRow?.plan);
   const funnelEnd = planFunnelEnd(plan);
 
-  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel] = workspace
+  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel, response, leadSources] = workspace
     ? await Promise.all([
         supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
         supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("status", "ativa"),
@@ -83,14 +64,18 @@ export default async function OverviewPage({
         getVolumeMetrics(workspace.id, period),
         getConversionMetrics(workspace.id, period),
         getFunnelData(workspace.id, period, funnelEnd),
+        getResponseMetrics(workspace.id, period),
+        getLeadSources(workspace.id, period),
       ])
     : [
         { count: 0 },
         { count: 0 },
         { data: [] },
-        { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, conversasIniciadas: 0 },
+        { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, mensagensRecebidas: 0, conversasIniciadas: 0, conversasEmAndamento: 0 },
         { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null },
         { points: [], descartados: 0 },
+        { tempoMedioRespostaMin: null, conversasNaoRespondidas: 0, maisTempoEsperandoMin: null },
+        [],
       ];
 
   // Distribui as mensagens do período por dia.
@@ -100,7 +85,6 @@ export default async function OverviewPage({
     const key = dayKeyBrt(m.created_at as string);
     if (msgByDay.has(key)) msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
-  const totalPeriodo = periodMsgs?.length ?? 0;
   const chartData = days.map((d) => ({ date: `${d}T12:00:00.000Z`, mensagens: msgByDay.get(d) || 0 }));
 
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
@@ -178,56 +162,11 @@ export default async function OverviewPage({
         />
       </div>
 
-      <SectionHeading title="Volume" subtitle={period.label} />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="leads recebidos"
-          value={volume.leadsRecebidos}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="leads abordados"
-          value={volume.leadsAbordados}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="mensagens enviadas"
-          value={volume.mensagensEnviadas}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="conversas iniciadas"
-          value={volume.conversasIniciadas}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 8h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1v3l-3-3h-5a1 1 0 0 1-1-1v-1" />
-              <path d="M14 3H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1v3l3-3h7a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1Z" />
-            </svg>
-          }
-        />
-      </div>
-
-      <SectionHeading title="Conversão" subtitle="entre os leads abordados no período" />
-      <div className={`grid grid-cols-1 gap-4 ${plan === "sdr" ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
-        <RateCard label="Taxa de resposta" value={conversion.taxaResposta} hint="abordados que responderam" />
-        <RateCard label="Taxa de interesse" value={conversion.taxaInteresse} hint="chegaram a interessado ou além" />
-        <RateCard label="Taxa de qualificação" value={conversion.taxaQualificacao} hint="chegaram a encaminhamento ou além" />
-        {plan !== "sdr" && <RateCard label="Taxa de fechamento" value={conversion.taxaFechamento} hint="chegaram a concluído" />}
-      </div>
+      <OverviewInsightsBox
+        periodLabel={period.label}
+        volume={{ ...volume, chartData }}
+        conversion={{ ...conversion, showFechamento: plan !== "sdr", ...response, leadSources }}
+      />
 
       <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
         <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
@@ -244,20 +183,6 @@ export default async function OverviewPage({
         ) : (
           <FunnelChart data={funnel.points.map((p) => ({ label: p.label, value: p.value }))} />
         )}
-      </div>
-
-      <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
-        <div className="flex items-start justify-between flex-wrap gap-2 mb-4">
-          <div>
-            <h3 className="font-bold text-[15px]">Mensagens enviadas por dia</h3>
-            <p className="text-xs text-text-muted mt-0.5 capitalize">{period.label}</p>
-          </div>
-          <div className="text-right">
-            <b className="block text-2xl font-extrabold tracking-tight leading-none text-primary-strong">{totalPeriodo}</b>
-            <span className="text-xs font-semibold text-text-muted">no período</span>
-          </div>
-        </div>
-        <MessagesAreaChart data={chartData} />
       </div>
     </div>
   );

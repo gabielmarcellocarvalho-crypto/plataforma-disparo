@@ -13,8 +13,20 @@ export type VolumeMetrics = {
   leadsRecebidos: number;
   leadsAbordados: number;
   mensagensEnviadas: number;
+  mensagensRecebidas: number;
   conversasIniciadas: number;
+  conversasEmAndamento: number;
 };
+
+export type ResponseMetrics = {
+  tempoMedioRespostaMin: number | null; // null = nenhuma resposta no período pra calcular média
+  conversasNaoRespondidas: number; // última mensagem foi nossa, contato ainda não respondeu
+  maisTempoEsperandoMin: number | null; // maior espera atual entre as conversas ativas no período
+};
+
+export type LeadSource = { label: string; value: number };
+
+const TERMINAL_STAGES: ContactStage[] = ["concluido", "descartado"];
 
 export type ConversionMetrics = {
   taxaResposta: number | null; // null = sem base pra calcular (0 abordados)
@@ -43,34 +55,139 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
-  const [{ count: leadsRecebidos }, { data: abordadosRows }, { count: mensagensEnviadas }, { data: allMsgsAsc }] = await Promise.all([
+  const [{ count: leadsRecebidos }, { count: mensagensEnviadas }, { count: mensagensRecebidas }, { data: allMsgsAsc }] = await Promise.all([
     supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).gte("created_at", fromIso).lte("created_at", toIso),
-    supabase.from("messages").select("contact_id").eq("workspace_id", workspaceId).eq("role", "assistant").gte("created_at", fromIso).lte("created_at", toIso).limit(20000),
     supabase.from("messages").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).eq("role", "assistant").gte("created_at", fromIso).lte("created_at", toIso),
+    supabase.from("messages").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).eq("role", "user").gte("created_at", fromIso).lte("created_at", toIso),
+    // Precisa de TODA a mensagem até o fim do período (não só as do período) pra achar corretamente
+    // a primeira mensagem de cada par contato+agente — uma conversa "iniciada" antes do período não
+    // deveria contar como iniciada de novo só porque teve mensagem nova dentro dele.
     supabase
       .from("messages")
-      .select("contact_id, agent_id, created_at")
+      .select("contact_id, agent_id, role, created_at")
       .eq("workspace_id", workspaceId)
       .lte("created_at", toIso)
       .order("created_at", { ascending: true })
       .limit(20000),
   ]);
 
-  const leadsAbordados = new Set((abordadosRows || []).map((r) => r.contact_id)).size;
-
   // "Conversa iniciada" = primeira mensagem (de qualquer papel) de um par contato+agente cai dentro
   // do período — ordenado ascendente, a primeira ocorrência de cada chave já é a mais antiga.
   const firstSeen = new Map<string, string>();
+  const contactIdByPair = new Map<string, string>();
+  const activeInPeriod = new Set<string>();
   for (const m of allMsgsAsc || []) {
     const key = `${m.contact_id}:${m.agent_id ?? "blast"}`;
     if (!firstSeen.has(key)) firstSeen.set(key, m.created_at as string);
+    contactIdByPair.set(key, m.contact_id as string);
+    if ((m.created_at as string) >= fromIso) activeInPeriod.add(key);
   }
   let conversasIniciadas = 0;
   for (const createdAt of firstSeen.values()) {
     if (createdAt >= fromIso && createdAt <= toIso) conversasIniciadas++;
   }
 
-  return { leadsRecebidos: leadsRecebidos ?? 0, leadsAbordados, mensagensEnviadas: mensagensEnviadas ?? 0, conversasIniciadas };
+  // "Em andamento" = teve atividade no período E o lead ainda não chegou num estado terminal
+  // (concluído/descartado) — precisa saber o estágio atual de cada contato envolvido.
+  const activeContactIds = [...new Set([...activeInPeriod].map((k) => contactIdByPair.get(k)).filter((v): v is string => Boolean(v)))];
+  const { data: activeStages } =
+    activeContactIds.length > 0 ? await supabase.from("contacts").select("id, stage").in("id", activeContactIds) : { data: [] };
+  const stageByContact = new Map((activeStages || []).map((c) => [c.id, c.stage as ContactStage]));
+
+  let conversasEmAndamento = 0;
+  for (const key of activeInPeriod) {
+    const contactId = contactIdByPair.get(key);
+    const stage = contactId ? stageByContact.get(contactId) : undefined;
+    if (stage && !TERMINAL_STAGES.includes(stage)) conversasEmAndamento++;
+  }
+
+  const leadsAbordados = new Set(
+    (allMsgsAsc || []).filter((m) => m.role === "assistant" && (m.created_at as string) >= fromIso && (m.created_at as string) <= toIso).map((m) => m.contact_id)
+  ).size;
+
+  return {
+    leadsRecebidos: leadsRecebidos ?? 0,
+    leadsAbordados,
+    mensagensEnviadas: mensagensEnviadas ?? 0,
+    mensagensRecebidas: mensagensRecebidas ?? 0,
+    conversasIniciadas,
+    conversasEmAndamento,
+  };
+}
+
+// Tempo de resposta (latência entre o contato mandar mensagem e o agente responder), conversas sem
+// resposta nossa ainda pendente, e a maior espera atual — tudo dentro do período filtrado.
+export async function getResponseMetrics(workspaceId: string, range: Range): Promise<ResponseMetrics> {
+  const supabase = await createClient();
+  const fromIso = range.from.toISOString();
+  const toIso = range.to.toISOString();
+
+  const { data: msgs } = await supabase
+    .from("messages")
+    .select("contact_id, agent_id, role, created_at")
+    .eq("workspace_id", workspaceId)
+    .gte("created_at", fromIso)
+    .lte("created_at", toIso)
+    .order("created_at", { ascending: true })
+    .limit(20000);
+
+  const byPair = new Map<string, { role: string; created_at: string }[]>();
+  for (const m of msgs || []) {
+    const key = `${m.contact_id}:${m.agent_id ?? "blast"}`;
+    const arr = byPair.get(key) || [];
+    arr.push({ role: m.role as string, created_at: m.created_at as string });
+    byPair.set(key, arr);
+  }
+
+  const latenciesMs: number[] = [];
+  let conversasNaoRespondidas = 0;
+  let maiorEsperaMs = 0;
+  const now = Date.now();
+
+  for (const arr of byPair.values()) {
+    let pendingUserAt: number | null = null;
+    for (const m of arr) {
+      if (m.role === "user") {
+        if (pendingUserAt === null) pendingUserAt = new Date(m.created_at).getTime();
+      } else if (m.role === "assistant" && pendingUserAt !== null) {
+        latenciesMs.push(new Date(m.created_at).getTime() - pendingUserAt);
+        pendingUserAt = null;
+      }
+    }
+    const last = arr[arr.length - 1];
+    if (last?.role === "assistant") {
+      conversasNaoRespondidas++;
+      maiorEsperaMs = Math.max(maiorEsperaMs, now - new Date(last.created_at).getTime());
+    }
+  }
+
+  const tempoMedioRespostaMin = latenciesMs.length > 0 ? Math.round((latenciesMs.reduce((a, b) => a + b, 0) / latenciesMs.length / 60000) * 10) / 10 : null;
+  const maisTempoEsperandoMin = conversasNaoRespondidas > 0 ? Math.round(maiorEsperaMs / 60000) : null;
+
+  return { tempoMedioRespostaMin, conversasNaoRespondidas, maisTempoEsperandoMin };
+}
+
+// Fontes de lead (custom_fields.origem) entre os leads recebidos no período — quem entrou via
+// /api/v1/leads já grava isso; quem chegou direto pelo WhatsApp (sem origem explícita) cai em
+// "WhatsApp direto", pra o gráfico nunca ficar vazio/quebrado só por falta desse campo.
+export async function getLeadSources(workspaceId: string, range: Range): Promise<LeadSource[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("contacts")
+    .select("custom_fields")
+    .eq("workspace_id", workspaceId)
+    .gte("created_at", range.from.toISOString())
+    .lte("created_at", range.to.toISOString())
+    .limit(20000);
+
+  const counts = new Map<string, number>();
+  for (const c of data || []) {
+    const origem = (c.custom_fields as Record<string, unknown> | null)?.origem;
+    const label = typeof origem === "string" && origem.trim() ? origem.trim() : "WhatsApp direto";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+
+  return [...counts.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
 }
 
 export async function getConversionMetrics(workspaceId: string, range: Range): Promise<ConversionMetrics> {
