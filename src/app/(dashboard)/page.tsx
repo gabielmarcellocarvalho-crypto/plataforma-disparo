@@ -7,6 +7,8 @@ import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
 import { getVolumeMetrics, getConversionMetrics, getFunnelData } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel } from "@/lib/workspace-plan";
+import { getAttentionAlerts } from "@/lib/attention-center";
+import { AttentionCenterCard } from "@/components/attention-center-card";
 
 function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
@@ -104,6 +106,7 @@ export default async function OverviewPage({
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
   // Continua sempre "mês corrente", independente do período escolhido no filtro: orçamento é mensal por natureza.
   let costAlert: { ratioPct: number; costBrl: number; budgetBrl: number } | null = null;
+  let attentionAlerts: Awaited<ReturnType<typeof getAttentionAlerts>> = [];
   if (workspace && isColaborador) {
     const { data: budgetRow } = await supabase
       .from("workspaces")
@@ -117,6 +120,7 @@ export default async function OverviewPage({
         costAlert = { ratioPct: status.ratioPct, costBrl: status.costBrl, budgetBrl: status.budgetBrl };
       }
     }
+    attentionAlerts = await getAttentionAlerts(workspace.id);
   }
 
   return (
@@ -127,6 +131,8 @@ export default async function OverviewPage({
       </div>
 
       <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
+
+      <AttentionCenterCard alerts={attentionAlerts} />
 
       {costAlert && (
         <a

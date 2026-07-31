@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { resolveStageLabels } from "@/lib/crm-stages";
+import { resolveStageLabels, getVisibleStages, resolveHiddenStages } from "@/lib/crm-stages";
+import { resolveWorkspacePlan, planHasSdr } from "@/lib/workspace-plan";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
 
 const MESSAGE_LIMIT = 500;
@@ -29,19 +31,50 @@ export default async function ConversasPage() {
       .not("agent_id", "is", null)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),
-    supabase.from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
+    supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
   ]);
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
+  const visibleStages = getVisibleStages(resolveHiddenStages(workspaceRow?.crm_hidden_stages));
+  const plan = resolveWorkspacePlan(workspaceRow?.plan);
+  const showResponsavel = planHasSdr(plan);
 
   const contactIds = Array.from(new Set((messages || []).map((m) => m.contact_id)));
-  const { data: contacts } =
+
+  const [{ data: contacts }, { data: originRows }, vendors] = await Promise.all([
     contactIds.length > 0
-      ? await supabase
+      ? supabase
           .from("contacts")
-          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason")
+          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id")
           .in("id", contactIds)
-      : { data: [] };
+      : Promise.resolve({ data: [] }),
+    contactIds.length > 0
+      ? supabase
+          .from("campaign_recipients")
+          .select("contact_id, sent_at, campaigns(name)")
+          .in("contact_id", contactIds)
+          .eq("status", "enviado")
+          .order("sent_at", { ascending: true })
+      : Promise.resolve({ data: [] }),
+    // Vendedores atribuíveis = pessoas com login de cliente vinculado a esse workspace (não é um
+    // cargo separado). RLS de profiles só deixa ver o próprio perfil, então usa o client admin —
+    // mesma técnica já usada em /acessos.
+    showResponsavel
+      ? createAdminClient()
+          .from("workspace_members")
+          .select("user_id, profiles(full_name)")
+          .eq("workspace_id", workspace.id)
+          .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" })))
+      : Promise.resolve([]),
+  ]);
+
+  // Primeira campanha (mais antiga) que efetivamente mandou mensagem pra esse contato — "origem".
+  const originByContact = new Map<string, string>();
+  for (const r of originRows || []) {
+    if (originByContact.has(r.contact_id)) continue;
+    const name = (r.campaigns as unknown as { name: string } | null)?.name;
+    if (name) originByContact.set(r.contact_id, name);
+  }
 
   const agentsById = new Map((agents || []).map((a) => [a.id, a]));
   const contactsById = new Map((contacts || []).map((c) => [c.id, c]));
@@ -54,7 +87,11 @@ export default async function ConversasPage() {
       const contact = contactsById.get(m.contact_id);
       const agent = agentsById.get(m.agent_id!);
       if (!contact || !agent) continue;
-      conv = { contact, agent, messages: [] };
+      conv = {
+        contact: { ...contact, origin_campaign: originByContact.get(contact.id) ?? null },
+        agent,
+        messages: [],
+      };
       conversationsByKey.set(key, conv);
     }
     conv.messages.push(m); // vem em ordem desc; a UI inverte pra exibir
@@ -74,7 +111,13 @@ export default async function ConversasPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Conversas</h1>
         <p className="text-text-muted text-sm mt-1">Acompanhe e assuma as conversas dos agentes em tempo real.</p>
       </div>
-      <ConversationsPanel conversations={conversations} stageLabels={stageLabels} />
+      <ConversationsPanel
+        conversations={conversations}
+        stageLabels={stageLabels}
+        visibleStages={visibleStages}
+        vendors={vendors}
+        showResponsavel={showResponsavel}
+      />
     </div>
   );
 }

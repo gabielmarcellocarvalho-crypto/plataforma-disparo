@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
+import { updateContactResponsible } from "@/app/actions/contacts";
 
 // Mesma leitura de cor por etapa do Kanban — só exibe aqui, quem move o card é o CRM (arrastar) ou
 // o agente de IA sozinho ([[STATUS: ...]]), nunca essa tela.
@@ -16,6 +17,13 @@ const STAGE_BADGE: Record<string, string> = {
   descartado: "bg-danger-soft text-danger",
 };
 
+const WAIT_THRESHOLDS = [
+  { key: "1", label: "> 1 hora", ms: 1 * 3_600_000 },
+  { key: "6", label: "> 6 horas", ms: 6 * 3_600_000 },
+  { key: "24", label: "> 1 dia", ms: 24 * 3_600_000 },
+  { key: "72", label: "> 3 dias", ms: 72 * 3_600_000 },
+];
+
 type Contact = {
   id: string;
   name: string | null;
@@ -24,9 +32,12 @@ type Contact = {
   needs_attention: boolean;
   attention_reason: string | null;
   flagged_reason: string | null;
+  responsible_user_id: string | null;
+  origin_campaign: string | null;
 };
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
 type Message = { id: string; contact_id: string; agent_id: string | null; role: string; content: string; created_at: string };
+export type Vendor = { id: string; name: string };
 
 export type Conversation = { contact: Contact; agent: Agent; messages: Message[] };
 
@@ -42,14 +53,28 @@ function formatTime(iso: string) {
 export function ConversationsPanel({
   conversations,
   stageLabels,
+  visibleStages,
+  vendors,
+  showResponsavel,
 }: {
   conversations: Conversation[];
   stageLabels: Record<string, string>;
+  visibleStages: string[];
+  vendors: Vendor[];
+  showResponsavel: boolean;
 }) {
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
 
   const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [stageFilter, setStageFilter] = useState("");
+  const [aguardandoHumano, setAguardandoHumano] = useState(false);
+  const [semResposta, setSemResposta] = useState(false);
+  const [waitFilter, setWaitFilter] = useState("");
+  const [campaignFilter, setCampaignFilter] = useState("");
+  const [responsavelFilter, setResponsavelFilter] = useState("");
+
   // Vindo do CRM (?contact=<id>), abre direto a conversa dessa pessoa; senão, a mais recente.
   const [selectedKey, setSelectedKey] = useState<string | null>(() => {
     if (contactParam) {
@@ -62,13 +87,33 @@ export function ConversationsPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
+  const campaignOptions = useMemo(
+    () => Array.from(new Set(conversations.map((c) => c.contact.origin_campaign).filter((v): v is string => Boolean(v)))).sort(),
+    [conversations]
+  );
+
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return conversations;
-    return conversations.filter(
-      (c) => (c.contact.name || "").toLowerCase().includes(q) || (c.contact.phone || "").includes(q)
-    );
-  }, [conversations, query]);
+    return conversations.filter((c) => {
+      if (q && !(c.contact.name || "").toLowerCase().includes(q) && !(c.contact.phone || "").includes(q)) return false;
+      if (stageFilter && c.contact.stage !== stageFilter) return false;
+      if (aguardandoHumano && !c.contact.needs_attention) return false;
+      const last = c.messages[0];
+      if (semResposta && last?.role !== "assistant") return false;
+      if (waitFilter && last) {
+        const threshold = WAIT_THRESHOLDS.find((w) => w.key === waitFilter);
+        if (threshold && Date.now() - new Date(last.created_at).getTime() < threshold.ms) return false;
+      }
+      if (campaignFilter && c.contact.origin_campaign !== campaignFilter) return false;
+      if (responsavelFilter) {
+        if (responsavelFilter === "__nenhum__" ? c.contact.responsible_user_id : c.contact.responsible_user_id !== responsavelFilter) return false;
+      }
+      return true;
+    });
+  }, [conversations, query, stageFilter, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter]);
+
+  const activeFilterCount =
+    (stageFilter ? 1 : 0) + (aguardandoHumano ? 1 : 0) + (semResposta ? 1 : 0) + (waitFilter ? 1 : 0) + (campaignFilter ? 1 : 0) + (responsavelFilter ? 1 : 0);
 
   const selected = conversations.find((c) => keyOf(c) === selectedKey) || null;
   const orderedMessages = selected ? [...selected.messages].reverse() : [];
@@ -97,6 +142,12 @@ export function ConversationsPanel({
     });
   }
 
+  function handleResponsavel(contactId: string, userId: string) {
+    startTransition(async () => {
+      await updateContactResponsible(contactId, userId);
+    });
+  }
+
   function handleClearHistory(contactId: string, agentId: string) {
     if (!window.confirm("Apagar todo o histórico dessa conversa? O agente esquece tudo que já foi falado com esse contato. Não dá pra desfazer.")) return;
     setError(null);
@@ -121,17 +172,110 @@ export function ConversationsPanel({
   return (
     <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
       <div className="border-r border-border flex flex-col min-h-0">
-        <div className="p-3 border-b border-border">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar conversa…"
-            className="w-full border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-          />
+        <div className="p-3 border-b border-border flex flex-col gap-2">
+          <div className="flex items-center gap-1.5">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar conversa…"
+              className="flex-1 min-w-0 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              title="Filtros"
+              className={`relative shrink-0 grid place-items-center w-9 h-9 rounded-md cursor-pointer border transition-colors ${
+                filtersOpen || activeFilterCount > 0 ? "border-primary-strong text-primary-strong bg-primary-faint" : "border-border text-text-muted hover:border-primary-soft"
+              }`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+              {activeFilterCount > 0 && (
+                <span className="absolute translate-x-3 -translate-y-3 min-w-[15px] h-[15px] px-0.5 rounded-full bg-primary-strong text-white text-[9px] font-bold grid place-items-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {filtersOpen && (
+            <div className="flex flex-col gap-2 pt-1 border-t border-border">
+              <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
+                <option value="">Etapa: todas</option>
+                {visibleStages.map((s) => (
+                  <option key={s} value={s}>{stageLabels[s] || s}</option>
+                ))}
+              </select>
+
+              <select value={waitFilter} onChange={(e) => setWaitFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
+                <option value="">Tempo de espera: qualquer</option>
+                {WAIT_THRESHOLDS.map((w) => (
+                  <option key={w.key} value={w.key}>{w.label}</option>
+                ))}
+              </select>
+
+              {campaignOptions.length > 0 && (
+                <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
+                  <option value="">Campanha de origem: todas</option>
+                  {campaignOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              )}
+
+              {showResponsavel && vendors.length > 0 && (
+                <select value={responsavelFilter} onChange={(e) => setResponsavelFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
+                  <option value="">Responsável: todos</option>
+                  <option value="__nenhum__">Sem responsável</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              )}
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setAguardandoHumano((v) => !v)}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
+                    aguardandoHumano ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted"
+                  }`}
+                >
+                  Aguardando humano
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSemResposta((v) => !v)}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
+                    semResposta ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted"
+                  }`}
+                >
+                  Sem resposta do lead
+                </button>
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStageFilter("");
+                      setAguardandoHumano(false);
+                      setSemResposta(false);
+                      setWaitFilter("");
+                      setCampaignFilter("");
+                      setResponsavelFilter("");
+                    }}
+                    className="text-[11px] font-semibold text-text-muted hover:text-danger cursor-pointer ml-auto"
+                  >
+                    limpar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           {filtered.length === 0 ? (
-            <p className="text-sm text-text-muted p-4 text-center">Nenhuma conversa ainda.</p>
+            <p className="text-sm text-text-muted p-4 text-center">Nenhuma conversa encontrada.</p>
           ) : (
             filtered.map((c) => {
               const key = keyOf(c);
@@ -193,7 +337,7 @@ export function ConversationsPanel({
           <div className="flex-1 grid place-items-center text-text-muted text-sm">Selecione uma conversa</div>
         ) : (
           <>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-border flex-wrap">
               <span className="grid place-items-center w-9 h-9 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
                 {initials(selected.contact.name, selected.contact.phone)}
               </span>
@@ -201,6 +345,22 @@ export function ConversationsPanel({
                 <div className="text-base font-bold truncate">{selected.contact.name || selected.contact.phone}</div>
                 <div className="text-sm text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
               </div>
+
+              {showResponsavel && vendors.length > 0 && (
+                <select
+                  value={selected.contact.responsible_user_id || ""}
+                  onChange={(e) => handleResponsavel(selected.contact.id, e.target.value)}
+                  disabled={pending}
+                  title="Vendedor responsável por esse lead"
+                  className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
+                >
+                  <option value="">Sem responsável</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              )}
+
               <button
                 type="button"
                 onClick={() => handleClearHistory(selected.contact.id, selected.agent.id)}

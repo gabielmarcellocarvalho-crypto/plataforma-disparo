@@ -30,3 +30,9 @@ export function planFunnelEnd(plan: WorkspacePlan): ContactStage {
 export function planLabel(plan: WorkspacePlan): string {
   return WORKSPACE_PLANS.find((p) => p.key === plan)?.label ?? plan;
 }
+
+// "Responsável" (vendedor humano que assume o lead após o handoff) só faz sentido onde existe SDR
+// pra entregar o handoff — Closer puro fecha sozinho, sem passar a bola pra ninguém.
+export function planHasSdr(plan: WorkspacePlan): boolean {
+  return plan === "sdr" || plan === "sdr_closer";
+}

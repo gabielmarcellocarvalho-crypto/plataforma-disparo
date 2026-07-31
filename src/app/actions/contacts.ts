@@ -112,6 +112,25 @@ export async function updateContactStage(contactId: string, stage: string): Prom
   return { error: null, ok: true };
 }
 
+// Atribui/remove o vendedor responsável por um lead (só faz sentido em plano com SDR — quem entrega
+// o handoff pra um humano). userId vazio limpa a atribuição.
+export async function updateContactResponsible(contactId: string, userId: string): Promise<ActionResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("contacts")
+    .update({ responsible_user_id: userId || null })
+    .eq("id", contactId)
+    .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível atribuir o responsável." };
+
+  revalidatePath("/crm");
+  revalidatePath("/conversas");
+  return { error: null, ok: true };
+}
+
 // Renomeia os rótulos do funil pra esse workspace (o sinal interno que o agente classifica não muda,
 // só o texto exibido) e escolhe quais das 3 fases opcionais do meio ficam visíveis — as 4 âncoras
 // (não abordado, abordado, concluído, descartado) nunca podem ser escondidas.
