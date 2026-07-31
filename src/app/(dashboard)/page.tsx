@@ -1,8 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { MessagesAreaChart } from "@/components/charts/messages-area-chart";
+import { FunnelChart } from "@/components/charts/funnel-chart";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
-import { getMonthToDateAgentCostUsd, getConversationsInRange, evalCostBudget } from "@/lib/cost-monitor";
+import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
+import { getVolumeMetrics, getConversionMetrics, getFunnelData } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
 
 function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
@@ -19,6 +21,32 @@ function StatCard({ label, value, icon }: { label: string; value: number | strin
   );
 }
 
+function RateCard({ label, value, hint }: { label: string; value: number | null; hint: string }) {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+      <b className="block text-[26px] font-extrabold tracking-tight leading-none">{value === null ? "—" : `${value.toFixed(1)}%`}</b>
+      <span className="text-xs font-semibold text-text-muted block mt-2">{label}</span>
+      <span className="text-[11px] text-text-muted/80 block mt-0.5">{hint}</span>
+    </div>
+  );
+}
+
+function SectionHeading({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="mt-2">
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-text-muted">{title}</h2>
+      {subtitle && <p className="text-xs text-text-muted/80 mt-0.5">{subtitle}</p>}
+    </div>
+  );
+}
+
+const PaperPlaneIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="22" y1="2" x2="11" y2="13" />
+    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+  </svg>
+);
+
 export default async function OverviewPage({
   searchParams,
 }: {
@@ -29,7 +57,7 @@ export default async function OverviewPage({
   const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, conversasNoPeriodo] = workspace
+  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel] = workspace
     ? await Promise.all([
         supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
         supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("status", "ativa"),
@@ -41,9 +69,18 @@ export default async function OverviewPage({
           .gte("created_at", period.from.toISOString())
           .lte("created_at", period.to.toISOString())
           .limit(20000),
-        getConversationsInRange(workspace.id, period),
+        getVolumeMetrics(workspace.id, period),
+        getConversionMetrics(workspace.id, period),
+        getFunnelData(workspace.id, period),
       ])
-    : [{ count: 0 }, { count: 0 }, { data: [] }, 0];
+    : [
+        { count: 0 },
+        { count: 0 },
+        { data: [] },
+        { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, conversasIniciadas: 0 },
+        { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null },
+        { points: [], descartados: 0 },
+      ];
 
   // Distribui as mensagens do período por dia.
   const days = eachDayBrt(period.from, period.to);
@@ -74,7 +111,7 @@ export default async function OverviewPage({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <div>
         <h1 className="text-[26px] font-extrabold tracking-tight">Visão geral</h1>
         <p className="text-text-muted text-sm mt-1">Resumo de {workspace?.name ?? "—"}.</p>
@@ -109,7 +146,7 @@ export default async function OverviewPage({
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="contatos"
+          label="contatos (total)"
           value={contatos ?? 0}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -122,16 +159,35 @@ export default async function OverviewPage({
         <StatCard
           label="campanhas ativas"
           value={campanhasAtivas ?? 0}
+          icon={<PaperPlaneIcon />}
+        />
+      </div>
+
+      <SectionHeading title="Volume" subtitle={period.label} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          label="leads recebidos"
+          value={volume.leadsRecebidos}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
             </svg>
           }
         />
         <StatCard
-          label={`mensagens (${period.label})`}
-          value={totalPeriodo}
+          label="leads abordados"
+          value={volume.leadsAbordados}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          }
+        />
+        <StatCard
+          label="mensagens enviadas"
+          value={volume.mensagensEnviadas}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -139,8 +195,8 @@ export default async function OverviewPage({
           }
         />
         <StatCard
-          label={`conversas (${period.label})`}
-          value={conversasNoPeriodo}
+          label="conversas iniciadas"
+          value={volume.conversasIniciadas}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 8h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1v3l-3-3h-5a1 1 0 0 1-1-1v-1" />
@@ -148,6 +204,30 @@ export default async function OverviewPage({
             </svg>
           }
         />
+      </div>
+
+      <SectionHeading title="Conversão" subtitle="entre os leads abordados no período" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <RateCard label="Taxa de resposta" value={conversion.taxaResposta} hint="abordados que responderam" />
+        <RateCard label="Taxa de interesse" value={conversion.taxaInteresse} hint="chegaram a interessado ou além" />
+        <RateCard label="Taxa de qualificação" value={conversion.taxaQualificacao} hint="chegaram a encaminhamento ou além" />
+      </div>
+
+      <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
+        <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
+          <div>
+            <h3 className="font-bold text-[15px]">Funil de conversão</h3>
+            <p className="text-xs text-text-muted mt-0.5">
+              Leads recebidos {period.label}, pela fase mais avançada já alcançada.
+              {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}
+            </p>
+          </div>
+        </div>
+        {funnel.points.length === 0 || funnel.points[0]?.value === 0 ? (
+          <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido nesse período ainda.</p>
+        ) : (
+          <FunnelChart data={funnel.points.map((p) => ({ label: p.label, value: p.value }))} />
+        )}
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
