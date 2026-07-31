@@ -21,6 +21,18 @@ type Contact = {
 
 type FieldFilter = { key: string; value: string };
 
+// Atalhos de visão rápida — mesma ideia dos itens da barra lateral do Kommo (Leads ativos/ganhos/
+// perdidos/etc.), só que como fileira de chips em vez de sidebar vertical, já que nosso board é
+// horizontal por natureza. "todos" = nenhum filtro de visão aplicado (estado inicial).
+type QuickView = "todos" | "atencao" | "parados" | "ganhos" | "perdidos";
+const QUICK_VIEWS: { key: QuickView; label: string }[] = [
+  { key: "todos", label: "Todos" },
+  { key: "atencao", label: "Pontos de atenção" },
+  { key: "parados", label: "Parados" },
+  { key: "ganhos", label: "Ganhos" },
+  { key: "perdidos", label: "Perdidos" },
+];
+
 const STAGE_ACCENT: Record<ContactStage, string> = {
   nao_abordado: "bg-text-muted",
   abordado: "bg-primary",
@@ -218,7 +230,8 @@ export function CrmBoard({
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [onlyAttention, setOnlyAttention] = useState(false);
+  const [quickView, setQuickView] = useState<QuickView>("todos");
+  const [stageFilter, setStageFilter] = useState<ContactStage | "">("");
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
   const [pickerValue, setPickerValue] = useState("");
@@ -238,7 +251,14 @@ export function CrmBoard({
 
   const filtered = useMemo(() => {
     return items.filter((c) => {
-      if (onlyAttention && !c.needs_attention && !c.flagged_reason) return false;
+      if (quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
+      if (quickView === "ganhos" && c.stage !== "concluido") return false;
+      if (quickView === "perdidos" && c.stage !== "descartado") return false;
+      if (quickView === "parados") {
+        const parado = daysSince(c.stage_changed_at) >= STALE_AFTER_DAYS && c.stage !== "concluido" && c.stage !== "descartado";
+        if (!parado) return false;
+      }
+      if (stageFilter && c.stage !== stageFilter) return false;
       if (search) {
         const q = search.toLowerCase();
         const hay = `${c.name || ""} ${c.phone || ""} ${c.email || ""}`.toLowerCase();
@@ -251,7 +271,19 @@ export function CrmBoard({
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, onlyAttention, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, fieldFilters]);
+
+  // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
+  const quickViewCounts = useMemo(() => {
+    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, parados: 0, ganhos: 0, perdidos: 0 };
+    for (const c of items) {
+      if (c.needs_attention || c.flagged_reason) counts.atencao++;
+      if (c.stage === "concluido") counts.ganhos++;
+      if (c.stage === "descartado") counts.perdidos++;
+      if (daysSince(c.stage_changed_at) >= STALE_AFTER_DAYS && c.stage !== "concluido" && c.stage !== "descartado") counts.parados++;
+    }
+    return counts;
+  }, [items]);
 
   function handleDrop(stage: ContactStage) {
     if (!draggingId) return;
@@ -273,7 +305,8 @@ export function CrmBoard({
     setFieldFilters((f) => f.filter((_, idx) => idx !== i));
   }
 
-  const activeFilterCount = (search ? 1 : 0) + (dateFrom || dateTo ? 1 : 0) + (onlyAttention ? 1 : 0) + fieldFilters.length;
+  const activeFilterCount =
+    (search ? 1 : 0) + (dateFrom || dateTo ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + (stageFilter ? 1 : 0) + fieldFilters.length;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
@@ -292,41 +325,17 @@ export function CrmBoard({
             />
           </div>
 
-          <GlassDateRangePicker
-            triggerLabel={dateFrom && dateTo ? `${formatBr(dateFrom)} – ${formatBr(dateTo)}` : "Data de entrada"}
-            from={dateFrom}
-            to={dateTo}
-            showPresets={false}
-            allowClear
-            onApplyRange={(start, end) => {
-              setDateFrom(start);
-              setDateTo(end);
-            }}
-            onClear={() => {
-              setDateFrom("");
-              setDateTo("");
-            }}
-          />
-
-          <button
-            type="button"
-            onClick={() => setOnlyAttention((v) => !v)}
-            className={`text-xs font-bold px-3 py-2 rounded-md cursor-pointer border transition-colors ${
-              onlyAttention ? "bg-warning-soft text-warning-text border-warning-soft" : "border-border text-text-muted"
-            }`}
-          >
-            só pontos de atenção
-          </button>
-
           <button
             type="button"
             onClick={() => setFiltersOpen((v) => !v)}
-            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+            className={`text-xs font-bold px-3 py-2 rounded-md cursor-pointer border transition-colors flex items-center gap-1.5 ${
+              filtersOpen ? "border-primary-strong text-primary-strong bg-primary-faint" : "border-border text-text-muted hover:text-primary-strong hover:border-primary-soft"
+            }`}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
-            filtros{fieldFilters.length > 0 ? ` (${fieldFilters.length})` : ""}
+            filtros{fieldFilters.length + (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0) > 0 ? ` (${fieldFilters.length + (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0)})` : ""}
           </button>
 
           {activeFilterCount > 0 && (
@@ -336,7 +345,8 @@ export function CrmBoard({
                 setSearch("");
                 setDateFrom("");
                 setDateTo("");
-                setOnlyAttention(false);
+                setQuickView("todos");
+                setStageFilter("");
                 setFieldFilters([]);
               }}
               className="text-xs font-semibold text-text-muted hover:text-danger cursor-pointer"
@@ -357,15 +367,66 @@ export function CrmBoard({
           </button>
         </div>
 
+        {/* Atalhos de visão rápida — mesma ideia da sidebar do Kommo (Leads ativos/ganhos/perdidos/
+            etc.), aqui como fileira de chips mutuamente exclusivos. */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {QUICK_VIEWS.map((qv) => {
+            const active = quickView === qv.key;
+            return (
+              <button
+                key={qv.key}
+                type="button"
+                onClick={() => setQuickView(active ? "todos" : qv.key)}
+                className={`text-xs font-bold px-3 py-1.5 rounded-full cursor-pointer border transition-colors ${
+                  active ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft hover:text-primary-strong"
+                }`}
+              >
+                {qv.label} <span className={active ? "opacity-80" : "opacity-60"}>({quickViewCounts[qv.key]})</span>
+              </button>
+            );
+          })}
+        </div>
+
         {filtersOpen && (
-          <div className="flex items-center gap-2 flex-wrap border-t border-border pt-3">
-            <select value={pickerKey} onChange={(e) => { setPickerKey(e.target.value); setPickerValue(""); }} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer">
-              <option value="">campo (ex: cidade, gênero)</option>
+          <div className="flex flex-col gap-2.5 border-t border-border pt-3">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Propriedades do lead</span>
+            <div className="grid sm:grid-cols-2 gap-2.5">
+              <select
+                value={stageFilter}
+                onChange={(e) => setStageFilter(e.target.value as ContactStage | "")}
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+              >
+                <option value="">Estágio: todos</option>
+                {visibleStages.map((s) => (
+                  <option key={s} value={s}>{stageLabels[s]}</option>
+                ))}
+              </select>
+
+              <GlassDateRangePicker
+                triggerLabel={dateFrom && dateTo ? `Entrou: ${formatBr(dateFrom)} – ${formatBr(dateTo)}` : "Data de entrada"}
+                from={dateFrom}
+                to={dateTo}
+                showPresets={false}
+                allowClear
+                onApplyRange={(start, end) => {
+                  setDateFrom(start);
+                  setDateTo(end);
+                }}
+                onClear={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border">
+            <select value={pickerKey} onChange={(e) => { setPickerKey(e.target.value); setPickerValue(""); }} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer mt-2.5">
+              <option value="">campo customizado (ex: cidade, gênero)</option>
               {fieldOptions.map((f) => (
                 <option key={f.key} value={f.key}>{f.key}</option>
               ))}
             </select>
-            <select value={pickerValue} onChange={(e) => setPickerValue(e.target.value)} disabled={!pickerKey} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer disabled:opacity-50">
+            <select value={pickerValue} onChange={(e) => setPickerValue(e.target.value)} disabled={!pickerKey} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer disabled:opacity-50 mt-2.5">
               <option value="">valor</option>
               {fieldOptions.find((f) => f.key === pickerKey)?.values.map((v) => (
                 <option key={v} value={v}>{v}</option>
@@ -382,6 +443,7 @@ export function CrmBoard({
                 <button type="button" onClick={() => removeFieldFilter(i)} aria-label="Remover filtro" className="cursor-pointer font-bold">×</button>
               </span>
             ))}
+            </div>
           </div>
         )}
       </div>
