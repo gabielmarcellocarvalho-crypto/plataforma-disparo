@@ -6,6 +6,7 @@ import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
 import { getVolumeMetrics, getConversionMetrics, getFunnelData } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
+import { resolveWorkspacePlan, planFunnelEnd, planLabel } from "@/lib/workspace-plan";
 
 function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
@@ -57,6 +58,14 @@ export default async function OverviewPage({
   const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
+  // Precisa do plano ANTES de montar o funil (ele decide onde o funil termina) — por isso essa
+  // consulta roda numa rodada separada, antes do Promise.all principal.
+  const { data: workspacePlanRow } = workspace
+    ? await supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle()
+    : { data: null };
+  const plan = resolveWorkspacePlan(workspacePlanRow?.plan);
+  const funnelEnd = planFunnelEnd(plan);
+
   const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel] = workspace
     ? await Promise.all([
         supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
@@ -71,14 +80,14 @@ export default async function OverviewPage({
           .limit(20000),
         getVolumeMetrics(workspace.id, period),
         getConversionMetrics(workspace.id, period),
-        getFunnelData(workspace.id, period),
+        getFunnelData(workspace.id, period, funnelEnd),
       ])
     : [
         { count: 0 },
         { count: 0 },
         { data: [] },
         { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, conversasIniciadas: 0 },
-        { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null },
+        { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null },
         { points: [], descartados: 0 },
       ];
 
@@ -207,16 +216,17 @@ export default async function OverviewPage({
       </div>
 
       <SectionHeading title="Conversão" subtitle="entre os leads abordados no período" />
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${plan === "sdr" ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
         <RateCard label="Taxa de resposta" value={conversion.taxaResposta} hint="abordados que responderam" />
         <RateCard label="Taxa de interesse" value={conversion.taxaInteresse} hint="chegaram a interessado ou além" />
         <RateCard label="Taxa de qualificação" value={conversion.taxaQualificacao} hint="chegaram a encaminhamento ou além" />
+        {plan !== "sdr" && <RateCard label="Taxa de fechamento" value={conversion.taxaFechamento} hint="chegaram a concluído" />}
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
         <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
           <div>
-            <h3 className="font-bold text-[15px]">Funil de conversão</h3>
+            <h3 className="font-bold text-[15px]">Funil {planLabel(plan)}</h3>
             <p className="text-xs text-text-muted mt-0.5">
               Leads recebidos {period.label}, pela fase mais avançada já alcançada.
               {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}

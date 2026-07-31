@@ -20,6 +20,7 @@ export type ConversionMetrics = {
   taxaResposta: number | null; // null = sem base pra calcular (0 abordados)
   taxaInteresse: number | null;
   taxaQualificacao: number | null;
+  taxaFechamento: number | null;
 };
 
 export type FunnelPoint = { stage: ContactStage; label: string; value: number };
@@ -27,9 +28,10 @@ export type FunnelPoint = { stage: ContactStage; label: string; value: number };
 // Estágios que compõem o funil "linha reta" de conversão — "descartado" fica de fora de propósito:
 // é uma saída lateral (pode acontecer a partir de qualquer fase), não um degrau que se soma aos
 // anteriores. Contagem de descartados aparece à parte, não dentro do funil.
-const FUNNEL_HAPPY_PATH: ContactStage[] = ["nao_abordado", "abordado", "interessado", "encaminhamento", "fechando_proposta", "concluido"];
+export const FUNNEL_HAPPY_PATH: ContactStage[] = ["nao_abordado", "abordado", "interessado", "encaminhamento", "fechando_proposta", "concluido"];
 const INTERESSE_OU_ALEM: ContactStage[] = ["interessado", "encaminhamento", "fechando_proposta", "concluido"];
 const QUALIFICADO_OU_ALEM: ContactStage[] = ["encaminhamento", "fechando_proposta", "concluido"];
+const FECHADO: ContactStage[] = ["concluido"];
 
 function pct(numerator: number, denominator: number): number | null {
   if (denominator <= 0) return null;
@@ -85,7 +87,7 @@ export async function getConversionMetrics(workspaceId: string, range: Range): P
     .lte("created_at", toIso)
     .limit(20000);
   const abordadosIds = [...new Set((abordadosRows || []).map((r) => r.contact_id as string))];
-  if (abordadosIds.length === 0) return { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null };
+  if (abordadosIds.length === 0) return { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null };
 
   const [{ data: responderamRows }, { data: contactStages }] = await Promise.all([
     supabase.from("messages").select("contact_id").eq("workspace_id", workspaceId).eq("role", "user").in("contact_id", abordadosIds).gte("created_at", fromIso).lte("created_at", toIso).limit(20000),
@@ -96,11 +98,13 @@ export async function getConversionMetrics(workspaceId: string, range: Range): P
   const stages = (contactStages || []).map((c) => c.stage as ContactStage);
   const interessados = stages.filter((s) => INTERESSE_OU_ALEM.includes(s)).length;
   const qualificados = stages.filter((s) => QUALIFICADO_OU_ALEM.includes(s)).length;
+  const fechados = stages.filter((s) => FECHADO.includes(s)).length;
 
   return {
     taxaResposta: pct(responderam, abordadosIds.length),
     taxaInteresse: pct(interessados, abordadosIds.length),
     taxaQualificacao: pct(qualificados, abordadosIds.length),
+    taxaFechamento: pct(fechados, abordadosIds.length),
   };
 }
 
@@ -108,7 +112,11 @@ export async function getConversionMetrics(workspaceId: string, range: Range): P
 // quantos desses leads já chegaram ali (ou além) até agora — leitura cumulativa, igual todo funil de
 // CRM (Pipedrive/HubSpot etc. fazem o mesmo: mostram o estágio mais avançado já alcançado, não
 // exigem que o contato tenha passado por cada degrau em ordem perfeita).
-export async function getFunnelData(workspaceId: string, range: Range): Promise<{ points: FunnelPoint[]; descartados: number }> {
+export async function getFunnelData(
+  workspaceId: string,
+  range: Range,
+  funnelEnd: ContactStage = "concluido"
+): Promise<{ points: FunnelPoint[]; descartados: number }> {
   const supabase = await createClient();
   const [{ data: contacts }, { data: workspaceRow }] = await Promise.all([
     supabase
@@ -124,7 +132,12 @@ export async function getFunnelData(workspaceId: string, range: Range): Promise<
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
   const visibleStages = getVisibleStages(hiddenStages);
-  const funnelStages = FUNNEL_HAPPY_PATH.filter((s) => visibleStages.includes(s));
+  // Corta o funil no fim que o plano do workspace prevê (SDR para em "encaminhamento" — não faz
+  // sentido mostrar fase de fechamento de quem não fecha) e ainda respeita as fases escondidas do
+  // Kanban desse cliente especificamente (os dois filtros são independentes).
+  const endIdx = FUNNEL_HAPPY_PATH.indexOf(funnelEnd);
+  const happyPathForPlan = endIdx === -1 ? FUNNEL_HAPPY_PATH : FUNNEL_HAPPY_PATH.slice(0, endIdx + 1);
+  const funnelStages = happyPathForPlan.filter((s) => visibleStages.includes(s));
 
   let descartados = 0;
   const displayStageIndex: number[] = new Array(funnelStages.length).fill(0);
@@ -135,8 +148,13 @@ export async function getFunnelData(workspaceId: string, range: Range): Promise<
       continue;
     }
     const display = displayStageFor(stage, visibleStages);
-    const idx = funnelStages.indexOf(display as ContactStage);
-    if (idx === -1) continue; // não deveria acontecer (display sempre é uma stage visível do happy path ou concluido)
+    let idx = funnelStages.indexOf(display as ContactStage);
+    if (idx === -1) {
+      // Passou do fim do funil desse plano (ex.: contato "concluido" num workspace plano "sdr", de
+      // antes da mudança de plano) — ainda conta como tendo alcançado o último degrau mostrado.
+      if (FUNNEL_HAPPY_PATH.indexOf(display as ContactStage) === -1) continue; // não deveria acontecer
+      idx = funnelStages.length - 1;
+    }
     for (let i = 0; i <= idx; i++) displayStageIndex[i]++;
   }
 

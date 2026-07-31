@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserColaborador } from "@/lib/workspace";
+import { isWorkspacePlan } from "@/lib/workspace-plan";
 
 export type CreateWorkspaceState = { error: string | null };
 
@@ -14,10 +15,12 @@ export async function createWorkspace(
   formData: FormData
 ): Promise<CreateWorkspaceState> {
   const name = String(formData.get("name") || "").trim();
+  const plan = String(formData.get("plan") || "");
   if (!name) return { error: "Informe o nome do cliente." };
+  if (!isWorkspacePlan(plan)) return { error: "Escolha o plano desse cliente." };
 
   const supabase = await createClient();
-  const { data, error } = await supabase.from("workspaces").insert({ name }).select("id").single();
+  const { data, error } = await supabase.from("workspaces").insert({ name, plan }).select("id").single();
 
   if (error) return { error: "Não foi possível criar o workspace (você precisa ser admin da agência)." };
 
@@ -31,6 +34,21 @@ export async function setActiveWorkspace(workspaceId: string) {
   const cookieStore = await cookies();
   cookieStore.set(ACTIVE_WORKSPACE_COOKIE, workspaceId, { httpOnly: true, sameSite: "lax", path: "/" });
   redirect("/");
+}
+
+// Muda o plano de um workspace já existente (ex.: cliente fez upgrade de SDR pra SDR + Closer) —
+// ajusta o funil e as taxas mostradas na Visão geral pra esse workspace a partir de agora.
+export async function updateWorkspacePlan(workspaceId: string, plan: string): Promise<CreateWorkspaceState> {
+  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode mudar o plano." };
+  if (!isWorkspacePlan(plan)) return { error: "Plano inválido." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("workspaces").update({ plan }).eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar o plano." };
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/");
+  return { error: null };
 }
 
 // Remove um workspace inteiro — apaga em cascata TODOS os dados dele (contatos, agentes, conversas,
