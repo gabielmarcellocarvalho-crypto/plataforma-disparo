@@ -51,7 +51,7 @@ export function AuthShell({
           p.v = Math.random() * 0.25 + 0.05;
           p.o = Math.random() * 0.3 + 0.1;
         }
-        ctx.fillStyle = `rgba(233,225,255,${p.o})`;
+        ctx.fillStyle = `rgba(255,225,229,${p.o})`;
         ctx.fillRect(p.x, p.y, 1, 2.4);
       }
       raf = requestAnimationFrame(draw);

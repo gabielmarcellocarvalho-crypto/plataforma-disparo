@@ -123,7 +123,7 @@ export function GlassDateRangePicker({
         <div className="absolute z-50 mt-2 left-0 w-[300px] rounded-2xl border border-white/70 shadow-2xl overflow-hidden">
           <div className="absolute inset-0">
             <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-primary opacity-40 blur-2xl" />
-            <div className="absolute -bottom-12 -left-10 w-40 h-40 rounded-full bg-[#6B21D4] opacity-35 blur-2xl" />
+            <div className="absolute -bottom-12 -left-10 w-40 h-40 rounded-full bg-primary-strong opacity-35 blur-2xl" />
           </div>
 
           <div className="relative bg-white/70 backdrop-blur-xl p-3">

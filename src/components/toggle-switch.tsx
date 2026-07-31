@@ -4,10 +4,10 @@ import { cn } from "@/lib/utils";
 
 const styles = {
   switch: `relative block cursor-pointer h-8 w-[52px]
-    [--c-active:#6B21D4]
-    [--c-success:#059669]
+    [--c-active:var(--color-primary-strong)]
+    [--c-success:var(--color-success)]
     [--c-warning:#F59E0B]
-    [--c-danger:#DC2626]
+    [--c-danger:var(--color-danger)]
     [--c-default:#D2D6E9]
     [--c-default-dark:#C7CBDF]
     [transform:translateZ(0)]

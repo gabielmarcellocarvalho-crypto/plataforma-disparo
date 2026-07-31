@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  /* Roxo — escala primária */
-  --color-primary: #7c3aed;
-  --color-primary-strong: #6b21d4;
-  --color-primary-soft: #ece7fe;
-  --color-primary-faint: #f6f3ff;
+  /* Vermelho V4 — escala primária (cor exata extraída da logo: #FF172D) */
+  --color-primary: #ff172d;
+  --color-primary-strong: #d4212a;
+  --color-primary-soft: #fee7ed;
+  --color-primary-faint: #fff3f5;
 
-  /* Sidebar — roxo profundo (o "branco e roxo" premium) */
-  --color-sidebar: #2a1259;
-  --color-sidebar-deep: #1e0c45;
-  --color-sidebar-text: #c9bbe8;
-  --color-sidebar-muted: #9585bd;
+  /* Sidebar — vermelho vinho profundo (mesma relação de contraste que o roxo tinha) */
+  --color-sidebar: #59121b;
+  --color-sidebar-deep: #450c14;
+  --color-sidebar-text: #e8bbc2;
+  --color-sidebar-muted: #bd858f;
   --color-sidebar-active-bg: rgba(255, 255, 255, 0.12);
   --color-sidebar-border: rgba(255, 255, 255, 0.08);
 
@@ -24,9 +24,11 @@
   --color-text: #1a1533;
   --color-text-muted: #6e6a85;
 
-  /* Estados */
-  --color-danger: #dc2626;
-  --color-danger-soft: #fee2e2;
+  /* Estados — danger deslocado pra laranja-avermelhado (H~22) de propósito: com o primário agora
+     vermelho, um "danger" também vermelho ficaria quase idêntico ao botão de ação normal — a
+     distância de matiz aqui é o que ainda deixa claro "isso é destrutivo" de "isso é a marca". */
+  --color-danger: #f06819;
+  --color-danger-soft: #feefe7;
   --color-success: #059669;
   --color-success-soft: #d1fae5;
   --color-warning-soft: #fef3c7;
@@ -34,28 +36,29 @@
   --color-info-soft: #dbeafe;
   --color-info-text: #1d4ed8;
 
-  /* Data viz */
-  --color-chart-1: #7c3aed;
+  /* Data viz — chart-2 continua ciano de propósito: é o par complementar do vermelho (bom
+     contraste em gráfico de 2 séries), não precisa mudar só porque o primário mudou. */
+  --color-chart-1: #ff172d;
   --color-chart-2: #06b6d4;
 
-  /* Tokens do componente de gráfico (AreaChart visx) — tema roxo/branco */
+  /* Tokens do componente de gráfico (AreaChart visx) — tema vermelho/branco */
   --chart-background: #ffffff;
   --chart-foreground: #1a1533;
   --chart-foreground-muted: #6e6a85;
   --chart-label: #8b86a3;
-  --chart-line-primary: #7c3aed;
+  --chart-line-primary: #ff172d;
   --chart-line-secondary: #06b6d4;
-  --chart-crosshair: #cbbdec;
+  --chart-crosshair: #ecbdc5;
   --chart-grid: #eae7f2;
-  --chart-indicator-color: #7c3aed;
+  --chart-indicator-color: #ff172d;
   --chart-indicator-secondary-color: #06b6d4;
   --chart-marker-background: #ffffff;
   --chart-marker-border: #eae7f2;
   --chart-marker-foreground: #1a1533;
-  --chart-marker-badge-background: #7c3aed;
+  --chart-marker-badge-background: #ff172d;
   --chart-marker-badge-foreground: #ffffff;
-  --chart-segment-background: #ece7fe;
-  --chart-segment-line: #7c3aed;
+  --chart-segment-background: #fee7ed;
+  --chart-segment-line: #ff172d;
 
   /* Tokens semânticos usados pelo gráfico via classes Tailwind */
   --color-chart-label: #8b86a3;
@@ -70,7 +73,7 @@
 
   --shadow-sm: 0 1px 2px rgba(26, 21, 51, 0.06), 0 1px 3px rgba(26, 21, 51, 0.04);
   --shadow-md: 0 4px 12px rgba(26, 21, 51, 0.06), 0 12px 32px rgba(26, 21, 51, 0.07);
-  --shadow-lg: 0 8px 24px rgba(42, 18, 89, 0.1), 0 24px 48px rgba(42, 18, 89, 0.08);
+  --shadow-lg: 0 8px 24px rgba(69, 12, 20, 0.1), 0 24px 48px rgba(69, 12, 20, 0.08);
 }
 
 @theme inline {
