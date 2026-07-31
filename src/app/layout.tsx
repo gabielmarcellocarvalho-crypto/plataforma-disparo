@@ -9,7 +9,7 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Plataforma de Disparo",
+  title: "V4 Operator",
   description: "Disparo de WhatsApp e e-mail em massa, multi-cliente.",
 };
 

@@ -3,7 +3,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
-import { updateContactResponsible } from "@/app/actions/contacts";
+import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
+import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
+import { STAGE_ORDER } from "@/lib/crm-stages";
 
 // Mesma leitura de cor por etapa do Kanban — só exibe aqui, quem move o card é o CRM (arrastar) ou
 // o agente de IA sozinho ([[STATUS: ...]]), nunca essa tela.
@@ -86,6 +88,7 @@ export function ConversationsPanel({
   const [draft, setDraft] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [drawerContactId, setDrawerContactId] = useState<string | null>(null);
 
   const campaignOptions = useMemo(
     () => Array.from(new Set(conversations.map((c) => c.contact.origin_campaign).filter((v): v is string => Boolean(v)))).sort(),
@@ -145,6 +148,14 @@ export function ConversationsPanel({
   function handleResponsavel(contactId: string, userId: string) {
     startTransition(async () => {
       await updateContactResponsible(contactId, userId);
+    });
+  }
+
+  function handleStageChange(contactId: string, stage: string) {
+    setError(null);
+    startTransition(async () => {
+      const result = await updateContactStage(contactId, stage);
+      if (result.error) setError(result.error);
     });
   }
 
@@ -342,9 +353,28 @@ export function ConversationsPanel({
                 {initials(selected.contact.name, selected.contact.phone)}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-base font-bold truncate">{selected.contact.name || selected.contact.phone}</div>
+                <button
+                  type="button"
+                  onClick={() => setDrawerContactId(selected.contact.id)}
+                  title="Ver detalhes do lead"
+                  className="text-base font-bold truncate hover:underline cursor-pointer text-left"
+                >
+                  {selected.contact.name || selected.contact.phone}
+                </button>
                 <div className="text-sm text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
               </div>
+
+              <select
+                value={selected.contact.stage}
+                onChange={(e) => handleStageChange(selected.contact.id, e.target.value)}
+                disabled={pending}
+                title="Etapa do CRM"
+                className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
+              >
+                {STAGE_ORDER.map((s) => (
+                  <option key={s} value={s}>{stageLabels[s] || s}</option>
+                ))}
+              </select>
 
               {showResponsavel && vendors.length > 0 && (
                 <select
@@ -442,6 +472,8 @@ export function ConversationsPanel({
         )}
         {error && <p className="text-xs text-danger font-medium px-4 pb-2">{error}</p>}
       </div>
+
+      <CrmLeadDrawer contactId={drawerContactId} onClose={() => setDrawerContactId(null)} stageLabels={stageLabels} />
     </div>
   );
 }

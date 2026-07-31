@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { getContactDetail, updateContactInfo, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
-import { daysSince, type ContactStage } from "@/lib/crm-stages";
+import { getContactDetail, updateContactInfo, updateContactStage, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
+import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -80,6 +80,15 @@ export function CrmLeadDrawer({
     });
   }
 
+  function handleStageChange(stage: ContactStage) {
+    if (!contactId || !contact) return;
+    setContact({ ...contact, stage });
+    startTransition(async () => {
+      const result = await updateContactStage(contactId, stage);
+      if (result.error) setError(result.error);
+    });
+  }
+
   function handleAddNote() {
     if (!contactId || !noteDraft.trim()) return;
     const content = noteDraft;
@@ -118,9 +127,17 @@ export function CrmLeadDrawer({
               <div className="min-w-0">
                 <h2 className="text-lg font-extrabold truncate">{contact.name || contact.phone || contact.email || "sem nome"}</h2>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <span className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong">
-                    {stageLabels[contact.stage as ContactStage]}
-                  </span>
+                  <select
+                    value={contact.stage}
+                    onChange={(e) => handleStageChange(e.target.value as ContactStage)}
+                    className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong border-none outline-none cursor-pointer"
+                  >
+                    {STAGE_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {stageLabels[s]}
+                      </option>
+                    ))}
+                  </select>
                   <span className="text-xs text-text-muted">há {daysSince(contact.stage_changed_at)}d nessa fase</span>
                 </div>
               </div>
@@ -134,7 +151,10 @@ export function CrmLeadDrawer({
 
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-6">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</span>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</span>
+                  <span className="text-xs text-text-muted">{contact.message_count} mensage{contact.message_count === 1 ? "m" : "ns"}</span>
+                </div>
                 {contact.stage !== "nao_abordado" && (
                   <Link
                     href={`/conversas?contact=${contact.id}`}
@@ -178,7 +198,7 @@ export function CrmLeadDrawer({
 
                 <div className="flex flex-col gap-2 border-t border-border pt-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-text-muted">Campos adicionais (gênero, cidade, etc.)</span>
+                    <span className="text-xs font-bold text-text-muted">Campos adicionais (dores, gênero, cidade, etc.)</span>
                     <button type="button" onClick={addField} className="text-xs font-bold text-primary-strong hover:underline cursor-pointer">
                       + campo
                     </button>

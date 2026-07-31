@@ -10,22 +10,22 @@ import { resolveWorkspacePlan, planFunnelEnd, planLabel } from "@/lib/workspace-
 import { getAttentionAlerts } from "@/lib/attention-center";
 import { AttentionCenterCard } from "@/components/attention-center-card";
 
-function StatCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
+function MiniStat({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
-    <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <span className="grid place-items-center w-10 h-10 rounded-xl bg-primary-soft text-primary-strong" aria-hidden>
-          {icon}
-        </span>
+    <div className="flex items-center gap-2.5 bg-surface border border-border rounded-xl px-3.5 py-2 shadow-sm">
+      <span className="grid place-items-center w-7 h-7 rounded-lg bg-primary-soft text-primary-strong shrink-0" aria-hidden>
+        {icon}
+      </span>
+      <div className="leading-tight">
+        <b className="block text-base font-extrabold tabular-nums">{value}</b>
+        <span className="text-[10px] font-semibold text-text-muted whitespace-nowrap">{label}</span>
       </div>
-      <b className="block text-[26px] font-extrabold tracking-tight mt-3 leading-none">{value}</b>
-      <span className="text-xs font-semibold text-text-muted">{label}</span>
     </div>
   );
 }
 
 const PaperPlaneIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="22" y1="2" x2="11" y2="13" />
     <polygon points="22 2 15 22 11 13 2 9 22 2" />
   </svg>
@@ -108,15 +108,11 @@ export default async function OverviewPage({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-[26px] font-extrabold tracking-tight">Visão geral</h1>
-        <p className="text-text-muted text-sm mt-1">Resumo de {workspace?.name ?? "—"}.</p>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
+        {isColaborador && <AttentionCenterCard alerts={attentionAlerts} />}
       </div>
-
-      <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
-
-      <AttentionCenterCard alerts={attentionAlerts} />
 
       {costAlert && (
         <a
@@ -143,23 +139,19 @@ export default async function OverviewPage({
         </a>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
+      <div className="flex items-center gap-3 flex-wrap">
+        <MiniStat
           label="contatos (total)"
           value={contatos ?? 0}
           icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
               <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
             </svg>
           }
         />
-        <StatCard
-          label="campanhas ativas"
-          value={campanhasAtivas ?? 0}
-          icon={<PaperPlaneIcon />}
-        />
+        <MiniStat label="campanhas ativas" value={campanhasAtivas ?? 0} icon={<PaperPlaneIcon />} />
       </div>
 
       <OverviewInsightsBox

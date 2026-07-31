@@ -171,11 +171,13 @@ const COLABORADOR_ONLY_PATHS = new Set(["/agentes", "/configuracoes"]);
 
 export function Sidebar({
   workspaceSlot,
+  userSlot,
   isColaborador,
   accessType,
   attentionCount = 0,
 }: {
   workspaceSlot: React.ReactNode;
+  userSlot: React.ReactNode;
   isColaborador: boolean;
   accessType: AccessType | null;
   attentionCount?: number;
@@ -194,7 +196,7 @@ export function Sidebar({
       <div className="flex items-center gap-2.5 px-2 py-3 mb-3">
         <Image src="/logo-v4.png" alt="V4 Carvalho & Co" width={36} height={36} className="shrink-0" priority />
         <div className="leading-tight">
-          <div className="font-extrabold text-[15px] text-white">Disparo</div>
+          <div className="font-extrabold text-[15px] text-white">V4 Operator</div>
           <div className="text-[11px] text-sidebar-muted">Plataforma de agentes</div>
         </div>
       </div>
@@ -220,6 +222,8 @@ export function Sidebar({
         <div className="text-[10px] font-bold uppercase tracking-wider text-sidebar-muted mb-2">Workspace atual</div>
         {workspaceSlot}
       </div>
+
+      {userSlot}
     </aside>
   );
 }

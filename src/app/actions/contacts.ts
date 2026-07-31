@@ -172,6 +172,7 @@ export type ContactDetail = {
   attention_reason: string | null;
   flagged_reason: string | null;
   created_at: string;
+  message_count: number;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -181,7 +182,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   if (!workspace) return null;
 
   const supabase = await createClient();
-  const [{ data: contact }, { data: notes }] = await Promise.all([
+  const [{ data: contact }, { data: notes }, { count: messageCount }] = await Promise.all([
     supabase
       .from("contacts")
       .select("id, name, phone, email, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at")
@@ -193,10 +194,15 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
       .select("id, author_name, content, created_at")
       .eq("contact_id", contactId)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("contact_id", contactId)
+      .eq("workspace_id", workspace.id),
   ]);
   if (!contact) return null;
 
-  return { contact, notes: notes || [] };
+  return { contact: { ...contact, message_count: messageCount ?? 0 }, notes: notes || [] };
 }
 
 // Edição manual de "infos pessoais" — nome/telefone/e-mail e os campos customizados (chave/valor
