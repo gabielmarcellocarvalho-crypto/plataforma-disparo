@@ -42,11 +42,6 @@ export default async function MetricasPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Métricas</h1>
-        <p className="text-text-muted text-sm mt-1">Custo e desempenho do workspace atual.</p>
-      </div>
-
       <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
 
       {showCost && (

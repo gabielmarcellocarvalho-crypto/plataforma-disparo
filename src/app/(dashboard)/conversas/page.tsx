@@ -106,11 +106,7 @@ export default async function ConversasPage() {
   });
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-7.5rem)] min-h-0">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Conversas</h1>
-        <p className="text-text-muted text-sm mt-1">Acompanhe e assuma as conversas dos agentes em tempo real.</p>
-      </div>
+    <div className="flex flex-col gap-4 h-[calc(100vh-3.5rem)] min-h-0">
       <ConversationsPanel
         conversations={conversations}
         stageLabels={stageLabels}
