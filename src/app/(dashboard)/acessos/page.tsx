@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isCurrentUserColaborador } from "@/lib/workspace";
+import { isAccessType } from "@/lib/access-types";
 import { CreateAccessForm } from "@/components/create-access-form";
 import { AccessRowActions } from "@/components/access-row-actions";
+import { AccessTypeEditor } from "@/components/access-type-editor";
 
 export default async function AcessosPage() {
   // Página só da equipe da agência — cliente nem enxerga no menu, mas bloqueia direto também.
@@ -17,7 +19,7 @@ export default async function AcessosPage() {
 
   const [{ data: workspaces }, { data: profiles }, { data: memberships }, usersList] = await Promise.all([
     supabase.from("workspaces").select("id, name").order("created_at", { ascending: true }),
-    admin.from("profiles").select("id, full_name, role"),
+    admin.from("profiles").select("id, full_name, role, access_type"),
     admin.from("workspace_members").select("user_id, workspaces(name)"),
     admin.auth.admin.listUsers(),
   ]);
@@ -29,13 +31,17 @@ export default async function AcessosPage() {
     if (name) workspaceByUser.set(m.user_id, name);
   }
 
-  const rows = (usersList.data?.users ?? []).map((u) => ({
-    id: u.id,
-    email: u.email ?? "—",
-    role: profileById.get(u.id)?.role ?? "cliente",
-    fullName: profileById.get(u.id)?.full_name ?? null,
-    workspace: workspaceByUser.get(u.id) ?? null,
-  }));
+  const rows = (usersList.data?.users ?? []).map((u) => {
+    const accessType = profileById.get(u.id)?.access_type;
+    return {
+      id: u.id,
+      email: u.email ?? "—",
+      role: profileById.get(u.id)?.role ?? "cliente",
+      fullName: profileById.get(u.id)?.full_name ?? null,
+      workspace: workspaceByUser.get(u.id) ?? null,
+      accessType: isAccessType(accessType) ? accessType : null,
+    };
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -52,6 +58,7 @@ export default async function AcessosPage() {
               <th className="px-4 py-3">E-mail</th>
               <th className="px-4 py-3">Tipo</th>
               <th className="px-4 py-3">Cliente</th>
+              <th className="px-4 py-3">Plano</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
@@ -70,6 +77,7 @@ export default async function AcessosPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-text-muted">{r.role === "cliente" ? r.workspace || "—" : "todos"}</td>
+                <td className="px-4 py-3">{r.role === "cliente" ? <AccessTypeEditor userId={r.id} current={r.accessType} /> : <span className="text-text-muted">—</span>}</td>
                 <td className="px-4 py-3 text-right">
                   <AccessRowActions userId={r.id} isSelf={r.id === currentUser?.id} />
                 </td>

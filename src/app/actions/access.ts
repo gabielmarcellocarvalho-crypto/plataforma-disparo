@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isCurrentUserColaborador } from "@/lib/workspace";
+import { isAccessType } from "@/lib/access-types";
 
 export type CreateAccessState = { error: string | null; ok?: boolean };
 
@@ -17,11 +18,13 @@ export async function createAccess(_prev: CreateAccessState, formData: FormData)
   const fullName = String(formData.get("full_name") || "").trim();
   const role = String(formData.get("role") || "cliente");
   const workspaceId = String(formData.get("workspace_id") || "");
+  const accessType = String(formData.get("access_type") || "");
 
   if (!email || !password) return { error: "E-mail e senha são obrigatórios." };
   if (password.length < 6) return { error: "A senha precisa de pelo menos 6 caracteres." };
   if (role !== "cliente" && role !== "colaborador") return { error: "Tipo de acesso inválido." };
   if (role === "cliente" && !workspaceId) return { error: "Escolha o cliente (workspace) desse acesso." };
+  if (role === "cliente" && !isAccessType(accessType)) return { error: "Escolha o plano/tipo de acesso desse cliente." };
 
   const admin = createAdminClient();
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
@@ -36,7 +39,10 @@ export async function createAccess(_prev: CreateAccessState, formData: FormData)
 
   const userId = created.user.id;
   // O trigger handle_new_user já criou o profile (role padrão 'cliente'); aqui ajusta o papel/nome.
-  await admin.from("profiles").update({ role, full_name: fullName || null }).eq("id", userId);
+  await admin
+    .from("profiles")
+    .update({ role, full_name: fullName || null, access_type: role === "cliente" ? accessType : null })
+    .eq("id", userId);
 
   // Cliente é vinculado a um workspace específico (colaborador enxerga todos, não precisa de vínculo).
   if (role === "cliente") {
@@ -45,6 +51,20 @@ export async function createAccess(_prev: CreateAccessState, formData: FormData)
 
   revalidatePath("/acessos");
   return { error: null, ok: true };
+}
+
+// Reclassifica o plano/tipo de acesso de um cliente já existente (ex.: quem foi criado antes desse
+// campo existir, ou mudou de plano) — só se aplica a role 'cliente'.
+export async function updateAccessType(userId: string, accessType: string): Promise<{ error: string | null }> {
+  if (!(await isCurrentUserColaborador())) return { error: "Sem permissão." };
+  if (!isAccessType(accessType)) return { error: "Tipo de acesso inválido." };
+
+  const admin = createAdminClient();
+  const { error } = await admin.from("profiles").update({ access_type: accessType }).eq("id", userId).eq("role", "cliente");
+  if (error) return { error: "Não foi possível atualizar o tipo de acesso." };
+
+  revalidatePath("/acessos");
+  return { error: null };
 }
 
 export async function deleteAccess(userId: string): Promise<{ error: string | null }> {

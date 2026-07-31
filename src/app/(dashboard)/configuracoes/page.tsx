@@ -1,11 +1,12 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { WhatsappConnectChooser } from "@/components/whatsapp-connect-chooser";
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { listApiKeys } from "@/app/actions/api-keys";
 
 export default async function ConfiguracoesPage() {
+  await assertPageAccess("/configuracoes", { colaboradorOnly: true });
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 

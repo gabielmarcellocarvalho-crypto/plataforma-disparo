@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { isAccessType, type AccessType } from "@/lib/access-types";
 
 const ACTIVE_WORKSPACE_COOKIE = "active_workspace_id";
 
@@ -9,6 +10,8 @@ export type CurrentWorkspace = {
   workspace: WorkspaceSummary | null;
   isColaborador: boolean;
   allWorkspaces: WorkspaceSummary[];
+  // null pra colaborador (sem restrição) e pra cliente ainda não classificado — ver access-types.ts.
+  accessType: AccessType | null;
 };
 
 // Resolve o workspace "ativo" da sessão atual:
@@ -20,11 +23,12 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) return { workspace: null, isColaborador: false, allWorkspaces: [] };
+  if (!user) return { workspace: null, isColaborador: false, allWorkspaces: [], accessType: null };
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+  const { data: profile } = await supabase.from("profiles").select("role, access_type").eq("id", user.id).maybeSingle();
 
   const isColaborador = profile?.role === "colaborador";
+  const accessType = !isColaborador && isAccessType(profile?.access_type) ? profile.access_type : null;
 
   if (isColaborador) {
     const { data: workspaces } = await supabase
@@ -37,7 +41,7 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
     const activeId = cookieStore.get(ACTIVE_WORKSPACE_COOKIE)?.value;
     const active = all.find((w) => w.id === activeId) ?? all[0] ?? null;
 
-    return { workspace: active, isColaborador: true, allWorkspaces: all };
+    return { workspace: active, isColaborador: true, allWorkspaces: all, accessType: null };
   }
 
   const { data: membership } = await supabase
@@ -48,7 +52,18 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
     .maybeSingle();
 
   const workspace = (membership?.workspaces as unknown as WorkspaceSummary | null) ?? null;
-  return { workspace, isColaborador: false, allWorkspaces: workspace ? [workspace] : [] };
+  return { workspace, isColaborador: false, allWorkspaces: workspace ? [workspace] : [], accessType };
+}
+
+// Redireciona pra "/" se o cliente logado não tem esse path liberado no tipo de acesso dele
+// (colaborador nunca é bloqueado). Chamar no topo das páginas restritas (Agentes, Configurações
+// são colaborador-only; Campanhas/Métricas dependem do tipo de acesso do cliente).
+export async function assertPageAccess(path: string, opts: { colaboradorOnly?: boolean } = {}): Promise<void> {
+  const { redirect } = await import("next/navigation");
+  const { canAccessPage } = await import("@/lib/access-types");
+  const { isColaborador, accessType } = await getCurrentWorkspace();
+  if (isColaborador) return;
+  if (opts.colaboradorOnly || !canAccessPage(accessType, path)) redirect("/");
 }
 
 // Checagem rápida (sem precisar resolver o workspace ativo) — usada em telas internas

@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { workspace, isColaborador, allWorkspaces } = await getCurrentWorkspace();
+  const { workspace, isColaborador, allWorkspaces, accessType } = await getCurrentWorkspace();
 
   // Pontos de atenção (agente travado ou só sinalizando) desse workspace — vira o badge da aba Conversas.
   const { count: attentionCount } = workspace
@@ -53,7 +53,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar workspaceSlot={workspaceSlot} isColaborador={isColaborador} attentionCount={attentionCount ?? 0} />
+      <Sidebar workspaceSlot={workspaceSlot} isColaborador={isColaborador} accessType={accessType} attentionCount={attentionCount ?? 0} />
       <div className="flex-1 flex flex-col ml-[250px] min-w-0">
         <header className="h-16 border-b border-border bg-surface/80 backdrop-blur-sm flex items-center justify-between px-7 gap-4 sticky top-0 z-30">
           <div className="flex items-center gap-2.5 min-w-0">

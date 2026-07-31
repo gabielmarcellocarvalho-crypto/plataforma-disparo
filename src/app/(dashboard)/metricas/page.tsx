@@ -1,4 +1,4 @@
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { createClient } from "@/lib/supabase/server";
 import { getCostByAgentInRange, getDailyCostInRange, getConversationsInRange, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 import { resolvePeriod } from "@/lib/period";
@@ -14,6 +14,7 @@ export default async function MetricasPage({
 }: {
   searchParams: Promise<{ preset?: string; from?: string; to?: string }>;
 }) {
+  await assertPageAccess("/metricas");
   const sp = await searchParams;
   const period = resolvePeriod(sp);
   const { workspace, isColaborador } = await getCurrentWorkspace();

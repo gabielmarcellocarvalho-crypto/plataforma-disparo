@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
 
@@ -11,6 +11,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function CampanhasPage() {
+  await assertPageAccess("/campanhas");
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { canAccessPage, type AccessType } from "@/lib/access-types";
 
 const NAV_ITEMS = [
   {
@@ -162,16 +163,27 @@ function NavLink({
   );
 }
 
+// Agentes e Configurações nunca aparecem pra cliente, em nenhum tipo de acesso — só a agência mexe
+// nisso. Os demais itens seguem o tipo de acesso do cliente (accessType null = ainda não
+// classificado, mantém o comportamento antigo de ver tudo até a agência definir o plano dele).
+const COLABORADOR_ONLY_PATHS = new Set(["/agentes", "/configuracoes"]);
+
 export function Sidebar({
   workspaceSlot,
   isColaborador,
+  accessType,
   attentionCount = 0,
 }: {
   workspaceSlot: React.ReactNode;
   isColaborador: boolean;
+  accessType: AccessType | null;
   attentionCount?: number;
 }) {
   const pathname = usePathname();
+
+  const visibleNavItems = isColaborador
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((item) => !COLABORADOR_ONLY_PATHS.has(item.href) && canAccessPage(accessType, item.href));
 
   return (
     <aside
@@ -192,7 +204,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavLink key={item.href} {...item} active={pathname === item.href} badge={item.href === "/conversas" ? attentionCount : undefined} />
         ))}
       </nav>

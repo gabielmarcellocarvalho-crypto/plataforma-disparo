@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { AgentCard } from "@/components/agent-card";
 import { AddAgentForm } from "@/components/add-agent-form";
 import { AttentionPanel } from "@/components/attention-panel";
@@ -8,6 +8,7 @@ import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 export default async function AgentesPage() {
+  await assertPageAccess("/agentes", { colaboradorOnly: true });
   const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 

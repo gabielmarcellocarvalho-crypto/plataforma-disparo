@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
 import { AgentEditView } from "@/components/agent-edit-view";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
 export default async function AgentEditPage({ params }: { params: Promise<{ id: string }> }) {
+  await assertPageAccess("/agentes", { colaboradorOnly: true });
   const { id } = await params;
   const { isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();

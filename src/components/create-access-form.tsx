@@ -2,16 +2,21 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { createAccess, type CreateAccessState } from "@/app/actions/access";
+import { ACCESS_TYPES, type AccessType } from "@/lib/access-types";
 
 const INITIAL: CreateAccessState = { error: null };
 
 export function CreateAccessForm({ workspaces }: { workspaces: { id: string; name: string }[] }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [role, setRole] = useState<"cliente" | "colaborador">("cliente");
+  const [accessType, setAccessType] = useState<AccessType | "">("");
   const [state, formAction, pending] = useActionState(createAccess, INITIAL);
 
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
+    if (state.ok) {
+      formRef.current?.reset();
+      setAccessType("");
+    }
   }, [state.ok]);
 
   return (
@@ -65,6 +70,27 @@ export function CreateAccessForm({ workspaces }: { workspaces: { id: string; nam
             {workspaces.map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {role === "cliente" && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-semibold">Plano / tipo de acesso</label>
+          <p className="text-xs text-text-muted -mt-0.5">Define quais páginas do menu essa pessoa vê.</p>
+          <select
+            name="access_type"
+            value={accessType}
+            onChange={(e) => setAccessType(e.target.value as AccessType)}
+            required
+            className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary bg-surface"
+          >
+            <option value="">Selecione…</option>
+            {ACCESS_TYPES.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
               </option>
             ))}
           </select>

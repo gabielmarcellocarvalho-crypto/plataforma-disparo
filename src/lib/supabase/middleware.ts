@@ -2,7 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 // /api/webhook: chamado pela Evolution API/provedores externos, sem sessão de usuário.
-const PUBLIC_PATHS = ["/login", "/api/webhook"];
+// /auth/callback: troca o code do OAuth (Google) ou do link de recuperação de senha por sessão —
+// roda antes de existir usuário logado. /esqueci-senha: pedido de reset, sem sessão ainda.
+// /redefinir-senha NÃO é público de propósito: só chega lá com sessão de recovery já criada pelo callback.
+const PUBLIC_PATHS = ["/login", "/esqueci-senha", "/auth/callback", "/api/webhook", "/api/v1/leads"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
