@@ -4,7 +4,6 @@ import { getCostByAgentInRange, getDailyCostInRange, getConversationsInRange, CO
 import { resolvePeriod } from "@/lib/period";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { CostBudgetCard } from "@/components/cost-budget-card";
-import { DeliveryCostEstimate } from "@/components/delivery-cost-estimate";
 import { CostStackedBarChart } from "@/components/charts/cost-stacked-bar-chart";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -74,14 +73,11 @@ export default async function MetricasPage({
         />
       )}
 
-      {showCost && <DeliveryCostEstimate totalMessages={totalMessages} iaCostBrl={totalCostBrl} />}
-
       {showCost && (
         <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
           <h3 className="font-bold text-[15px] mb-1">Custo por dia ({period.label})</h3>
           <p className="text-xs text-text-muted mb-4">
-            IA é custo medido de verdade; entrega é estimativa (tarifa padrão da API oficial × mensagens do dia) — ajuda
-            a ver se algum dia teve pico fora do padrão e quanto do custo total viria de cada parte.
+            Custo de IA medido de verdade (tokens Anthropic) — ajuda a ver se algum dia teve pico fora do padrão.
           </p>
           <CostStackedBarChart data={dailyCost} />
         </div>

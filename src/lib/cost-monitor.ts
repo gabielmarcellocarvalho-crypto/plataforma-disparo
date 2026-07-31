@@ -2,7 +2,7 @@
 // Usado na Visão geral (banner de alerta) e nas Métricas (card de orçamento). Colaborador-only.
 import { createClient } from "@/lib/supabase/server";
 import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
-import { COST_USD_TO_BRL, DEFAULT_DELIVERY_RATE_BRL } from "@/lib/cost-constants";
+import { COST_USD_TO_BRL } from "@/lib/cost-constants";
 import { eachDayBrt, dayKeyBrt } from "@/lib/period";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -30,7 +30,7 @@ export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<n
 }
 
 export type AgentCostRow = { agentId: string; name: string; costUsd: number; messages: number; conversations: number };
-export type DailyCostPoint = { date: string; ia: number; entrega: number };
+export type DailyCostPoint = { date: string; ia: number };
 export type Range = { from: Date; to: Date };
 
 function costRowUsd(row: {
@@ -82,8 +82,9 @@ export async function getCostByAgentInRange(workspaceId: string, range: Range): 
     .sort((a, b) => b.costUsd - a.costUsd);
 }
 
-// Custo por dia dentro do período (qualquer duração) — mesma decomposição IA medida + entrega
-// estimada do gráfico de Métricas, só que sem travar em "mês corrente".
+// Custo por dia dentro do período (qualquer duração) — mesmo custo de IA medido do gráfico de
+// Métricas, só que sem travar em "mês corrente". Só IA: agente usa Evolution API (sem cobrança
+// por mensagem), não a API oficial paga.
 export async function getDailyCostInRange(workspaceId: string, range: Range): Promise<DailyCostPoint[]> {
   const supabase = await createClient();
   const { data } = await supabase
@@ -98,19 +99,16 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
 
   const days = eachDayBrt(range.from, range.to);
   const usdByDay = new Map(days.map((d) => [d, 0]));
-  const msgByDay = new Map(days.map((d) => [d, 0]));
 
   for (const row of data || []) {
     const key = dayKeyBrt(row.created_at as string);
     if (!usdByDay.has(key)) continue;
     usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row));
-    msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
   }
 
   return days.map((d) => ({
     date: `${d}T12:00:00.000Z`,
     ia: Math.round((usdByDay.get(d) || 0) * COST_USD_TO_BRL * 100) / 100,
-    entrega: Math.round((msgByDay.get(d) || 0) * DEFAULT_DELIVERY_RATE_BRL * 100) / 100,
   }));
 }
 

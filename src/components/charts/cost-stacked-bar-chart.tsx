@@ -8,18 +8,16 @@ import { Group } from "@visx/group";
 import { GridRows } from "@visx/grid";
 import { localPoint } from "@visx/event";
 
-export type CostBarDatum = { date: string; ia: number; entrega: number };
+export type CostBarDatum = { date: string; ia: number };
 
-const KEYS = ["ia", "entrega"] as const;
+const KEYS = ["ia"] as const;
 type Key = (typeof KEYS)[number];
 
 const COLORS: Record<Key, string> = {
-  ia: "var(--chart-line-primary)", // roxo forte — custo medido de verdade
-  entrega: "var(--color-primary-soft)", // roxo suave — estimativa
+  ia: "var(--chart-line-primary)",
 };
 const LABELS: Record<Key, string> = {
   ia: "Custo de IA",
-  entrega: "Entrega estimada (API oficial)",
 };
 
 function formatDay(iso: string) {
@@ -50,7 +48,7 @@ function Chart({ width, height, data }: { width: number; height: number; data: C
   const xMax = Math.max(0, width - margin.left - margin.right);
   const yMax = Math.max(0, height - margin.top - margin.bottom);
 
-  const maxTotal = useMemo(() => Math.max(1, ...data.map((d) => d.ia + d.entrega)), [data]);
+  const maxTotal = useMemo(() => Math.max(1, ...data.map((d) => d.ia)), [data]);
   const xScale = useMemo(() => scaleBand<string>({ domain: data.map((d) => d.date), range: [0, xMax], padding: 0.3 }), [data, xMax]);
   const yScale = useMemo(() => scaleLinear<number>({ domain: [0, maxTotal * 1.15], range: [yMax, 0] }), [maxTotal, yMax]);
   const labelStep = Math.max(1, Math.ceil(data.length / 8));
@@ -108,10 +106,6 @@ function Chart({ width, height, data }: { width: number; height: number; data: C
           <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-text-muted"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.ia }} />IA</span>
             <span className="font-semibold">R$ {tooltip.datum.ia.toFixed(2)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-1.5 text-text-muted"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.entrega }} />Entrega</span>
-            <span className="font-semibold">R$ {tooltip.datum.entrega.toFixed(2)}</span>
           </div>
         </div>
       )}
