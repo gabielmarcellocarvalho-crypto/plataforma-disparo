@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { canAccessPage, type AccessType } from "@/lib/access-types";
@@ -191,12 +192,7 @@ export function Sidebar({
       style={{ background: "linear-gradient(180deg, var(--color-sidebar) 0%, var(--color-sidebar-deep) 100%)" }}
     >
       <div className="flex items-center gap-2.5 px-2 py-3 mb-3">
-        <span className="grid place-items-center w-9 h-9 rounded-xl bg-primary text-white shadow-lg shadow-primary/30" aria-hidden>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </span>
+        <Image src="/logo-v4.png" alt="V4 Carvalho & Co" width={36} height={36} className="shrink-0" priority />
         <div className="leading-tight">
           <div className="font-extrabold text-[15px] text-white">Disparo</div>
           <div className="text-[11px] text-sidebar-muted">Plataforma de agentes</div>
