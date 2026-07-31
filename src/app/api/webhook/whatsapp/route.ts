@@ -322,13 +322,18 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   const isFirstRepeat = priorContents[0] === normalizedCurrent;
   const isSecondRepeat = isFirstRepeat && priorContents[1] === normalizedCurrent;
 
-  await supabase.from("messages").insert({
-    workspace_id: agent.workspace_id,
-    contact_id: contact.id,
-    agent_id: agent.id,
-    role: "user",
-    content: userContent,
-  });
+  const { data: insertedUserMsg } = await supabase
+    .from("messages")
+    .insert({
+      workspace_id: agent.workspace_id,
+      contact_id: contact.id,
+      agent_id: agent.id,
+      role: "user",
+      content: userContent,
+    })
+    .select("id")
+    .single();
+  const myMessageId = insertedUserMsg?.id ?? null;
 
   if (text && OPT_OUT.test(text)) {
     await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
@@ -382,6 +387,27 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
       })
       .eq("id", contact.id);
     return;
+  }
+
+  // Espera antes de responder (delay humanizado configurado no agente) e, ao acordar, confere se o
+  // contato mandou mensagem NOVA nesse meio-tempo — comum quando alguém manda "oi" e "tudo bem" em
+  // bolhas separadas. Se sim, essa chamada desiste sem responder: a invocação da mensagem mais nova
+  // vai encontrar as duas já salvas no histórico e responder pelas duas juntas, uma vez só.
+  const { reply_delay_min_seconds: min, reply_delay_max_seconds: max } = agent;
+  const delaySeconds = min + Math.random() * Math.max(0, max - min);
+  await sleep(delaySeconds * 1000);
+
+  if (myMessageId) {
+    const { data: latestUserMsg } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("agent_id", agent.id)
+      .eq("contact_id", contact.id)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestUserMsg && latestUserMsg.id !== myMessageId) return;
   }
 
   const { data: historyRows } = await supabase
@@ -465,11 +491,6 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
         .update({ flagged_reason: "O agente sinalizou que essa conversa pode precisar de atenção humana." })
         .eq("id", contact.id);
     }
-
-    // Delay humanizado antes da primeira bolha — evita a sensação de bot respondendo instantâneo.
-    const { reply_delay_min_seconds: min, reply_delay_max_seconds: max } = agent;
-    const delaySeconds = min + Math.random() * Math.max(0, max - min);
-    await sleep(delaySeconds * 1000);
 
     // Cada "ideia" vira uma bolha separada (mesma geração da Anthropic — custo de token já contabilizado
     // abaixo só na primeira, pra não somar o mesmo gasto várias vezes). Intervalo curto entre bolhas
