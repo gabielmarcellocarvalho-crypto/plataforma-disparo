@@ -1,12 +1,19 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { Suspense, useActionState, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { signIn, type SignInState } from "./actions";
 import { signInWithGoogle } from "@/app/actions/auth";
 import { AuthShell } from "@/components/auth-shell";
 
 const INITIAL_STATE: SignInState = { error: null };
+
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  sem_acesso: "Essa conta ainda não tem acesso à plataforma. Peça pra equipe criar seu login.",
+  auth: "Não foi possível concluir o login. Tente de novo.",
+  google: "Não foi possível iniciar o login com Google. Tente de novo.",
+};
 
 function MailIcon() {
   return (
@@ -52,12 +59,23 @@ function GoogleIcon() {
   );
 }
 
+function OAuthErrorBanner() {
+  const searchParams = useSearchParams();
+  const message = OAUTH_ERROR_MESSAGES[searchParams.get("erro") || ""];
+  if (!message) return null;
+  return <p className="text-sm text-danger font-medium bg-danger-soft rounded-md px-3 py-2.5 -mt-1">{message}</p>;
+}
+
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(signIn, INITIAL_STATE);
   const [showPassword, setShowPassword] = useState(false);
 
   return (
     <AuthShell title="Bem-vindo de volta" subtitle="Entre na sua conta pra continuar">
+      <Suspense fallback={null}>
+        <OAuthErrorBanner />
+      </Suspense>
+
       <form action={formAction} className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
           <label htmlFor="email" className="text-sm font-semibold text-text">
