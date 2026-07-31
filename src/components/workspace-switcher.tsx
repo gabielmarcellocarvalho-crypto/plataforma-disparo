@@ -34,6 +34,7 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
   const [open, setOpen] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [switchingName, setSwitchingName] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -62,11 +63,13 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
     };
   }, [open]);
 
-  function handleSwitch(id: string) {
+  function handleSwitch(id: string, name: string) {
     if (id === currentId) {
       setOpen(false);
       return;
     }
+    setOpen(false);
+    setSwitchingName(name);
     startTransition(async () => {
       await setActiveWorkspace(id);
     });
@@ -138,7 +141,7 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
                   <>
                     <button
                       type="button"
-                      onClick={() => handleSwitch(w.id)}
+                      onClick={() => handleSwitch(w.id, w.name)}
                       role="option"
                       aria-selected={active}
                       className="flex flex-1 items-center gap-2 py-2 pl-1.5 pr-1 text-sm text-left cursor-pointer min-w-0"
@@ -162,6 +165,15 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
             );
           })}
           {error && <p className="text-xs text-danger font-medium px-3 py-1.5">{error}</p>}
+        </div>
+      )}
+
+      {switchingName && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-sidebar/95 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3">
+            <span className="w-10 h-10 rounded-full border-[3px] border-white/20 border-t-white animate-spin" aria-hidden />
+            <p className="text-white text-sm font-bold">Trocando pra {switchingName}…</p>
+          </div>
         </div>
       )}
     </div>
