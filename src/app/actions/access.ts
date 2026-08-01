@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isCurrentUserColaborador } from "@/lib/workspace";
 import { isAccessType } from "@/lib/access-types";
@@ -69,7 +70,23 @@ export async function updateAccessType(userId: string, accessType: string): Prom
 
 export async function deleteAccess(userId: string): Promise<{ error: string | null }> {
   if (!(await isCurrentUserColaborador())) return { error: "Sem permissão." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user?.id === userId) return { error: "Não é possível remover o próprio acesso." };
+
   const admin = createAdminClient();
+
+  // Se o alvo é colaborador, impede apagar o último — sem isso a agência fica sem ninguém com
+  // acesso administrativo, e ninguém consegue mais criar acessos novos pra corrigir.
+  const { data: target } = await admin.from("profiles").select("role").eq("id", userId).maybeSingle();
+  if (target?.role === "colaborador") {
+    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("role", "colaborador");
+    if ((count ?? 0) <= 1) return { error: "Não é possível remover o último colaborador com acesso administrativo." };
+  }
+
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) return { error: "Não foi possível remover o acesso." };
   revalidatePath("/acessos");
