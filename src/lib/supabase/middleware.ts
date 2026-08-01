@@ -5,7 +5,9 @@ import { NextResponse, type NextRequest } from "next/server";
 // /auth/callback: troca o code do OAuth (Google) ou do link de recuperação de senha por sessão —
 // roda antes de existir usuário logado. /esqueci-senha: pedido de reset, sem sessão ainda.
 // /redefinir-senha NÃO é público de propósito: só chega lá com sessão de recovery já criada pelo callback.
-const PUBLIC_PATHS = ["/login", "/esqueci-senha", "/auth/callback", "/api/webhook", "/api/v1/leads"];
+// /api/cron: chamado por cron externo (Vercel Cron ou VPS), sem sessão — protegido pelo próprio
+// CRON_SECRET dentro de cada rota, não pela sessão do middleware.
+const PUBLIC_PATHS = ["/login", "/esqueci-senha", "/auth/callback", "/api/webhook", "/api/v1/leads", "/api/cron"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

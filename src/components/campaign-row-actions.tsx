@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import { activateCampaign, pauseCampaign } from "@/app/actions/campaigns";
 
-export function CampaignRowActions({ id, status }: { id: string; status: string }) {
+export type StageOption = { value: string; label: string };
+
+export function CampaignRowActions({ id, status, stages }: { id: string; status: string; stages: StageOption[] }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const [onlyAbordados, setOnlyAbordados] = useState(false);
+  const [selectedStages, setSelectedStages] = useState<Set<string>>(new Set());
   const [sinceDays, setSinceDays] = useState("");
 
   if (status === "ativa") {
@@ -22,11 +24,20 @@ export function CampaignRowActions({ id, status }: { id: string; status: string 
     );
   }
 
+  function toggleStage(value: string) {
+    setSelectedStages((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  }
+
   function handleConfirm() {
     setError(null);
     startTransition(async () => {
       const result = await activateCampaign(id, {
-        onlyAbordados,
+        stages: Array.from(selectedStages),
         sinceDays: sinceDays.trim() ? Number(sinceDays) : null,
       });
       setError(result.error);
@@ -48,10 +59,21 @@ export function CampaignRowActions({ id, status }: { id: string; status: string 
 
   return (
     <div className="flex flex-col items-end gap-2 text-left bg-surface-2 border border-border rounded-lg p-3 w-72">
-      <label className="flex items-center gap-2 text-xs font-semibold w-full cursor-pointer">
-        <input type="checkbox" checked={onlyAbordados} onChange={(e) => setOnlyAbordados(e.target.checked)} />
-        Só leads já abordados no CRM (exclui descartados)
-      </label>
+      <div className="w-full">
+        <span className="text-xs font-semibold block mb-1.5">Fases do CRM (nenhuma marcada = todas)</span>
+        {stages.length === 0 ? (
+          <p className="text-xs text-text-muted">Nenhuma fase visível no CRM desse workspace.</p>
+        ) : (
+          <div className="flex flex-col gap-1 max-h-36 overflow-y-auto">
+            {stages.map((s) => (
+              <label key={s.value} className="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" checked={selectedStages.has(s.value)} onChange={() => toggleStage(s.value)} />
+                {s.label}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
       <label className="flex items-center gap-2 text-xs font-semibold w-full">
         Só quem mudou de fase nos últimos
         <input

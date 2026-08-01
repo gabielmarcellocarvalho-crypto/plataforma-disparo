@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { STAGE_ORDER } from "@/lib/crm-stages";
+import { isContactStage } from "@/lib/crm-stages";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -49,7 +49,15 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       mode,
       agent_id: mode === "agent" ? agentId : null,
       message_templates: templates,
-      ramp_config: { delaySeconds: [delayMin, delayMax], hourStart, hourEnd, days: [1, 2, 3, 4, 5, 6] },
+      // ramp = cota diária crescente (anti-ban), mesma faixa já validada no piloto: 50 disparos no
+      // dia 1 da campanha, 80 no dia 2, até estabilizar em 300/dia a partir do 6º dia.
+      ramp_config: {
+        delaySeconds: [delayMin, delayMax],
+        hourStart,
+        hourEnd,
+        days: [1, 2, 3, 4, 5, 6],
+        ramp: [50, 80, 120, 170, 230, 300],
+      },
       status: "rascunho",
     })
     .select("id")
@@ -62,15 +70,15 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
 }
 
 export type ActivateCampaignFilters = {
-  onlyAbordados: boolean; // só quem já saiu de "não abordado" (exclui descartado) — pra remarketing/nutrição
+  stages: string[]; // fases do CRM selecionadas (vazio = todas as fases, sem filtro de estágio)
   sinceDays: number | null; // só quem mudou de fase do CRM nos últimos N dias (null = sem limite)
 };
 
 // Popula a fila de disparo com os contatos do workspace (respeitando opt-out do canal e, opcionalmente,
-// segmentando pelo estágio do CRM) e marca a campanha como ativa.
+// segmentando por uma ou mais fases do CRM) e marca a campanha como ativa.
 export async function activateCampaign(
   campaignId: string,
-  filters: ActivateCampaignFilters = { onlyAbordados: false, sinceDays: null }
+  filters: ActivateCampaignFilters = { stages: [], sinceDays: null }
 ): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -95,11 +103,10 @@ export async function activateCampaign(
     .eq(optOutColumn, false)
     .not(contactColumn, "is", null);
 
-  if (filters.onlyAbordados) {
-    // "Abordado ou além", nunca descartado — quem foi descartado é justamente pra não receber mais nada.
-    const abordadoIdx = STAGE_ORDER.indexOf("abordado");
-    const eligibleStages = STAGE_ORDER.slice(abordadoIdx).filter((s) => s !== "descartado");
-    query = query.in("stage", eligibleStages);
+  if (filters.stages.length > 0) {
+    const validStages = filters.stages.filter(isContactStage);
+    if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
+    query = query.in("stage", validStages);
   }
   if (filters.sinceDays && filters.sinceDays > 0) {
     const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();

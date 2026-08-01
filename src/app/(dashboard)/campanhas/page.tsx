@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
+import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
 
@@ -15,7 +16,7 @@ export default async function CampanhasPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: campaigns }, { data: agents }] = workspace
+  const [{ data: campaigns }, { data: agents }, { data: workspaceRow }] = workspace
     ? await Promise.all([
         supabase
           .from("campaigns")
@@ -27,10 +28,17 @@ export default async function CampanhasPage() {
           .select("id, name, connection_status")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
+        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: null }];
 
   const rows = campaigns ?? [];
+
+  // Mesma fonte de fases/labels do CRM — se o cliente renomear ou esconder uma fase lá, o filtro de
+  // segmentação da campanha reflete na hora, sem precisar duplicar configuração.
+  const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
+  const visibleStages = getVisibleStages(resolveHiddenStages(workspaceRow?.crm_hidden_stages));
+  const stageOptions = visibleStages.map((s) => ({ value: s, label: stageLabels[s] }));
 
   const counts: Record<string, { pendente: number; enviado: number; falhou: number }> = {};
   if (rows.length > 0) {
@@ -93,7 +101,7 @@ export default async function CampanhasPage() {
                       {count.pendente} pendente · {count.enviado} enviado · {count.falhou} falhou
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <CampaignRowActions id={c.id} status={c.status} />
+                      <CampaignRowActions id={c.id} status={c.status} stages={stageOptions} />
                     </td>
                   </tr>
                 );
