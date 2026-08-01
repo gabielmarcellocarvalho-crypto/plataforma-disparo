@@ -100,7 +100,8 @@ export function AuthShell({
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden />
 
       <div className="absolute left-0 right-0 top-0 px-6 py-5">
-        <span className="text-xs font-bold tracking-[0.16em] uppercase text-sidebar-text">V4 Operator</span>
+        <span className="text-xs font-bold tracking-[0.16em] uppercase text-sidebar-text">V4 Scale</span>
+        <p className="text-[11px] text-sidebar-muted mt-0.5">Escalando vendas com inteligência</p>
       </div>
 
       <div className="relative h-full w-full flex flex-col items-center justify-center px-4 py-6 overflow-y-auto">

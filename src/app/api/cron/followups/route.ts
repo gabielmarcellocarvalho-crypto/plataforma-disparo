@@ -132,7 +132,8 @@ export async function GET(req: Request) {
         nudge
       );
 
-      const replyParts = capBubbles(gen.replyParts, agentConfig.maxBubbles);
+      // Follow-up é sempre bolha única — retomada curta não precisa (nem deve) virar várias mensagens.
+      const replyParts = capBubbles(gen.replyParts, 1);
       if (replyParts.length === 0) {
         skipped++;
         continue;
