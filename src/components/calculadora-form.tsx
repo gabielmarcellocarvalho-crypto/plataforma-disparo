@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import {
   estimateSharedEmailCost,
   estimateWhatsappCost,
+  estimateAnthropicCostUsd,
   assessWhatsappRisk,
   CONNECTOR_GUIDES,
   type RiskLevel,
@@ -76,6 +77,10 @@ export function CalculadoraForm({
   const [whatsappPorMes, setWhatsappPorMes] = useState(initialWhatsappCliente);
   const [custoVps, setCustoVps] = useState(40);
   const [clientesNaVps, setClientesNaVps] = useState(1);
+  const [leadsAvulsos, setLeadsAvulsos] = useState(0);
+  const [tarifaMetaAvulso, setTarifaMetaAvulso] = useState("0,037");
+  const [haikuInputTokens, setHaikuInputTokens] = useState(3000);
+  const [haikuOutputTokens, setHaikuOutputTokens] = useState(400);
   const [salvando, startSalvar] = useTransition();
   const [estimateStatus, setEstimateStatus] = useState<string | null>(null);
 
@@ -107,6 +112,17 @@ export function CalculadoraForm({
   );
   const risco = useMemo(() => assessWhatsappRisk(whatsappPorMes), [whatsappPorMes]);
   const riscoStyle = RISK_STYLES[risco.nivel];
+
+  // Disparo avulso = API oficial (Meta cobra por mensagem) + modelo Haiku (mais barato — cabe pra
+  // lead de toque único/baixo volume, diferente do agente SDR/Closer que usa um modelo maior).
+  const tarifaMetaAvulsoNum = Number(tarifaMetaAvulso.replace(",", ".")) || 0;
+  const haikuCostUsd = useMemo(
+    () => estimateAnthropicCostUsd("claude-haiku-4-5", { inputTokens: haikuInputTokens, outputTokens: haikuOutputTokens }),
+    [haikuInputTokens, haikuOutputTokens]
+  );
+  const haikuCostBrl = haikuCostUsd * USD_TO_BRL;
+  const custoPorLeadAvulsoBrl = tarifaMetaAvulsoNum + haikuCostBrl;
+  const custoMensalAvulsoBrl = custoPorLeadAvulsoBrl * leadsAvulsos;
 
   const emailCustoTotalBrl = email.custoTotalMensalUsd * USD_TO_BRL;
   const emailCustoClienteBrl = email.custoClienteMensalUsd * USD_TO_BRL;
@@ -232,6 +248,53 @@ export function CalculadoraForm({
       <div className="bg-primary-faint border border-border rounded-lg p-5 flex items-center justify-between">
         <span className="text-sm font-bold">Estimativa total mensal pra esse cliente</span>
         <span className="text-xl font-extrabold text-primary-strong">R$ {totalMensalBrl.toFixed(2)}</span>
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-4">
+        <div>
+          <h3 className="font-bold text-[15px]">Disparo avulso (API oficial + Haiku)</h3>
+          <p className="text-xs text-text-muted mt-1 max-w-prose">
+            Cenário à parte da campanha via Evolution acima — disparo pontual pela API oficial (Meta cobra por
+            mensagem) com o modelo Haiku (mais barato, pra lead de toque único). Não entra na estimativa total
+            de cima, é uma conta separada por lead.
+          </p>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <NumberField label="Leads/disparos avulsos por mês" value={leadsAvulsos} onChange={setLeadsAvulsos} />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-semibold">Tarifa de entrega Meta (R$/msg)</label>
+            <input
+              value={tarifaMetaAvulso}
+              onChange={(e) => setTarifaMetaAvulso(e.target.value.replace(/[^0-9.,]/g, ""))}
+              inputMode="decimal"
+              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+            />
+          </div>
+          <NumberField label="Tokens de entrada (Haiku) por lead" value={haikuInputTokens} onChange={setHaikuInputTokens} />
+          <NumberField label="Tokens de saída (Haiku) por lead" value={haikuOutputTokens} onChange={setHaikuOutputTokens} />
+        </div>
+
+        <div className="border-t border-border pt-3 flex flex-col gap-1">
+          <div className="flex justify-between text-sm">
+            <span className="text-text-muted">Entrega Meta + IA Haiku, por lead</span>
+            <span className="font-bold">
+              R$ {tarifaMetaAvulsoNum.toFixed(4)} + R$ {haikuCostBrl.toFixed(4)}
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-text-muted">Custo por lead</span>
+            <span className="font-bold text-primary-strong">R$ {custoPorLeadAvulsoBrl.toFixed(4)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-text-muted">Total estimado ({leadsAvulsos} leads/mês)</span>
+            <span className="font-bold">R$ {custoMensalAvulsoBrl.toFixed(2)}</span>
+          </div>
+          <p className="text-xs text-text-muted mt-1">
+            Tarifa Meta conta só em mensagem cobrável (fora das janelas grátis) — dentro delas é zero. Ajuste os
+            tokens de Haiku conforme o tamanho real da conversa desse tipo de lead.
+          </p>
+        </div>
       </div>
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
