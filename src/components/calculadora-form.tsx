@@ -78,7 +78,7 @@ export function CalculadoraForm({
   const [custoVps, setCustoVps] = useState(40);
   const [clientesNaVps, setClientesNaVps] = useState(1);
   const [leadsAvulsos, setLeadsAvulsos] = useState(0);
-  const [tarifaMetaAvulso, setTarifaMetaAvulso] = useState("0,037");
+  const [tarifaMetaAvulso, setTarifaMetaAvulso] = useState("");
   const [haikuInputTokens, setHaikuInputTokens] = useState(3000);
   const [haikuOutputTokens, setHaikuOutputTokens] = useState(400);
   const [salvando, startSalvar] = useTransition();
@@ -263,27 +263,34 @@ export function CalculadoraForm({
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <NumberField label="Leads/disparos avulsos por mês" value={leadsAvulsos} onChange={setLeadsAvulsos} />
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold">Tarifa de entrega Meta (R$/msg)</label>
+            <label className="text-sm font-semibold">Tarifa Meta — categoria Marketing (R$/msg)</label>
             <input
               value={tarifaMetaAvulso}
               onChange={(e) => setTarifaMetaAvulso(e.target.value.replace(/[^0-9.,]/g, ""))}
               inputMode="decimal"
-              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+              placeholder="confira no 360dialog/Meta"
+              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary placeholder:text-xs"
             />
+            <p className="text-[11px] text-text-muted">
+              Disparo frio é categoria <strong>Marketing</strong>, mais cara que Utilidade/Serviço — não deixei valor
+              padrão de propósito, confira a tarifa vigente antes de usar isso pra fechar preço.
+            </p>
           </div>
-          <NumberField label="Tokens de entrada (Haiku) por lead" value={haikuInputTokens} onChange={setHaikuInputTokens} />
-          <NumberField label="Tokens de saída (Haiku) por lead" value={haikuOutputTokens} onChange={setHaikuOutputTokens} />
+          <NumberField label="Tokens de entrada (Haiku) por disparo" value={haikuInputTokens} onChange={setHaikuInputTokens} />
+          <NumberField label="Tokens de saída (Haiku) por disparo" value={haikuOutputTokens} onChange={setHaikuOutputTokens} />
         </div>
 
         <div className="border-t border-border pt-3 flex flex-col gap-1">
           <div className="flex justify-between text-sm">
-            <span className="text-text-muted">Entrega Meta + IA Haiku, por lead</span>
-            <span className="font-bold">
-              R$ {tarifaMetaAvulsoNum.toFixed(4)} + R$ {haikuCostBrl.toFixed(4)}
-            </span>
+            <span className="text-text-muted">Tarifa Meta (marketing), por disparo</span>
+            <span className="font-bold">R$ {tarifaMetaAvulsoNum.toFixed(4)}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-text-muted">Custo por lead</span>
+            <span className="text-text-muted">Custo de IA Haiku, por disparo</span>
+            <span className="font-bold">R$ {haikuCostBrl.toFixed(4)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-text-muted">Custo por lead/disparo</span>
             <span className="font-bold text-primary-strong">R$ {custoPorLeadAvulsoBrl.toFixed(4)}</span>
           </div>
           <div className="flex justify-between text-sm">
