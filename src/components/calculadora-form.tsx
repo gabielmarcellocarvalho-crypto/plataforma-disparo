@@ -78,7 +78,9 @@ export function CalculadoraForm({
   const [custoVps, setCustoVps] = useState(40);
   const [clientesNaVps, setClientesNaVps] = useState(1);
   const [leadsAvulsos, setLeadsAvulsos] = useState(0);
-  const [tarifaMetaAvulso, setTarifaMetaAvulso] = useState("");
+  // Categoria Marketing (disparo frio) — US$0,0625/msg no rate card da Meta pro Brasil, jul/2026,
+  // sem markup do BSP (360dialog repassa a tarifa da Meta a custo). Câmbio de referência: USD_TO_BRL acima.
+  const [tarifaMetaAvulso, setTarifaMetaAvulso] = useState((0.0625 * USD_TO_BRL).toFixed(4).replace(".", ","));
   const [haikuInputTokens, setHaikuInputTokens] = useState(3000);
   const [haikuOutputTokens, setHaikuOutputTokens] = useState(400);
   const [salvando, startSalvar] = useTransition();
@@ -272,8 +274,9 @@ export function CalculadoraForm({
               className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary placeholder:text-xs"
             />
             <p className="text-[11px] text-text-muted">
-              Disparo frio é categoria <strong>Marketing</strong>, mais cara que Utilidade/Serviço — não deixei valor
-              padrão de propósito, confira a tarifa vigente antes de usar isso pra fechar preço.
+              Disparo frio é categoria <strong>Marketing</strong>, mais cara que Utilidade (~R$0,037) ou Serviço
+              (grátis em 24h). Padrão abaixo = US$0,0625 × câmbio, rate card da Meta de jul/2026, sem markup (360dialog
+              repassa a tarifa a custo) — confira antes de fechar preço, tarifa/câmbio mudam.
             </p>
           </div>
           <NumberField label="Tokens de entrada (Haiku) por disparo" value={haikuInputTokens} onChange={setHaikuInputTokens} />
