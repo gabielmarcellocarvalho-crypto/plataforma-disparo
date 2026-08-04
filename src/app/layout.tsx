@@ -9,7 +9,7 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "V4 Scale",
+  title: "AutomaX",
   description: "Disparo de WhatsApp e e-mail em massa, multi-cliente.",
 };
 

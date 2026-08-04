@@ -194,10 +194,10 @@ export function Sidebar({
       style={{ background: "linear-gradient(180deg, var(--color-sidebar) 0%, var(--color-sidebar-deep) 100%)" }}
     >
       <div className="flex items-center gap-2.5 px-2 py-3 mb-3">
-        <Image src="/logo-v4.png" alt="V4 Carvalho & Co" width={36} height={36} className="shrink-0" priority />
+        <Image src="/logo-automax.png" alt="AutomaX" width={40} height={27} className="shrink-0" priority />
         <div className="leading-tight">
-          <div className="font-extrabold text-[15px] text-white">V4 Scale</div>
-          <div className="text-[11px] text-sidebar-muted">Escalando vendas com inteligência</div>
+          <div className="font-extrabold text-[15px] text-white">AutomaX</div>
+          <div className="text-[11px] text-sidebar-muted">Automatize processos. Multiplique resultados</div>
         </div>
       </div>
 

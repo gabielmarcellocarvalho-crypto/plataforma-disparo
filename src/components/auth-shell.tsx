@@ -100,17 +100,17 @@ export function AuthShell({
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden />
 
       <div className="absolute left-0 right-0 top-0 px-6 py-5">
-        <span className="text-xs font-bold tracking-[0.16em] uppercase text-sidebar-text">V4 Scale</span>
-        <p className="text-[11px] text-sidebar-muted mt-0.5">Escalando vendas com inteligência</p>
+        <span className="text-xs font-bold tracking-[0.16em] uppercase text-sidebar-text">AutomaX</span>
+        <p className="text-[11px] text-sidebar-muted mt-0.5">Automatize processos. Multiplique resultados</p>
       </div>
 
       <div className="relative h-full w-full flex flex-col items-center justify-center px-4 py-6 overflow-y-auto">
         <Image
-          src="/logo-v4.png"
-          alt="V4"
-          width={452}
-          height={464}
-          className="w-[clamp(90px,14vh,160px)] h-auto mb-6 shrink-0"
+          src="/logo-automax.png"
+          alt="AutomaX"
+          width={798}
+          height={546}
+          className="w-[clamp(120px,18vh,220px)] h-auto mb-6 shrink-0"
           priority
         />
         <div className="login-card w-full max-w-sm bg-surface/[0.98] backdrop-blur-sm border border-white/10 rounded-2xl shadow-lg p-7 flex flex-col gap-5">
