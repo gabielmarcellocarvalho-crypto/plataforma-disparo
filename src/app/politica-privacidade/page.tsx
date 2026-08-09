@@ -23,8 +23,7 @@ export default function PoliticaPrivacidadePage() {
       <header className="border-b border-border bg-surface">
         <div className="max-w-3xl mx-auto px-6 py-5 flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-automax.png" alt="AutomaX" className="h-8 w-auto" />
-          <span className="font-extrabold text-text">AutomaX</span>
+          <img src="/logo-automax-vermelha.png" alt="AutomaX" className="h-12 w-auto" />
         </div>
       </header>
 
