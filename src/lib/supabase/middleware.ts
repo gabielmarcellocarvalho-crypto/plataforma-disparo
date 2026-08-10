@@ -7,7 +7,17 @@ import { NextResponse, type NextRequest } from "next/server";
 // /redefinir-senha NÃO é público de propósito: só chega lá com sessão de recovery já criada pelo callback.
 // /api/cron: chamado por cron externo (Vercel Cron ou VPS), sem sessão — protegido pelo próprio
 // CRON_SECRET dentro de cada rota, não pela sessão do middleware.
-const PUBLIC_PATHS = ["/login", "/esqueci-senha", "/auth/callback", "/api/webhook", "/api/v1/leads", "/api/cron", "/politica-privacidade"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/esqueci-senha",
+  "/auth/callback",
+  "/api/webhook",
+  "/api/v1/leads",
+  "/api/cron",
+  "/politica-privacidade",
+  "/termos-de-uso",
+  "/exclusao-de-dados",
+];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
