@@ -86,15 +86,22 @@ export async function refreshAgentStatus(agentId: string) {
   revalidatePath("/agentes");
 }
 
+export type LlmProvider = "claude" | "gemini";
+
 // O prompt final vem explícito (o operador pode editar o texto gerado à mão antes de salvar) —
 // nunca recalculamos por conta própria aqui, senão uma edição manual seria perdida na próxima save.
-export async function updateAgentConfig(agentId: string, rawConfig: AgentConfig, systemPrompt: string): Promise<{ error: string | null }> {
+export async function updateAgentConfig(
+  agentId: string,
+  rawConfig: AgentConfig,
+  systemPrompt: string,
+  llmProvider: LlmProvider
+): Promise<{ error: string | null }> {
   const config = normalizeAgentConfig(rawConfig);
   const prompt = systemPrompt.trim();
   if (!prompt) return { error: "O prompt final não pode ficar vazio." };
 
   const supabase = await createClient();
-  const { error } = await supabase.from("agents").update({ config, system_prompt: prompt }).eq("id", agentId);
+  const { error } = await supabase.from("agents").update({ config, system_prompt: prompt, llm_provider: llmProvider }).eq("id", agentId);
   if (error) return { error: "Não foi possível salvar a configuração." };
   revalidatePath("/agentes");
   revalidatePath(`/agentes/${agentId}`);

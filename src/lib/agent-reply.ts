@@ -4,24 +4,26 @@ import { STATUS_TAG_TO_STAGE, type ContactStage } from "@/lib/crm-stages";
 const client = new Anthropic();
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
-const ATTENTION_TAG = /\[\[PRECISA_HUMANO\]\]/i;
+export const ATTENTION_TAG = /\[\[PRECISA_HUMANO\]\]/i;
 // Tag de classificação de estágio do funil (ex.: [[STATUS: interessado]]) — o prompt do agente
 // instrui a sempre incluir isso; nunca deveria chegar no texto pro cliente. Alimenta o Kanban do CRM.
-const STATUS_TAG = /\[\[STATUS:\s*([a-zà-ú_]+)\s*\]\]/i;
+export const STATUS_TAG = /\[\[STATUS:\s*([a-zà-ú_]+)\s*\]\]/i;
 
-function parseStage(text: string): ContactStage | null {
+// Exportado pra ser reaproveitado pelo provider Gemini (src/lib/agent-reply-gemini.ts) — o formato das
+// tags é do PROMPT, não da API do provedor, então tem que ficar idêntico entre os dois.
+export function parseStage(text: string): ContactStage | null {
   const match = text.match(STATUS_TAG);
   if (!match) return null;
   return STATUS_TAG_TO_STAGE[match[1].toLowerCase()] ?? null;
 }
 // Dados que o agente coletou do contato (config "informações que preciso") — vira update em
 // contacts.custom_fields. Formato: [[DADOS: chave=valor; chave2=valor2]].
-const DADOS_TAG = /\[\[DADOS:\s*([^\]]*)\]\]/i;
+export const DADOS_TAG = /\[\[DADOS:\s*([^\]]*)\]\]/i;
 // Marca que o prompt instrui o modelo a usar quando a resposta deveria virar mais de uma bolha do
 // WhatsApp (em vez de um parágrafo só) — mesma geração, sem chamar a API de novo, custo extra desprezível.
-const MESSAGE_SPLIT_TAG = /\[\[NOVA_MSG\]\]/gi;
+export const MESSAGE_SPLIT_TAG = /\[\[NOVA_MSG\]\]/gi;
 
-function parseCollectedData(text: string): Record<string, string> {
+export function parseCollectedData(text: string): Record<string, string> {
   const match = text.match(DADOS_TAG);
   if (!match) return {};
   const data: Record<string, string> = {};

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { generateReply, capBubbles, type ConversationMessage } from "@/lib/agent-reply";
+import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
   const supabase = createAdminClient();
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, config, evolution_instance_name, phone_number")
+    .select("id, workspace_id, system_prompt, config, evolution_instance_name, phone_number, llm_provider")
     .eq("status", "ativo");
 
   let sent = 0;
@@ -121,7 +122,8 @@ export async function GET(req: Request) {
         "interesse, oferecer ajuda adicional, ou propor um próximo passo simples. Nunca mencione que isso é uma " +
         `mensagem automática de follow-up. Essa é a tentativa ${attemptNum} de ${maxCount}.`;
 
-      const gen = await generateReply(
+      const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
+      const gen = await replyFn(
         agent.system_prompt,
         { name: contact.name, custom_fields: contact.custom_fields },
         history,

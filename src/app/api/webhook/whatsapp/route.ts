@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
 import { generateReply, capBubbles, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
+import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
@@ -211,7 +212,7 @@ async function processWebhook(body: {
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds")
+    .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider")
     .eq("evolution_instance_name", instanceName)
     .maybeSingle();
 
@@ -265,6 +266,7 @@ type Agent = {
   evolution_instance_name: string;
   reply_delay_min_seconds: number;
   reply_delay_max_seconds: number;
+  llm_provider: string;
 };
 
 async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: string, data: EvolutionMessage) {
@@ -435,7 +437,8 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n")
     : undefined;
 
-  const gen = await generateReply(
+  const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
+  const gen = await replyFn(
     agent.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,

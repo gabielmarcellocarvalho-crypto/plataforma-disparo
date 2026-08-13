@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateAgentConfig } from "@/app/actions/agents";
+import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import {
   buildSystemPrompt,
@@ -55,6 +55,34 @@ function ToneField({ value, onChange }: { value: AgentConfig["tone"]; onChange: 
             }`}
           >
             {opt}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PROVIDER_OPTIONS: { value: LlmProvider; label: string; note: string }[] = [
+  { value: "claude", label: "Claude (Sonnet 5)", note: "Padrão — validado em produção." },
+  { value: "gemini", label: "Gemini 3 Flash", note: "Mais barato, em teste — valide qualidade antes de usar com cliente pagante." },
+];
+
+function ProviderField({ value, onChange }: { value: LlmProvider; onChange: (v: LlmProvider) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-bold text-text-muted">Modelo de IA</span>
+      <div className="flex gap-2">
+        {PROVIDER_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`flex-1 text-left text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
+              value === opt.value ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+            }`}
+          >
+            <div>{opt.label}</div>
+            <div className={`font-normal mt-0.5 ${value === opt.value ? "text-white/80" : "text-text-muted"}`}>{opt.note}</div>
           </button>
         ))}
       </div>
@@ -124,15 +152,18 @@ export function AgentConfigForm({
   agentId,
   initialConfig,
   initialSystemPrompt,
+  initialLlmProvider,
   mediaCategories,
 }: {
   agentId: string;
   initialConfig: AgentConfig;
   initialSystemPrompt: string;
+  initialLlmProvider: LlmProvider;
   mediaCategories: string[];
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>(initialLlmProvider);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -178,7 +209,7 @@ export function AgentConfigForm({
     setError(null);
     setSaved(false);
     startTransition(async () => {
-      const result = await updateAgentConfig(agentId, config, finalPrompt);
+      const result = await updateAgentConfig(agentId, config, finalPrompt, llmProvider);
       if (result.error) setError(result.error);
       else setSaved(true);
     });
@@ -211,6 +242,10 @@ export function AgentConfigForm({
           Define o objetivo do agente e sugere campos e encaminhamento (tudo editável). Se o cliente inicia o contato, o
           agente espera; pra ele abordar ativamente, use uma campanha no modo agente com esse mesmo objetivo.
         </p>
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <ProviderField value={llmProvider} onChange={(v) => { setLlmProvider(v); setSaved(false); }} />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4 border-t border-border pt-4">

@@ -32,6 +32,30 @@ export function estimateAnthropicCostUsd(model: string, usage: AnthropicTokenUsa
   );
 }
 
+// Preço do Gemini (ai.google.dev/pricing, checado em 2026-08-12) — "Gemini 3 Flash" tem duas versões
+// com preço bem diferente: a Preview (mais barata) e a 3.6 (mais nova, ~6x mais cara de output).
+// GEMINI_MODEL no .env decide qual roda; a chave aqui tem que bater com esse valor.
+export const GEMINI_PRICING: Record<string, { inputPerMTokUsd: number; outputPerMTokUsd: number }> = {
+  "gemini-3-flash-preview": { inputPerMTokUsd: 0.25, outputPerMTokUsd: 1.5 },
+  "gemini-3.6-flash": { inputPerMTokUsd: 1.5, outputPerMTokUsd: 7.5 },
+};
+
+export type GeminiTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens?: number;
+};
+
+// Gemini não tem multiplicador de "cache write" (cache implícito, sem custo extra pra criar) — só
+// desconta o que veio do cache no lado do input, tratado à parte pela própria API (não modelado
+// aqui em detalhe; a estimativa conservadora ignora o desconto de cache e conta o input cheio).
+export function estimateGeminiCostUsd(model: string, usage: GeminiTokenUsage): number {
+  const pricing = GEMINI_PRICING[model];
+  if (!pricing) return 0;
+  const { inputTokens, outputTokens } = usage;
+  return (inputTokens / 1_000_000) * pricing.inputPerMTokUsd + (outputTokens / 1_000_000) * pricing.outputPerMTokUsd;
+}
+
 export type EmailEstimate = {
   plano: string;
   custoMensalUsd: number;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay } from "@/app/actions/agents";
+import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
@@ -20,6 +20,7 @@ type Agent = {
   status: "ativo" | "pausado";
   reply_delay_min_seconds: number;
   reply_delay_max_seconds: number;
+  llm_provider: LlmProvider;
 };
 
 type AgentMedia = {
@@ -237,6 +238,7 @@ export function AgentEditView({
             agentId={agent.id}
             initialConfig={normalizeAgentConfig(agent.config)}
             initialSystemPrompt={agent.system_prompt}
+            initialLlmProvider={agent.llm_provider}
             mediaCategories={mediaCategories}
           />
         </div>

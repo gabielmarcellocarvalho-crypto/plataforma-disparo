@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
-import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
+import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { AgentEditView } from "@/components/agent-edit-view";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
 export default async function AgentEditPage({ params }: { params: Promise<{ id: string }> }) {
   await assertPageAccess("/agentes", { colaboradorOnly: true });
@@ -16,7 +17,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
   const { data: agent } = await supabase
     .from("agents")
     .select(
-      "id, name, system_prompt, config, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds"
+      "id, name, system_prompt, config, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider"
     )
     .eq("id", id)
     .maybeSingle();
@@ -39,15 +40,19 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       .order("created_at", { ascending: true }),
   ]);
 
+  const isGemini = agent.llm_provider === "gemini";
+  const model = isGemini ? GEMINI_MODEL : ANTHROPIC_MODEL;
   const totalCostUsd = (usageRows || []).reduce(
     (sum, row) =>
       sum +
-      estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
-        inputTokens: row.input_tokens || 0,
-        outputTokens: row.output_tokens || 0,
-        cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
-        cacheReadInputTokens: row.cache_read_input_tokens || 0,
-      }),
+      (isGemini
+        ? estimateGeminiCostUsd(GEMINI_MODEL, { inputTokens: row.input_tokens || 0, outputTokens: row.output_tokens || 0 })
+        : estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
+            inputTokens: row.input_tokens || 0,
+            outputTokens: row.output_tokens || 0,
+            cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
+            cacheReadInputTokens: row.cache_read_input_tokens || 0,
+          })),
     0
   );
 
@@ -61,7 +66,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       </Link>
       <AgentEditView
         agent={agent}
-        model={ANTHROPIC_MODEL}
+        model={model}
         totalCostUsd={totalCostUsd}
         media={mediaRows || []}
         knowledge={knowledgeRows || []}
