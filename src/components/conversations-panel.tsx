@@ -203,7 +203,7 @@ export function ConversationsPanel({
   return (
     <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
       <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
-        <div className="p-3 border-b border-border flex flex-col gap-2">
+        <div className="p-4 border-b border-border flex flex-col gap-2.5">
           <div className="flex items-center gap-1.5">
             <input
               value={query}
@@ -320,16 +320,17 @@ export function ConversationsPanel({
                     setSelectedKey(key);
                     setMobileView("chat");
                   }}
-                  className={`w-full text-left flex items-center gap-3 px-3 py-3 border-b border-border cursor-pointer ${
+                  className={`relative w-full text-left flex items-center gap-3 px-4 py-3.5 border-b border-border cursor-pointer transition-colors ${
                     active ? "bg-primary-faint" : "hover:bg-bg"
                   }`}
                 >
-                  <span className="grid place-items-center w-9 h-9 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
+                  {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-r-full bg-primary-strong" aria-hidden />}
+                  <span className="grid place-items-center w-10 h-10 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
                     {initials(c.contact.name, c.contact.phone)}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[15px] font-semibold truncate flex items-center gap-1 min-w-0">
+                      <span className="text-[15px] font-semibold truncate flex items-center gap-1.5 min-w-0">
                         {c.contact.needs_attention && (
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger shrink-0" aria-hidden>
                             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
@@ -353,7 +354,7 @@ export function ConversationsPanel({
                       </span>
                       {last && <time className="text-xs text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
                     </div>
-                    <p className="text-sm text-text-muted truncate mt-0.5">
+                    <p className="text-sm text-text-muted truncate mt-1">
                       {c.contact.needs_attention
                         ? c.contact.attention_reason || "Precisa de atenção"
                         : c.contact.flagged_reason || last?.content || ""}
@@ -371,7 +372,7 @@ export function ConversationsPanel({
           <div className="flex-1 grid place-items-center text-text-muted text-sm">Selecione uma conversa</div>
         ) : (
           <>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border flex-wrap">
+            <div className="flex items-center gap-3.5 px-5 py-4 border-b border-border flex-wrap">
               <button
                 type="button"
                 onClick={() => setMobileView("list")}
@@ -382,7 +383,7 @@ export function ConversationsPanel({
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
-              <span className="grid place-items-center w-9 h-9 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
+              <span className="grid place-items-center w-11 h-11 rounded-full bg-primary-soft text-primary-strong text-sm font-bold shrink-0" aria-hidden>
                 {initials(selected.contact.name, selected.contact.phone)}
               </span>
               <div className="min-w-0 flex-1">
@@ -394,7 +395,7 @@ export function ConversationsPanel({
                 >
                   {selected.contact.name || selected.contact.phone}
                 </button>
-                <div className="text-sm text-text-muted truncate">
+                <div className="text-sm text-text-muted truncate mt-0.5">
                   {selected.contact.phone} · {selected.agent ? `agente ${selected.agent.name}` : selected.instance!.name}
                 </div>
               </div>
@@ -469,16 +470,16 @@ export function ConversationsPanel({
               </div>
             )}
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-2">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-2.5 bg-bg/40">
               {orderedMessages.map((m) => (
                 <div
                   key={m.id}
-                  className={`max-w-[75%] rounded-lg px-3.5 py-2.5 text-[15px] leading-relaxed ${
-                    m.role === "user" ? "bg-bg self-start" : "bg-primary-soft text-primary-strong self-end"
+                  className={`max-w-[75%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
+                    m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
                   }`}
                 >
                   {m.content}
-                  <div className="text-xs text-text-muted mt-1">{formatTime(m.created_at)}</div>
+                  <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
                 </div>
               ))}
             </div>
@@ -488,19 +489,19 @@ export function ConversationsPanel({
                 e.preventDefault();
                 handleSend();
               }}
-              className="flex items-center gap-2 p-3 border-t border-border"
+              className="flex items-center gap-2.5 p-4 border-t border-border"
             >
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending}
                 placeholder={!selected.agent || selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
-                className="flex-1 border border-border rounded-md px-3.5 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
+                className="flex-1 border border-border rounded-full px-4 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
               />
               <button
                 type="submit"
                 disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending || !draft.trim()}
-                className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                className="bg-primary-strong text-white text-sm font-bold px-5 py-2.5 rounded-full cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
               >
                 Enviar
               </button>
