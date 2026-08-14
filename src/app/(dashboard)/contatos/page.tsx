@@ -3,6 +3,11 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { AddContactForm } from "@/components/add-contact-form";
 import { ImportContactsForm } from "@/components/import-contacts-form";
 
+// Server Actions herdam o maxDuration da página que os chama. Sem isso, importContacts (que faz
+// vários upserts em lote pra planilhas grandes) fica no limite padrão da Vercel — curto demais pra
+// uma base de milhares de contatos, e a function morre no meio (sem erro visível, "a plataforma cai").
+export const maxDuration = 120;
+
 export default async function ContatosPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();

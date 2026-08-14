@@ -84,16 +84,33 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
     whatsapp_instance_id: whatsappInstanceId,
   }));
 
-  // upsert ignorando duplicados (telefone único por workspace) — insere em lotes de 500
+  // Upsert ignorando duplicados (telefone único por workspace), em lotes de 500. Lotes rodam em
+  // grupos de até 5 em paralelo (não um por um) — sequencial puro é lento demais pra planilha grande
+  // (11 mil contatos = 22 lotes; um por um passa fácil do tempo de execução da function e a
+  // importação morre no meio sem terminar). Um lote com erro não aborta os outros — junta o que deu
+  // certo e reporta o problema no final, em vez de perder uma importação grande por causa de 1 lote ruim.
+  const BATCH_SIZE = 500;
+  const CONCURRENCY = 5;
+  const batches: (typeof rows)[] = [];
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) batches.push(rows.slice(i, i + BATCH_SIZE));
+
   let imported = 0;
-  for (let i = 0; i < rows.length; i += 500) {
-    const batch = rows.slice(i, i + 500);
-    const { error, count } = await supabase
-      .from("contacts")
-      .upsert(batch, { onConflict: "workspace_id,phone", ignoreDuplicates: true, count: "exact" });
-    if (error) return { error: `Erro ao importar: ${error.message}` };
-    imported += count ?? 0;
+  const batchErrors: string[] = [];
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    const group = batches.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      group.map((batch) =>
+        supabase.from("contacts").upsert(batch, { onConflict: "workspace_id,phone", ignoreDuplicates: true, count: "exact" })
+      )
+    );
+    for (const { error, count } of results) {
+      if (error) batchErrors.push(error.message);
+      else imported += count ?? 0;
+    }
   }
+
+  if (batchErrors.length > 0) console.error(`importContacts: ${batchErrors.length} lote(s) falharam:`, batchErrors);
+  if (imported === 0 && batchErrors.length > 0) return { error: `Erro ao importar: ${batchErrors[0]}` };
 
   revalidatePath("/contatos");
   return {
