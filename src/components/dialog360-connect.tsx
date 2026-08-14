@@ -6,9 +6,11 @@ import { connectDialog360 } from "@/app/actions/whatsapp";
 // Conectar via 360dialog não tem QR code — a API key e o phone_number_id vêm do painel do 360dialog
 // (depois que o número já foi verificado e o template aprovado pela Meta, isso é feito fora daqui).
 export function Dialog360Connect({
+  instanceId,
   connected,
   department: initialDepartment,
 }: {
+  instanceId: string | null;
   connected: boolean;
   department: string | null;
 }) {
@@ -23,7 +25,7 @@ export function Dialog360Connect({
     setError(null);
     setSaved(false);
     startTransition(async () => {
-      const result = await connectDialog360(department, apiKey, phoneNumberId);
+      const result = await connectDialog360(instanceId, department, apiKey, phoneNumberId);
       if (result.error) setError(result.error);
       else setSaved(true);
     });
@@ -51,7 +53,7 @@ export function Dialog360Connect({
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={connected ? "•••••••• (deixe em branco pra manter a atual)" : "Gerada no painel do 360dialog"}
+          placeholder={instanceId ? "•••••••• (deixe em branco pra manter a atual)" : "Gerada no painel do 360dialog"}
           className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
         />
       </label>
@@ -61,7 +63,7 @@ export function Dialog360Connect({
         <input
           value={phoneNumberId}
           onChange={(e) => setPhoneNumberId(e.target.value)}
-          placeholder="Vem do painel do 360dialog/Meta"
+          placeholder={instanceId ? "(deixe em branco pra manter o atual)" : "Vem do painel do 360dialog/Meta"}
           className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
         />
       </label>

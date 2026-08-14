@@ -15,6 +15,9 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const channel = String(formData.get("channel") || "");
   const mode = String(formData.get("mode") || "blast");
   const agentId = String(formData.get("agent_id") || "").trim() || null;
+  const whatsappInstanceId = String(formData.get("whatsapp_instance_id") || "").trim() || null;
+  const dialog360TemplateName = String(formData.get("dialog360_template_name") || "").trim() || null;
+  const dialog360TemplateLang = String(formData.get("dialog360_template_lang") || "").trim() || null;
   const templatesRaw = String(formData.get("templates") || "");
   const delayMin = parseInt(String(formData.get("delay_min") || "60"), 10);
   const delayMax = parseInt(String(formData.get("delay_max") || "180"), 10);
@@ -40,6 +43,25 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     if (!agent) return { error: "Agente não encontrado nesse workspace." };
   }
 
+  // Modo blast em WhatsApp precisa saber qual número dispara — obrigatório assim que o workspace tem
+  // mais de um número conectado (senão não dá pra saber qual usar); com só 1 número, o form nem
+  // mostra o seletor, mas ainda manda o id no hidden input.
+  let whatsappInstance: { id: string; channel: string } | null = null;
+  if (mode === "blast" && channel === "whatsapp") {
+    if (!whatsappInstanceId) return { error: "Nenhum número de WhatsApp conectado pra esse workspace (conecte em Configurações)." };
+    const { data } = await supabase
+      .from("whatsapp_instances")
+      .select("id, channel")
+      .eq("id", whatsappInstanceId)
+      .eq("workspace_id", workspace.id)
+      .maybeSingle();
+    if (!data) return { error: "Número selecionado não encontrado nesse workspace." };
+    whatsappInstance = data;
+    if (data.channel === "360dialog" && !dialog360TemplateName) {
+      return { error: "Esse número usa API oficial (360dialog) — informe o nome do template aprovado pela Meta pra disparo frio." };
+    }
+  }
+
   const { data: campaign, error } = await supabase
     .from("campaigns")
     .insert({
@@ -48,6 +70,9 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       channel,
       mode,
       agent_id: mode === "agent" ? agentId : null,
+      whatsapp_instance_id: whatsappInstance?.id ?? null,
+      dialog360_template_name: whatsappInstance?.channel === "360dialog" ? dialog360TemplateName : null,
+      dialog360_template_lang: whatsappInstance?.channel === "360dialog" ? dialog360TemplateLang || "pt_BR" : null,
       message_templates: templates,
       // ramp = cota diária crescente (anti-ban), mesma faixa já validada no piloto: 50 disparos no
       // dia 1 da campanha, 80 no dia 2, até estabilizar em 300/dia a partir do 6º dia.

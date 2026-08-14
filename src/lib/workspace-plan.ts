@@ -5,12 +5,13 @@ import type { ContactStage } from "@/lib/crm-stages";
 // sentido cobrar/mostrar taxa de fechamento de quem não fecha). Closer e SDR+Closer conduzem até o
 // fim ("concluido"). Não mexe no Kanban/fases visíveis do CRM — isso continua uma preferência de
 // processo por cliente, independente do plano contratado.
-export type WorkspacePlan = "sdr" | "closer" | "sdr_closer";
+export type WorkspacePlan = "sdr" | "closer" | "sdr_closer" | "disparo_avulso";
 
 export const WORKSPACE_PLANS: { key: WorkspacePlan; label: string; short: string; funnelEnd: ContactStage }[] = [
   { key: "sdr", label: "SDR", short: "Qualifica e encaminha — funil vai até \"encaminhamento\".", funnelEnd: "encaminhamento" },
   { key: "closer", label: "Closer", short: "Negocia e fecha sozinho — funil vai até \"concluído\".", funnelEnd: "concluido" },
   { key: "sdr_closer", label: "SDR + Closer", short: "Os dois papéis — funil completo, até \"concluído\".", funnelEnd: "concluido" },
+  { key: "disparo_avulso", label: "Disparo Avulso", short: "Só disparo em massa, sem agente — sem funil/conversão na Visão geral.", funnelEnd: "abordado" },
 ];
 
 export function isWorkspacePlan(value: unknown): value is WorkspacePlan {
@@ -35,4 +36,10 @@ export function planLabel(plan: WorkspacePlan): string {
 // pra entregar o handoff — Closer puro fecha sozinho, sem passar a bola pra ninguém.
 export function planHasSdr(plan: WorkspacePlan): boolean {
   return plan === "sdr" || plan === "sdr_closer";
+}
+
+// Disparo Avulso não tem agente classificando/movendo leads — não faz sentido mostrar taxa de
+// resposta/interesse/qualificação nem funil de estágios pra esse plano.
+export function planHasConversion(plan: WorkspacePlan): boolean {
+  return plan !== "disparo_avulso";
 }

@@ -68,24 +68,31 @@ export function OverviewInsightsBox({
   periodLabel,
   volume,
   conversion,
+  hasConversion = true,
 }: {
   periodLabel: string;
   volume: VolumeTabData;
   conversion: ConversionTabData;
+  hasConversion?: boolean;
 }) {
   const [tab, setTab] = useState<"volume" | "conversao">("volume");
+  const activeTab = hasConversion ? tab : "volume";
 
   return (
     <div className="bg-surface border border-border rounded-2xl shadow-sm p-5">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <div className="flex items-center gap-1.5 bg-bg rounded-xl p-1">
-          <TabButton active={tab === "volume"} onClick={() => setTab("volume")}>Volume</TabButton>
-          <TabButton active={tab === "conversao"} onClick={() => setTab("conversao")}>Conversão</TabButton>
-        </div>
+        {hasConversion ? (
+          <div className="flex items-center gap-1.5 bg-bg rounded-xl p-1">
+            <TabButton active={activeTab === "volume"} onClick={() => setTab("volume")}>Volume</TabButton>
+            <TabButton active={activeTab === "conversao"} onClick={() => setTab("conversao")}>Conversão</TabButton>
+          </div>
+        ) : (
+          <h4 className="text-sm font-bold">Volume</h4>
+        )}
         <span className="text-xs text-text-muted capitalize">{periodLabel}</span>
       </div>
 
-      {tab === "volume" ? (
+      {activeTab === "volume" ? (
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <Tile label="Leads recebidos" value={volume.leadsRecebidos} />

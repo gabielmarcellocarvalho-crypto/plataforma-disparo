@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
-import { WhatsappConnectChooser } from "@/components/whatsapp-connect-chooser";
+import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manager";
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
@@ -12,10 +12,10 @@ export default async function ConfiguracoesPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: instance }, apiKeys, { data: workspaceRow }] = await Promise.all([
+  const [{ data: instances }, apiKeys, { data: workspaceRow }] = await Promise.all([
     workspace
-      ? supabase.from("whatsapp_instances").select("connection_status, channel, department").eq("workspace_id", workspace.id).maybeSingle()
-      : Promise.resolve({ data: null }),
+      ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
+      : Promise.resolve({ data: [] }),
     listApiKeys(),
     workspace ? supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
@@ -42,11 +42,13 @@ export default async function ConfiguracoesPage() {
         <p className="text-xs text-text-muted mb-4">
           Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes.
         </p>
-        <WhatsappConnectChooser
-          hasExistingInstance={!!instance}
-          initialStatus={instance?.connection_status || "desconectado"}
-          existingChannel={(instance?.channel as "evolution" | "360dialog" | undefined) ?? null}
-          existingDepartment={instance?.department ?? null}
+        <WhatsappInstancesManager
+          initialInstances={(instances || []).map((i) => ({
+            id: i.id,
+            channel: i.channel as "evolution" | "360dialog",
+            department: i.department,
+            connection_status: i.connection_status,
+          }))}
         />
       </div>
 

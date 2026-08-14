@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
+import { sendDialog360Text, sendDialog360Template } from "@/lib/dialog360";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -68,7 +69,9 @@ export async function GET(req: Request) {
 
   const { data: campaigns } = await supabase
     .from("campaigns")
-    .select("id, workspace_id, mode, agent_id, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)")
+    .select(
+      "id, workspace_id, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+    )
     .eq("status", "ativa")
     .eq("channel", "whatsapp");
 
@@ -150,13 +153,52 @@ export async function GET(req: Request) {
       continue;
     }
 
-    // Blast usa o número do workspace (conectado em Configurações); modo agente usa o número próprio do agente.
+    // Modo agente sempre usa o número próprio do agente (Evolution). Modo blast resolve o número
+    // pela instância escolhida na campanha (whatsapp_instance_id) — se a campanha não escolheu
+    // nenhuma (criada antes dessa opção existir, ou workspace com só 1 número), cai no único número
+    // conectado do workspace; se o workspace tem mais de 1 e a campanha não escolheu, não dá pra
+    // adivinhar qual disparar, então pula.
+    let blastInstance: {
+      id: string;
+      channel: string;
+      instance_name: string | null;
+      phone_number_id: string | null;
+      dialog360_api_key: string | null;
+    } | null = null;
+    if (campaign.mode !== "agent") {
+      if (campaign.whatsapp_instance_id) {
+        const { data } = await supabase
+          .from("whatsapp_instances")
+          .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
+          .eq("id", campaign.whatsapp_instance_id)
+          .maybeSingle();
+        blastInstance = data;
+      } else {
+        const { data } = await supabase
+          .from("whatsapp_instances")
+          .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
+          .eq("workspace_id", campaign.workspace_id);
+        if (data && data.length === 1) blastInstance = data[0];
+        else if (data && data.length > 1) {
+          skipped.push(`${campaign.id}:multiplos-numeros-sem-escolha`);
+          continue;
+        }
+      }
+    }
+
     const instanceName =
       campaign.mode === "agent"
         ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
-        : instanceNameFor(campaign.workspace_id);
+        : blastInstance?.channel === "evolution"
+          ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
+          : null;
 
-    if (!instanceName) {
+    if (campaign.mode !== "agent" && blastInstance?.channel === "360dialog") {
+      if (!blastInstance.dialog360_api_key || !blastInstance.phone_number_id) {
+        skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
+        continue;
+      }
+    } else if (!instanceName) {
       skipped.push(`${campaign.id}:sem-instancia`);
       continue;
     }
@@ -164,7 +206,34 @@ export async function GET(req: Request) {
     const nextDelaySeconds = delayMin + Math.random() * (delayMax - delayMin);
 
     try {
-      await sendText(instanceName, contact.phone, text);
+      if (campaign.mode !== "agent" && blastInstance?.channel === "360dialog") {
+        // Cloud API oficial: texto livre só é aceito dentro de 24h da última mensagem do CONTATO
+        // (regra da Meta) — fora disso, é obrigatório usar um Message Template pré-aprovado.
+        const { data: recentReply } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("workspace_id", campaign.workspace_id)
+          .eq("contact_id", contact.id)
+          .eq("role", "user")
+          .gte("created_at", new Date(now.getTime() - 24 * 3600 * 1000).toISOString())
+          .limit(1)
+          .maybeSingle();
+
+        if (recentReply) {
+          await sendDialog360Text(blastInstance.dialog360_api_key!, contact.phone, text);
+        } else if (campaign.dialog360_template_name) {
+          await sendDialog360Template(
+            blastInstance.dialog360_api_key!,
+            contact.phone,
+            campaign.dialog360_template_name,
+            campaign.dialog360_template_lang || "pt_BR"
+          );
+        } else {
+          throw new Error("Fora da janela de 24h e campanha sem template 360dialog configurado.");
+        }
+      } else {
+        await sendText(instanceName!, contact.phone, text);
+      }
       await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
       await supabase.from("messages").insert({
         workspace_id: campaign.workspace_id,

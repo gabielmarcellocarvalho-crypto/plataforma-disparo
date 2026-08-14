@@ -16,7 +16,7 @@ export default async function CampanhasPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: campaigns }, { data: agents }, { data: workspaceRow }] = workspace
+  const [{ data: campaigns }, { data: agents }, { data: workspaceRow }, { data: whatsappInstances }] = workspace
     ? await Promise.all([
         supabase
           .from("campaigns")
@@ -29,8 +29,9 @@ export default async function CampanhasPage() {
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
+        supabase.from("whatsapp_instances").select("id, channel, department").eq("workspace_id", workspace.id).order("created_at"),
       ])
-    : [{ data: [] }, { data: [] }, { data: null }];
+    : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
 
   const rows = campaigns ?? [];
 
@@ -63,7 +64,10 @@ export default async function CampanhasPage() {
             Disparo de WhatsApp e e-mail em massa — mensagem fixa (disparo simples) ou conduzido por um agente de IA.
           </p>
         </div>
-        <CreateCampaignForm agents={agents || []} />
+        <CreateCampaignForm
+          agents={agents || []}
+          whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as "evolution" | "360dialog", department: i.department }))}
+        />
       </div>
 
       {rows.length === 0 ? (

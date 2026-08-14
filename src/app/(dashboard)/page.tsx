@@ -6,7 +6,7 @@ import { OverviewInsightsBox } from "@/components/overview-insights-box";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
 import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
-import { resolveWorkspacePlan, planFunnelEnd, planLabel } from "@/lib/workspace-plan";
+import { resolveWorkspacePlan, planFunnelEnd, planLabel, planHasConversion } from "@/lib/workspace-plan";
 import { getAttentionAlerts } from "@/lib/attention-center";
 import { AttentionCenterCard } from "@/components/attention-center-card";
 
@@ -48,6 +48,11 @@ export default async function OverviewPage({
     : { data: null };
   const plan = resolveWorkspacePlan(workspacePlanRow?.plan);
   const funnelEnd = planFunnelEnd(plan);
+  const hasConversion = planHasConversion(plan);
+
+  const EMPTY_CONVERSION = { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null };
+  const EMPTY_FUNNEL = { points: [], descartados: 0 };
+  const EMPTY_RESPONSE = { tempoMedioRespostaMin: null, conversasNaoRespondidas: 0, maisTempoEsperandoMin: null };
 
   const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel, response, leadSources] = workspace
     ? await Promise.all([
@@ -62,19 +67,19 @@ export default async function OverviewPage({
           .lte("created_at", period.to.toISOString())
           .limit(20000),
         getVolumeMetrics(workspace.id, period),
-        getConversionMetrics(workspace.id, period),
-        getFunnelData(workspace.id, period, funnelEnd),
-        getResponseMetrics(workspace.id, period),
-        getLeadSources(workspace.id, period),
+        hasConversion ? getConversionMetrics(workspace.id, period) : Promise.resolve(EMPTY_CONVERSION),
+        hasConversion ? getFunnelData(workspace.id, period, funnelEnd) : Promise.resolve(EMPTY_FUNNEL),
+        hasConversion ? getResponseMetrics(workspace.id, period) : Promise.resolve(EMPTY_RESPONSE),
+        hasConversion ? getLeadSources(workspace.id, period) : Promise.resolve([]),
       ])
     : [
         { count: 0 },
         { count: 0 },
         { data: [] },
         { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, mensagensRecebidas: 0, conversasIniciadas: 0, conversasEmAndamento: 0 },
-        { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null },
-        { points: [], descartados: 0 },
-        { tempoMedioRespostaMin: null, conversasNaoRespondidas: 0, maisTempoEsperandoMin: null },
+        EMPTY_CONVERSION,
+        EMPTY_FUNNEL,
+        EMPTY_RESPONSE,
         [],
       ];
 
@@ -158,24 +163,27 @@ export default async function OverviewPage({
         periodLabel={period.label}
         volume={{ ...volume, chartData }}
         conversion={{ ...conversion, showFechamento: plan !== "sdr", ...response, leadSources }}
+        hasConversion={hasConversion}
       />
 
-      <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
-        <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
-          <div>
-            <h3 className="font-bold text-[15px]">Funil {planLabel(plan)}</h3>
-            <p className="text-xs text-text-muted mt-0.5">
-              Leads recebidos {period.label}, pela fase mais avançada já alcançada.
-              {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}
-            </p>
+      {hasConversion && (
+        <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
+          <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
+            <div>
+              <h3 className="font-bold text-[15px]">Funil {planLabel(plan)}</h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                Leads recebidos {period.label}, pela fase mais avançada já alcançada.
+                {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}
+              </p>
+            </div>
           </div>
+          {funnel.points.length === 0 || funnel.points[0]?.value === 0 ? (
+            <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido nesse período ainda.</p>
+          ) : (
+            <FunnelChart data={funnel.points.map((p) => ({ label: p.label, value: p.value }))} />
+          )}
         </div>
-        {funnel.points.length === 0 || funnel.points[0]?.value === 0 ? (
-          <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido nesse período ainda.</p>
-        ) : (
-          <FunnelChart data={funnel.points.map((p) => ({ label: p.label, value: p.value }))} />
-        )}
-      </div>
+      )}
     </div>
   );
 }

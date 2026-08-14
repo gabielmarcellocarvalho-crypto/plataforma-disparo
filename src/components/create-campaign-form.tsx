@@ -5,14 +5,19 @@ import { createCampaign, type ActionResult } from "@/app/actions/campaigns";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
-type AgentOption = { id: string; name: string; connection_status: string };
+const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
-export function CreateCampaignForm({ agents = [] }: { agents?: AgentOption[] }) {
+type AgentOption = { id: string; name: string; connection_status: string };
+type WhatsappInstanceOption = { id: string; channel: "evolution" | "360dialog"; department: string };
+
+export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { agents?: AgentOption[]; whatsappInstances?: WhatsappInstanceOption[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [channel, setChannel] = useState<"whatsapp" | "email">("whatsapp");
   const [mode, setMode] = useState<"blast" | "agent">("blast");
   const [agentId, setAgentId] = useState(agents[0]?.id || "");
+  const [instanceId, setInstanceId] = useState(whatsappInstances[0]?.id || "");
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
+  const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
 
   useEffect(() => {
     if (state.ok) dialogRef.current?.close();
@@ -92,6 +97,63 @@ export function CreateCampaignForm({ agents = [] }: { agents?: AgentOption[] }) 
             </div>
           )}
 
+          {channel === "whatsapp" && mode === "blast" && whatsappInstances.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <input type="hidden" name="whatsapp_instance_id" value={instanceId} />
+              {whatsappInstances.length > 1 ? (
+                <>
+                  <label htmlFor="instance_id" className="text-sm font-semibold">
+                    Número
+                  </label>
+                  <select
+                    id="instance_id"
+                    value={instanceId}
+                    onChange={(e) => setInstanceId(e.target.value)}
+                    className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+                  >
+                    {whatsappInstances.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {DEPARTMENT_LABEL[i.department] || i.department} {i.channel === "360dialog" ? "(API oficial)" : "(Evolution)"}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
+              {selectedInstance?.channel === "360dialog" && (
+                <div className="flex flex-col gap-3 bg-bg border border-border rounded-md p-3 mt-1">
+                  <p className="text-xs text-text-muted">
+                    Esse número usa a API oficial (360dialog) — disparo frio exige um Message Template aprovado pela Meta (não aceita
+                    texto livre fora da janela de 24h). A mensagem abaixo só é usada se o contato já respondeu nas últimas 24h.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="dialog360_template_name" className="text-xs font-semibold text-text-muted">
+                        Nome do template (Meta)
+                      </label>
+                      <input
+                        id="dialog360_template_name"
+                        name="dialog360_template_name"
+                        placeholder="ex.: promo_agosto"
+                        className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="dialog360_template_lang" className="text-xs font-semibold text-text-muted">
+                        Idioma
+                      </label>
+                      <input
+                        id="dialog360_template_lang"
+                        name="dialog360_template_lang"
+                        defaultValue="pt_BR"
+                        className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {channel === "whatsapp" && mode === "agent" && (
             <div className="flex flex-col gap-1.5">
               <label htmlFor="agent_id" className="text-sm font-semibold">
@@ -115,7 +177,7 @@ export function CreateCampaignForm({ agents = [] }: { agents?: AgentOption[] }) 
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor="templates" className="text-sm font-semibold">
-              {mode === "agent" ? "Mensagem de abertura" : "Mensagem(ns)"}
+              {mode === "agent" ? "Mensagem de abertura" : selectedInstance?.channel === "360dialog" ? "Mensagem(ns) — resposta dentro de 24h" : "Mensagem(ns)"}
             </label>
             <textarea
               id="templates"
