@@ -5,6 +5,8 @@ import { resolveStageLabels, getVisibleStages, resolveHiddenStages } from "@/lib
 import { resolveWorkspacePlan, planHasSdr } from "@/lib/workspace-plan";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
 
+const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
+
 const MESSAGE_LIMIT = 500;
 
 export default async function ConversasPage() {
@@ -19,16 +21,19 @@ export default async function ConversasPage() {
     );
   }
 
-  const [{ data: agents }, { data: messages }, { data: workspaceRow }] = await Promise.all([
+  const [{ data: agents }, { data: instances }, { data: messages }, { data: workspaceRow }] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
       .eq("workspace_id", workspace.id),
     supabase
+      .from("whatsapp_instances")
+      .select("id, department, channel")
+      .eq("workspace_id", workspace.id),
+    supabase
       .from("messages")
       .select("id, contact_id, agent_id, role, content, created_at")
       .eq("workspace_id", workspace.id)
-      .not("agent_id", "is", null)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
@@ -45,7 +50,7 @@ export default async function ConversasPage() {
     contactIds.length > 0
       ? supabase
           .from("contacts")
-          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id")
+          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
           .in("id", contactIds)
       : Promise.resolve({ data: [] }),
     contactIds.length > 0
@@ -78,18 +83,32 @@ export default async function ConversasPage() {
 
   const agentsById = new Map((agents || []).map((a) => [a.id, a]));
   const contactsById = new Map((contacts || []).map((c) => [c.id, c]));
+  const instancesById = new Map(
+    (instances || []).map((i) => [i.id, { id: i.id, name: DEPARTMENT_LABEL[i.department] || i.department, channel: i.channel as "evolution" | "360dialog" }])
+  );
 
   const conversationsByKey = new Map<string, Conversation>();
   for (const m of messages || []) {
-    const key = `${m.contact_id}:${m.agent_id}`;
+    // Com agente de IA: uma conversa por agente (um contato pode, em tese, falar com mais de um).
+    // Sem agente (disparo avulso): uma conversa só por contato, ligada ao número/instância dele.
+    const key = m.agent_id ? `${m.contact_id}:agent:${m.agent_id}` : `${m.contact_id}:instance`;
     let conv = conversationsByKey.get(key);
     if (!conv) {
       const contact = contactsById.get(m.contact_id);
-      const agent = agentsById.get(m.agent_id!);
-      if (!contact || !agent) continue;
+      if (!contact) continue;
+      let agent = null;
+      let instance = null;
+      if (m.agent_id) {
+        agent = agentsById.get(m.agent_id) ?? null;
+        if (!agent) continue;
+      } else {
+        instance = contact.whatsapp_instance_id ? instancesById.get(contact.whatsapp_instance_id) ?? null : null;
+        if (!instance) continue; // mensagem sem contexto de número (edge case raro) — sem como responder, ignora
+      }
       conv = {
         contact: { ...contact, origin_campaign: originByContact.get(contact.id) ?? null },
         agent,
+        instance,
         messages: [],
       };
       conversationsByKey.set(key, conv);

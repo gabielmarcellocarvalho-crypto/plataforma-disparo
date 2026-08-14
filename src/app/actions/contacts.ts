@@ -8,6 +8,15 @@ import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, type ContactStage } from 
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
+// Se o workspace tem exatamente 1 número de disparo, todo contato novo já nasce ligado a ele —
+// mantém o seletor Vendas/Financeiro correto sem precisar de escolha manual enquanto só existe 1
+// número. Com 0 ou 2+ números, fica sem contexto (null) — 2+ instâncias ainda não tem seletor de
+// escolha no formulário de contato, fica pra quando o segundo número (financeiro) entrar de verdade.
+async function soleWhatsappInstanceId(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<string | null> {
+  const { data } = await supabase.from("whatsapp_instances").select("id").eq("workspace_id", workspaceId);
+  return data && data.length === 1 ? data[0].id : null;
+}
+
 export async function addContact(_prevState: ActionResult, formData: FormData): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -21,11 +30,13 @@ export async function addContact(_prevState: ActionResult, formData: FormData): 
   if (!phone && !email) return { error: "Informe telefone ou e-mail." };
 
   const supabase = await createClient();
+  const whatsappInstanceId = await soleWhatsappInstanceId(supabase, workspace.id);
   const { error } = await supabase.from("contacts").insert({
     workspace_id: workspace.id,
     name: name || null,
     phone,
     email: email || null,
+    whatsapp_instance_id: whatsappInstanceId,
   });
 
   if (error) {
@@ -64,11 +75,13 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
   if (parsed.contacts.length === 0) return { error: "Nenhum contato válido encontrado na planilha." };
 
   const supabase = await createClient();
+  const whatsappInstanceId = await soleWhatsappInstanceId(supabase, workspace.id);
   const rows = parsed.contacts.map((c) => ({
     workspace_id: workspace.id,
     name: c.name || null,
     phone: c.phone,
     email: c.email || null,
+    whatsapp_instance_id: whatsappInstanceId,
   }));
 
   // upsert ignorando duplicados (telefone único por workspace) — insere em lotes de 500

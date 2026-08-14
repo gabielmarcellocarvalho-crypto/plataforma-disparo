@@ -175,12 +175,16 @@ export function Sidebar({
   isColaborador,
   accessType,
   attentionCount = 0,
+  open = false,
 }: {
   workspaceSlot: React.ReactNode;
   userSlot: React.ReactNode;
   isColaborador: boolean;
   accessType: AccessType | null;
   attentionCount?: number;
+  // Só controla visibilidade em telas < lg (drawer que desliza) — em telas >= lg a sidebar
+  // fica sempre visível, igual sempre foi, independente desse valor.
+  open?: boolean;
 }) {
   const pathname = usePathname();
 
@@ -190,7 +194,9 @@ export function Sidebar({
 
   return (
     <aside
-      className="w-[250px] flex flex-col fixed inset-y-0 left-0 z-40 p-3.5 gap-1 text-sidebar-text"
+      className={`w-[250px] flex flex-col fixed inset-y-0 left-0 z-40 p-3.5 gap-1 text-sidebar-text overflow-y-auto transition-transform duration-200 ease-out lg:translate-x-0 ${
+        open ? "translate-x-0" : "-translate-x-full"
+      }`}
       style={{ background: "linear-gradient(180deg, var(--color-sidebar) 0%, var(--color-sidebar-deep) 100%)" }}
     >
       <div className="flex items-center gap-2.5 px-2 py-3 mb-3">

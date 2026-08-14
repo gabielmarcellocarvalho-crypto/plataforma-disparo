@@ -3,15 +3,53 @@
 import { useState } from "react";
 import Link from "next/link";
 import { WhatsappConnect } from "@/components/whatsapp-connect";
+import { Dialog360Connect } from "@/components/dialog360-connect";
 
 // Antes de conectar um número novo, força a escolha explícita entre disparo em massa (sem IA,
 // fica aqui em Configurações) e agente de IA (número próprio + prompt, gerenciado em /agentes).
 // Isso existe porque os dois fluxos viviam em telas separadas sem deixar claro qual escolher.
-export function WhatsappConnectChooser({ hasExistingInstance, initialStatus }: { hasExistingInstance: boolean; initialStatus: string }) {
+export function WhatsappConnectChooser({
+  hasExistingInstance,
+  initialStatus,
+  existingChannel,
+  existingDepartment,
+}: {
+  hasExistingInstance: boolean;
+  initialStatus: string;
+  existingChannel: "evolution" | "360dialog" | null;
+  existingDepartment: string | null;
+}) {
   const [choice, setChoice] = useState<"disparo" | "agente" | null>(hasExistingInstance ? "disparo" : null);
+  // Se já existe instância, o canal é fixo (o que já foi conectado); senão, deixa escolher.
+  const [channel, setChannel] = useState<"evolution" | "360dialog">(existingChannel || "evolution");
 
   if (choice === "disparo") {
-    return <WhatsappConnect initialStatus={initialStatus} />;
+    if (!hasExistingInstance) {
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            {(["evolution", "360dialog"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setChannel(c)}
+                className={`flex-1 text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
+                  channel === c ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+                }`}
+              >
+                {c === "evolution" ? "Evolution (não oficial)" : "360dialog (API oficial)"}
+              </button>
+            ))}
+          </div>
+          {channel === "evolution" ? <WhatsappConnect initialStatus={initialStatus} /> : <Dialog360Connect connected={false} department={null} />}
+        </div>
+      );
+    }
+    return existingChannel === "360dialog" ? (
+      <Dialog360Connect connected={initialStatus === "conectado"} department={existingDepartment} />
+    ) : (
+      <WhatsappConnect initialStatus={initialStatus} />
+    );
   }
 
   if (choice === "agente") {

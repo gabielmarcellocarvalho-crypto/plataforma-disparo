@@ -54,10 +54,15 @@ export async function POST(req: Request) {
   // resposta é montada, matando promise pendente no meio — mesma pegadinha já vista no webhook do WhatsApp.
   await supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", key.id);
 
+  // Só marca o número de origem quando o workspace tem exatamente 1 número de disparo (mesma regra
+  // do formulário/importação manual em src/app/actions/contacts.ts) — com 0 ou 2+, fica sem contexto.
+  const { data: instances } = await supabase.from("whatsapp_instances").select("id").eq("workspace_id", key.workspace_id);
+  const whatsappInstanceId = instances && instances.length === 1 ? instances[0].id : null;
+
   const { data: contact, error } = await supabase
     .from("contacts")
     .upsert(
-      { workspace_id: key.workspace_id, name: name || null, phone, email, custom_fields: customFields },
+      { workspace_id: key.workspace_id, name: name || null, phone, email, custom_fields: customFields, whatsapp_instance_id: whatsappInstanceId },
       { onConflict: "workspace_id,phone", ignoreDuplicates: false }
     )
     .select("id")

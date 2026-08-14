@@ -2,7 +2,15 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
-import { takeOverConversation, resolveAttention, sendManualMessage, clearConversationHistory, dismissFlag } from "@/app/actions/conversations";
+import {
+  takeOverConversation,
+  resolveAttention,
+  sendManualMessage,
+  clearConversationHistory,
+  dismissFlag,
+  sendInstanceMessage,
+  clearInstanceConversationHistory,
+} from "@/app/actions/conversations";
 import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { STAGE_ORDER } from "@/lib/crm-stages";
@@ -38,10 +46,14 @@ type Contact = {
   origin_campaign: string | null;
 };
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
+// Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
+type Instance = { id: string; name: string; channel: "evolution" | "360dialog" };
 type Message = { id: string; contact_id: string; agent_id: string | null; role: string; content: string; created_at: string };
 export type Vendor = { id: string; name: string };
 
-export type Conversation = { contact: Contact; agent: Agent; messages: Message[] };
+// Sempre exatamente um dos dois presente: agent (conversa com IA) OU instance (disparo avulso, humano
+// sempre responde manualmente).
+export type Conversation = { contact: Contact; agent: Agent | null; instance: Instance | null; messages: Message[] };
 
 function initials(name: string | null, phone: string | null) {
   const source = (name || phone || "?").trim();
@@ -85,6 +97,9 @@ export function ConversationsPanel({
     }
     return conversations[0] ? keyOf(conversations[0]) : null;
   });
+  // Em telas < md as duas colunas (lista/chat) não cabem lado a lado — esse estado decide qual das
+  // duas aparece (irrelevante em telas >= md, onde as duas ficam sempre visíveis).
+  const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [draft, setDraft] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -159,11 +174,14 @@ export function ConversationsPanel({
     });
   }
 
-  function handleClearHistory(contactId: string, agentId: string) {
-    if (!window.confirm("Apagar todo o histórico dessa conversa? O agente esquece tudo que já foi falado com esse contato. Não dá pra desfazer.")) return;
+  function handleClearHistory(contactId: string, agentId: string | null) {
+    const msg = agentId
+      ? "Apagar todo o histórico dessa conversa? O agente esquece tudo que já foi falado com esse contato. Não dá pra desfazer."
+      : "Apagar todo o histórico dessa conversa? Não dá pra desfazer.";
+    if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
-      const result = await clearConversationHistory(contactId, agentId);
+      const result = agentId ? await clearConversationHistory(contactId, agentId) : await clearInstanceConversationHistory(contactId);
       if (result.error) setError(result.error);
       else setSelectedKey(null);
     });
@@ -174,15 +192,17 @@ export function ConversationsPanel({
     setError(null);
     const text = draft;
     startTransition(async () => {
-      const result = await sendManualMessage(selected.contact.id, selected.agent.id, text);
+      const result = selected.agent
+        ? await sendManualMessage(selected.contact.id, selected.agent.id, text)
+        : await sendInstanceMessage(selected.contact.id, selected.instance!.id, text);
       if (result.error) setError(result.error);
       else setDraft("");
     });
   }
 
   return (
-    <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
-      <div className="border-r border-border flex flex-col min-h-0">
+    <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
+      <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="p-3 border-b border-border flex flex-col gap-2">
           <div className="flex items-center gap-1.5">
             <input
@@ -296,7 +316,10 @@ export function ConversationsPanel({
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setSelectedKey(key)}
+                  onClick={() => {
+                    setSelectedKey(key);
+                    setMobileView("chat");
+                  }}
                   className={`w-full text-left flex items-center gap-3 px-3 py-3 border-b border-border cursor-pointer ${
                     active ? "bg-primary-faint" : "hover:bg-bg"
                   }`}
@@ -343,12 +366,22 @@ export function ConversationsPanel({
         </div>
       </div>
 
-      <div className="flex flex-col min-h-0">
+      <div className={`flex-col min-h-0 ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
         {!selected ? (
           <div className="flex-1 grid place-items-center text-text-muted text-sm">Selecione uma conversa</div>
         ) : (
           <>
             <div className="flex items-center gap-3 px-4 py-3 border-b border-border flex-wrap">
+              <button
+                type="button"
+                onClick={() => setMobileView("list")}
+                aria-label="Voltar pra lista de conversas"
+                className="md:hidden grid place-items-center w-8 h-8 rounded-md border border-border text-text-muted cursor-pointer shrink-0"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
               <span className="grid place-items-center w-9 h-9 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
                 {initials(selected.contact.name, selected.contact.phone)}
               </span>
@@ -361,7 +394,9 @@ export function ConversationsPanel({
                 >
                   {selected.contact.name || selected.contact.phone}
                 </button>
-                <div className="text-sm text-text-muted truncate">{selected.contact.phone} · agente {selected.agent.name}</div>
+                <div className="text-sm text-text-muted truncate">
+                  {selected.contact.phone} · {selected.agent ? `agente ${selected.agent.name}` : selected.instance!.name}
+                </div>
               </div>
 
               <select
@@ -393,26 +428,28 @@ export function ConversationsPanel({
 
               <button
                 type="button"
-                onClick={() => handleClearHistory(selected.contact.id, selected.agent.id)}
+                onClick={() => handleClearHistory(selected.contact.id, selected.agent?.id ?? null)}
                 disabled={pending}
-                title="Apaga o histórico dessa conversa (o agente esquece tudo)"
+                title={selected.agent ? "Apaga o histórico dessa conversa (o agente esquece tudo)" : "Apaga o histórico dessa conversa"}
                 className="text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60"
               >
                 Limpar conversa
               </button>
-              <button
-                type="button"
-                onClick={() => (selected.contact.needs_attention ? handleResolve(selected.contact.id) : handleTakeOver(selected.contact.id))}
-                disabled={pending}
-                className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 ${
-                  selected.contact.needs_attention ? "bg-primary-strong text-white" : "border border-border text-text-muted"
-                }`}
-              >
-                {selected.contact.needs_attention ? "Devolver pro agente" : "Assumir conversa"}
-              </button>
+              {selected.agent && (
+                <button
+                  type="button"
+                  onClick={() => (selected.contact.needs_attention ? handleResolve(selected.contact.id) : handleTakeOver(selected.contact.id))}
+                  disabled={pending}
+                  className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 ${
+                    selected.contact.needs_attention ? "bg-primary-strong text-white" : "border border-border text-text-muted"
+                  }`}
+                >
+                  {selected.contact.needs_attention ? "Devolver pro agente" : "Assumir conversa"}
+                </button>
+              )}
             </div>
 
-            {selected.contact.needs_attention && (
+            {selected.agent && selected.contact.needs_attention && (
               <div className="bg-danger-soft text-danger text-xs font-semibold px-4 py-2">
                 {selected.contact.attention_reason || "Conversa assumida manualmente."} O agente não responde até você devolver.
               </div>
@@ -456,13 +493,13 @@ export function ConversationsPanel({
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                disabled={!selected.contact.needs_attention || pending}
-                placeholder={selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
+                disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending}
+                placeholder={!selected.agent || selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
                 className="flex-1 border border-border rounded-md px-3.5 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
               />
               <button
                 type="submit"
-                disabled={!selected.contact.needs_attention || pending || !draft.trim()}
+                disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending || !draft.trim()}
                 className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Enviar
@@ -479,5 +516,5 @@ export function ConversationsPanel({
 }
 
 function keyOf(c: Conversation) {
-  return `${c.contact.id}:${c.agent.id}`;
+  return c.agent ? `${c.contact.id}:agent:${c.agent.id}` : `${c.contact.id}:instance`;
 }

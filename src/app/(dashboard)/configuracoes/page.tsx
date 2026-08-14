@@ -14,7 +14,7 @@ export default async function ConfiguracoesPage() {
 
   const [{ data: instance }, apiKeys, { data: workspaceRow }] = await Promise.all([
     workspace
-      ? supabase.from("whatsapp_instances").select("connection_status").eq("workspace_id", workspace.id).maybeSingle()
+      ? supabase.from("whatsapp_instances").select("connection_status, channel, department").eq("workspace_id", workspace.id).maybeSingle()
       : Promise.resolve({ data: null }),
     listApiKeys(),
     workspace ? supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
@@ -42,7 +42,12 @@ export default async function ConfiguracoesPage() {
         <p className="text-xs text-text-muted mb-4">
           Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes.
         </p>
-        <WhatsappConnectChooser hasExistingInstance={!!instance} initialStatus={instance?.connection_status || "desconectado"} />
+        <WhatsappConnectChooser
+          hasExistingInstance={!!instance}
+          initialStatus={instance?.connection_status || "desconectado"}
+          existingChannel={(instance?.channel as "evolution" | "360dialog" | undefined) ?? null}
+          existingDepartment={instance?.department ?? null}
+        />
       </div>
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

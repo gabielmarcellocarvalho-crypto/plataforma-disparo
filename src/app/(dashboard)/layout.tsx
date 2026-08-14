@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/login/actions";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { Sidebar } from "@/components/sidebar";
+import { DashboardShell } from "@/components/dashboard-shell";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import Link from "next/link";
@@ -77,11 +77,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   );
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar workspaceSlot={workspaceSlot} userSlot={userSlot} isColaborador={isColaborador} accessType={accessType} attentionCount={attentionCount ?? 0} />
-      <div className="flex-1 flex flex-col ml-[250px] min-w-0">
-        <main className="flex-1 p-7 max-w-[1280px] w-full mx-auto">{children}</main>
-      </div>
-    </div>
+    <DashboardShell
+      workspaceSlot={workspaceSlot}
+      userSlot={userSlot}
+      isColaborador={isColaborador}
+      accessType={accessType}
+      attentionCount={attentionCount ?? 0}
+    >
+      {children}
+    </DashboardShell>
   );
 }

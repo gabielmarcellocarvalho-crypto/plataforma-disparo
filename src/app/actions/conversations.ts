@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { sendText } from "@/lib/evolution";
+import { sendDialog360Text } from "@/lib/dialog360";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -83,6 +84,54 @@ export async function sendManualMessage(contactId: string, agentId: string, text
     content: trimmed,
   });
 
+  revalidatePath("/conversas");
+  return { error: null, ok: true };
+}
+
+// Envio manual pro fluxo SEM agente de IA (número de disparo avulso) — diferente de sendManualMessage,
+// não existe "agente pausado" pra assumir/devolver, então não tem trava de needs_attention: é sempre
+// um humano respondendo. Escolhe o canal certo (Evolution ou 360dialog) pela whatsapp_instances.
+export async function sendInstanceMessage(contactId: string, instanceId: string, text: string): Promise<ActionResult> {
+  const trimmed = text.trim();
+  if (!trimmed) return { error: "Mensagem vazia." };
+
+  const supabase = await createClient();
+  const [{ data: contact }, { data: instance }] = await Promise.all([
+    supabase.from("contacts").select("id, phone, workspace_id").eq("id", contactId).maybeSingle(),
+    supabase.from("whatsapp_instances").select("channel, instance_name, dialog360_api_key").eq("id", instanceId).maybeSingle(),
+  ]);
+  if (!contact || !instance) return { error: "Conversa não encontrada." };
+  if (!contact.phone) return { error: "Contato sem telefone." };
+
+  try {
+    if (instance.channel === "360dialog") {
+      if (!instance.dialog360_api_key) return { error: "Esse número ainda não tem a API key do 360dialog configurada." };
+      await sendDialog360Text(instance.dialog360_api_key, contact.phone, trimmed);
+    } else {
+      if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
+      await sendText(instance.instance_name, contact.phone, trimmed);
+    }
+  } catch {
+    return { error: "Falha ao enviar pelo WhatsApp." };
+  }
+
+  await supabase.from("messages").insert({
+    workspace_id: contact.workspace_id,
+    contact_id: contactId,
+    agent_id: null,
+    role: "assistant",
+    content: trimmed,
+  });
+
+  revalidatePath("/conversas");
+  return { error: null, ok: true };
+}
+
+// Equivalente a clearConversationHistory, mas pro fluxo sem agente (agent_id IS NULL nessa conversa).
+export async function clearInstanceConversationHistory(contactId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("messages").delete().eq("contact_id", contactId).is("agent_id", null);
+  if (error) return { error: "Não foi possível limpar o histórico." };
   revalidatePath("/conversas");
   return { error: null, ok: true };
 }
