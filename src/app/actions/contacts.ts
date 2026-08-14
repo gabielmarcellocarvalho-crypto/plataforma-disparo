@@ -76,13 +76,26 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
 
   const supabase = await createClient();
   const whatsappInstanceId = await soleWhatsappInstanceId(supabase, workspace.id);
-  const rows = parsed.contacts.map((c) => ({
-    workspace_id: workspace.id,
-    name: c.name || null,
-    phone: c.phone,
-    email: c.email || null,
-    whatsapp_instance_id: whatsappInstanceId,
-  }));
+  // E-mail repetido na planilha (ex.: mesma administradora/empresa em várias linhas) bate na
+  // constraint de e-mail único por workspace — como o upsert só resolve conflito por telefone
+  // (onConflict abaixo), um e-mail repetido derruba o LOTE INTEIRO de 500, não só a linha. Zera o
+  // e-mail das repetições (mantém o contato pelo telefone, que é único e válido) em vez de perder
+  // o lote inteiro por causa disso.
+  const seenEmails = new Set<string>();
+  const rows = parsed.contacts.map((c) => {
+    let email = c.email || null;
+    if (email) {
+      if (seenEmails.has(email)) email = null;
+      else seenEmails.add(email);
+    }
+    return {
+      workspace_id: workspace.id,
+      name: c.name || null,
+      phone: c.phone,
+      email,
+      whatsapp_instance_id: whatsappInstanceId,
+    };
+  });
 
   // Upsert ignorando duplicados (telefone único por workspace), em lotes de 500. Lotes rodam em
   // grupos de até 5 em paralelo (não um por um) — sequencial puro é lento demais pra planilha grande
