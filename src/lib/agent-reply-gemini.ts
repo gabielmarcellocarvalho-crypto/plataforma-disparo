@@ -24,7 +24,12 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 const MAX_TOOL_ITERATIONS = 6;
 
 type GeminiContentPart = { type: "text"; text: string } | { type: "image"; data: string; mime_type: string };
-type GeminiTurn = { role: "user" | "model"; content: GeminiContentPart[] | string };
+// A API de interactions do Gemini tem duas versões de formato de input: "turn_list" (antigo, {role,
+// content}) e "step_list" ({type: "user_input"|"model_output", content}) — contas mais novas exigem
+// step_list e rejeitam turn_list com 400 ("use step_list input format instead of turn_list"). Os
+// steps de saída (function_call/function_result) já eram tratados nesse formato; só a entrada
+// (histórico da conversa) ainda usava turn_list — por isso NENHUMA resposta desse provider saía.
+type GeminiStep = { type: "user_input" | "model_output"; content: GeminiContentPart[] };
 
 function toGeminiTool(tool: Anthropic.Tool) {
   return {
@@ -37,14 +42,14 @@ function toGeminiTool(tool: Anthropic.Tool) {
 
 // Mesmo colapso de turnos consecutivos do mesmo papel que o provider Claude faz — não é exigência
 // conhecida da API do Gemini, mas mantém o formato do histórico idêntico entre os dois providers.
-function collapseConsecutiveRoles(turns: GeminiTurn[]): GeminiTurn[] {
-  const out: GeminiTurn[] = [];
-  for (const t of turns) {
+function collapseConsecutiveSteps(steps: GeminiStep[]): GeminiStep[] {
+  const out: GeminiStep[] = [];
+  for (const s of steps) {
     const last = out[out.length - 1];
-    if (last && last.role === t.role && typeof last.content === "string" && typeof t.content === "string") {
-      last.content = `${last.content}\n${t.content}`;
+    if (last && last.type === s.type) {
+      last.content = [...last.content, ...s.content];
     } else {
-      out.push({ role: t.role, content: t.content });
+      out.push({ type: s.type, content: [...s.content] });
     }
   }
   return out;
@@ -70,26 +75,28 @@ export async function generateReplyGemini(
     : "";
   const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${missedNote}`;
 
-  const historyTurns: GeminiTurn[] = collapseConsecutiveRoles(
-    history.map((m) => ({ role: m.role === "assistant" ? "model" : "user", content: m.content }))
+  const historySteps: GeminiStep[] = collapseConsecutiveSteps(
+    history.map((m) => ({
+      type: m.role === "assistant" ? "model_output" : "user_input",
+      content: [{ type: "text", text: m.content }] as GeminiContentPart[],
+    }))
   );
 
-  if (currentImages.length && historyTurns.length) {
-    const last = historyTurns[historyTurns.length - 1];
-    if (last.role === "user") {
-      const textPart: GeminiContentPart[] = typeof last.content === "string" && last.content ? [{ type: "text", text: last.content }] : [];
+  if (currentImages.length && historySteps.length) {
+    const last = historySteps[historySteps.length - 1];
+    if (last.type === "user_input") {
       const imageParts: GeminiContentPart[] = currentImages.map((img) => ({ type: "image", data: img.base64, mime_type: img.mediaType }));
-      last.content = [...imageParts, ...textPart];
+      last.content = [...imageParts, ...last.content];
     }
   }
 
-  const turns: GeminiTurn[] =
-    historyTurns[0]?.role === "model"
-      ? [{ role: "user", content: `<contexto>${contactContext}</contexto>` }, ...historyTurns]
+  const steps: GeminiStep[] =
+    historySteps[0]?.type === "model_output"
+      ? [{ type: "user_input", content: [{ type: "text", text: `<contexto>${contactContext}</contexto>` }] }, ...historySteps]
       : [
-          { role: "user", content: `<contexto>${contactContext}</contexto>` },
-          { role: "model", content: "Entendido, vou conduzir a conversa com esse contato." },
-          ...historyTurns,
+          { type: "user_input", content: [{ type: "text", text: `<contexto>${contactContext}</contexto>` }] },
+          { type: "model_output", content: [{ type: "text", text: "Entendido, vou conduzir a conversa com esse contato." }] },
+          ...historySteps,
         ];
 
   let systemInstruction = systemPrompt;
@@ -108,7 +115,7 @@ export async function generateReplyGemini(
   let needsHuman = false;
   let finalText = "";
   let previousInteractionId: string | undefined;
-  let nextInput: unknown = turns;
+  let nextInput: unknown = steps;
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
     const interaction = await client.interactions.create({
