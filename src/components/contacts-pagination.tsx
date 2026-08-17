@@ -1,8 +1,7 @@
 "use client";
 
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-
-export const PAGE_SIZES = [50, 100, 500] as const;
+import { PAGE_SIZES } from "@/lib/contacts-pagination";
 
 function ChevronLeft() {
   return (

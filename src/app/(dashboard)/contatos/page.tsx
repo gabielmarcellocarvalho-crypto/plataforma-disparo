@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { AddContactForm } from "@/components/add-contact-form";
 import { ImportContactsForm } from "@/components/import-contacts-form";
-import { PageSizeSelect, ContactsPageNav, PAGE_SIZES } from "@/components/contacts-pagination";
+import { PageSizeSelect, ContactsPageNav } from "@/components/contacts-pagination";
+import { PAGE_SIZES } from "@/lib/contacts-pagination";
 
 // Server Actions herdam o maxDuration da página que os chama. Sem isso, importContacts (que faz
 // vários upserts em lote pra planilhas grandes) fica no limite padrão da Vercel — curto demais pra
