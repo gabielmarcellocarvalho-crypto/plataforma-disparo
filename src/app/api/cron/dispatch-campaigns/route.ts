@@ -70,7 +70,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .eq("channel", "whatsapp");
@@ -222,11 +222,13 @@ export async function GET(req: Request) {
         if (recentReply) {
           await sendDialog360Text(blastInstance.dialog360_api_key!, contact.phone, text);
         } else if (campaign.dialog360_template_name) {
+          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
           await sendDialog360Template(
             blastInstance.dialog360_api_key!,
             contact.phone,
             campaign.dialog360_template_name,
-            campaign.dialog360_template_lang || "pt_BR"
+            campaign.dialog360_template_lang || "pt_BR",
+            bodyParams
           );
         } else {
           throw new Error("Fora da janela de 24h e campanha sem template 360dialog configurado.");

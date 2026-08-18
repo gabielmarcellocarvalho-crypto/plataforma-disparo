@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, connectionState, fetchQrCode, instanceNameFor } from "@/lib/evolution";
-import { setDialog360Webhook } from "@/lib/dialog360";
+import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } from "@/lib/dialog360";
 import { headers } from "next/headers";
 
 export type ConnectResult = { error: string | null; qrcodeBase64?: string | null };
@@ -105,6 +105,33 @@ export async function connectDialog360(
 
   revalidatePath("/configuracoes");
   return { error: null, ok: true };
+}
+
+export type ListTemplatesResult = { error: string | null; templates: Dialog360Template[] };
+
+// Busca os Message Templates aprovados desse número 360dialog, direto na API — usado pelo seletor
+// de template na criação de campanha (em vez do cliente digitar o nome de cabeça).
+export async function listWhatsappTemplates(instanceId: string): Promise<ListTemplatesResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo.", templates: [] };
+
+  const supabase = await createClient();
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("channel, dialog360_api_key")
+    .eq("id", instanceId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!instance || instance.channel !== "360dialog" || !instance.dialog360_api_key) {
+    return { error: "Esse número não usa API oficial (360dialog) ou ainda não tem API key salva.", templates: [] };
+  }
+
+  try {
+    const templates = await listDialog360Templates(instance.dialog360_api_key);
+    return { error: null, templates };
+  } catch (err) {
+    return { error: (err as Error).message, templates: [] };
+  }
 }
 
 export async function refreshWhatsappStatus() {

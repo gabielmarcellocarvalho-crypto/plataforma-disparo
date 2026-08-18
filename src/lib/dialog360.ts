@@ -70,6 +70,43 @@ export async function setDialog360Webhook(apiKey: string, url: string): Promise<
   if (!res.ok) throw new Error(`Falha ao configurar webhook no 360dialog: ${res.status} ${await res.text().catch(() => "")}`);
 }
 
+// Lista os Message Templates aprovados da conta (WABA) ligada a essa API key — usado pra popular o
+// seletor de template na criação de campanha, em vez do cliente digitar o nome de cabeça (e errar).
+// Endpoint confirmado contra conta real (2026-08-18): GET /v1/configs/templates. Templates criados
+// direto no Meta Business Manager só aparecem aqui depois de sincronizados no Hub do 360dialog
+// ("Synchronise templates with Meta") — se vier vazio, é o primeiro lugar a checar.
+export type Dialog360Template = {
+  name: string;
+  language: string;
+  category: string;
+  bodyText: string | null;
+  bodyVarCount: number; // quantas variáveis {{1}}, {{2}}... o corpo tem
+};
+
+export async function listDialog360Templates(apiKey: string): Promise<Dialog360Template[]> {
+  const res = await fetch(`${BASE_URL}/v1/configs/templates?limit=1000`, {
+    headers: { "D360-API-KEY": apiKey },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`360dialog respondeu ${res.status} ao listar templates.`);
+  const data = (await res.json()) as {
+    waba_templates?: Array<{
+      name: string;
+      language: string;
+      category: string;
+      status: string;
+      components?: Array<{ type: string; text?: string }>;
+    }>;
+  };
+  return (data.waba_templates || [])
+    .filter((t) => t.status === "approved")
+    .map((t) => {
+      const bodyText = t.components?.find((c) => c.type === "BODY")?.text ?? null;
+      const bodyVarCount = bodyText ? new Set([...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])).size : 0;
+      return { name: t.name, language: t.language, category: t.category, bodyText, bodyVarCount };
+    });
+}
+
 // ── Formato do webhook recebido (Cloud API / Meta) ────────────────────────────────────────────
 // Confirmado na doc oficial do 360dialog — é o mesmo formato padrão da Cloud API da Meta.
 export type Dialog360WebhookBody = {
