@@ -294,24 +294,30 @@ export function AgentConfigForm({
         </p>
       </div>
 
-      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+      <div className={`flex flex-col gap-1.5 border-t border-border pt-4 ${config.maxBubbles === 1 ? "opacity-50" : ""}`}>
         <span className="text-xs font-bold text-text-muted">Quebrar bolha a cada quantos caracteres</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={BUBBLE_CHAR_LIMIT_MIN}
-            max={BUBBLE_CHAR_LIMIT_MAX}
-            value={config.bubbleCharLimit}
-            onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
-            className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-          <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
-        </div>
-        <p className="text-xs text-text-muted">
-          Se uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não
-          só instrução no prompt) — evita respostas viradas um parágrafo gigante. Continua respeitando o teto de "máximo de
-          mensagens por resposta" acima.
-        </p>
+        {config.maxBubbles === 1 ? (
+          <p className="text-xs text-text-muted">Só se aplica com "máximo de mensagens" 2 ou mais — com mensagem única, o texto sai inteiro.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={BUBBLE_CHAR_LIMIT_MIN}
+                max={BUBBLE_CHAR_LIMIT_MAX}
+                value={config.bubbleCharLimit}
+                onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
+                className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
+            </div>
+            <p className="text-xs text-text-muted">
+              Se uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não
+              só instrução no prompt) — evita respostas viradas um parágrafo gigante. Continua respeitando o teto de "máximo de
+              mensagens por resposta" acima.
+            </p>
+          </>
+        )}
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">

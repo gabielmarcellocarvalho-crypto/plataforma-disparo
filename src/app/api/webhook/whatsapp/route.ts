@@ -449,11 +449,14 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   );
   const { needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = gen;
 
-  // Primeiro corta qualquer bolha grande demais em pedaços de até `bubbleCharLimit` caracteres
-  // (regra de código, não depende do modelo respeitar instrução de prompt) — só depois aplica o teto
-  // de QUANTIDADE de bolhas (custo: a Meta cobra por mensagem enviada a partir de 01/10/2026), juntando
-  // o excedente na última em vez de mandar cobrança extra.
-  const replyParts = capBubbles(splitByCharLimit(gen.replyParts, bubbleCharLimit), maxBubbles);
+  // Corta qualquer bolha grande demais em pedaços de até `bubbleCharLimit` caracteres (regra de
+  // código, não depende do modelo respeitar instrução de prompt) — só quando o agente permite mais de
+  // 1 bolha; com "mensagem única" (maxBubbles=1) o texto sai inteiro, sem quebra nenhuma, já que tudo
+  // ia ser rejuntado pelo capBubbles de qualquer forma (evita inserir quebra de linha à toa). Depois
+  // aplica o teto de QUANTIDADE de bolhas (custo: a Meta cobra por mensagem enviada a partir de
+  // 01/10/2026), juntando o excedente na última em vez de mandar cobrança extra.
+  const preSplitParts = maxBubbles > 1 ? splitByCharLimit(gen.replyParts, bubbleCharLimit) : gen.replyParts;
+  const replyParts = capBubbles(preSplitParts, maxBubbles);
 
   // Já recapitulou (ou tentou) a mensagem perdida fora do horário — não repete isso nas próximas respostas.
   if (contact.missed_offhours) await supabase.from("contacts").update({ missed_offhours: false }).eq("id", contact.id);
