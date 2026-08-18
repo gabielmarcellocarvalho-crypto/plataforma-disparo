@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
-import { sendDialog360Text, sendDialog360Template } from "@/lib/dialog360";
+import { sendDialog360Template } from "@/lib/dialog360";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -147,12 +147,6 @@ export async function GET(req: Request) {
       continue;
     }
 
-    const text = pickMessage(campaign.message_templates, contact.name);
-    if (!text) {
-      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
-      continue;
-    }
-
     // Modo agente sempre usa o número próprio do agente (Evolution). Modo blast resolve o número
     // pela instância escolhida na campanha (whatsapp_instance_id) — se a campanha não escolheu
     // nenhuma (criada antes dessa opção existir, ou workspace com só 1 número), cai no único número
@@ -186,6 +180,20 @@ export async function GET(req: Request) {
       }
     }
 
+    const isDialog360Blast = campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
+
+    // 360dialog é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
+    // disparo — isso é conversa viva, não campanha); Evolution/agente usam o texto livre configurado.
+    const text = isDialog360Blast ? null : pickMessage(campaign.message_templates, contact.name);
+    if (!isDialog360Blast && !text) {
+      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
+      continue;
+    }
+    if (isDialog360Blast && !campaign.dialog360_template_name) {
+      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem template 360dialog configurado." }).eq("id", recipient.id);
+      continue;
+    }
+
     const instanceName =
       campaign.mode === "agent"
         ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
@@ -193,8 +201,8 @@ export async function GET(req: Request) {
           ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
           : null;
 
-    if (campaign.mode !== "agent" && blastInstance?.channel === "360dialog") {
-      if (!blastInstance.dialog360_api_key || !blastInstance.phone_number_id) {
+    if (isDialog360Blast) {
+      if (!blastInstance!.dialog360_api_key || !blastInstance!.phone_number_id) {
         skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
         continue;
       }
@@ -205,36 +213,22 @@ export async function GET(req: Request) {
 
     const nextDelaySeconds = delayMin + Math.random() * (delayMax - delayMin);
 
-    try {
-      if (campaign.mode !== "agent" && blastInstance?.channel === "360dialog") {
-        // Cloud API oficial: texto livre só é aceito dentro de 24h da última mensagem do CONTATO
-        // (regra da Meta) — fora disso, é obrigatório usar um Message Template pré-aprovado.
-        const { data: recentReply } = await supabase
-          .from("messages")
-          .select("id")
-          .eq("workspace_id", campaign.workspace_id)
-          .eq("contact_id", contact.id)
-          .eq("role", "user")
-          .gte("created_at", new Date(now.getTime() - 24 * 3600 * 1000).toISOString())
-          .limit(1)
-          .maybeSingle();
+    // Conteúdo gravado no histórico da conversa (Conversas/CRM) — pro template, guarda uma referência
+    // legível já que o corpo real fica só na Meta, não temos o texto renderizado aqui.
+    const loggedContent = isDialog360Blast ? `[Template 360dialog: ${campaign.dialog360_template_name}]` : (text as string);
 
-        if (recentReply) {
-          await sendDialog360Text(blastInstance.dialog360_api_key!, contact.phone, text);
-        } else if (campaign.dialog360_template_name) {
-          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
-          await sendDialog360Template(
-            blastInstance.dialog360_api_key!,
-            contact.phone,
-            campaign.dialog360_template_name,
-            campaign.dialog360_template_lang || "pt_BR",
-            bodyParams
-          );
-        } else {
-          throw new Error("Fora da janela de 24h e campanha sem template 360dialog configurado.");
-        }
+    try {
+      if (isDialog360Blast) {
+        const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
+        await sendDialog360Template(
+          blastInstance!.dialog360_api_key!,
+          contact.phone,
+          campaign.dialog360_template_name!,
+          campaign.dialog360_template_lang || "pt_BR",
+          bodyParams
+        );
       } else {
-        await sendText(instanceName!, contact.phone, text);
+        await sendText(instanceName!, contact.phone, text as string);
       }
       await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
       await supabase.from("messages").insert({
@@ -242,7 +236,7 @@ export async function GET(req: Request) {
         contact_id: contact.id,
         agent_id: campaign.mode === "agent" ? campaign.agent_id : null,
         role: "assistant",
-        content: text,
+        content: loggedContent,
       });
       if (contact.stage === "nao_abordado") {
         await supabase.from("contacts").update({ stage: "abordado", stage_changed_at: new Date().toISOString() }).eq("id", contact.id);

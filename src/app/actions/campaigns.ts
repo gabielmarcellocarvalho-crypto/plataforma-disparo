@@ -35,7 +35,6 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     .split("\n")
     .map((t) => t.trim())
     .filter(Boolean);
-  if (templates.length === 0) return { error: "Escreva pelo menos uma mensagem." };
 
   const supabase = await createClient();
 
@@ -71,6 +70,12 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       if (match.bodyVarCount > 1) return { error: "Esse template tem mais de 1 variável no corpo — ainda não suportado (só {{1}} = primeiro nome)." };
       dialog360TemplateVarCount = match.bodyVarCount;
     }
+  }
+
+  // 360dialog é sempre template (não existe "responder dentro de 24h" numa campanha de disparo —
+  // isso é conversa viva, tratada em Conversas, não campanha) — só Evolution/agente exigem mensagem.
+  if (whatsappInstance?.channel !== "360dialog" && templates.length === 0) {
+    return { error: "Escreva pelo menos uma mensagem." };
   }
 
   const { data: campaign, error } = await supabase

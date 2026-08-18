@@ -28,13 +28,10 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   const [loadingTemplates, startLoadingTemplates] = useTransition();
   const [templateKey, setTemplateKey] = useState(""); // "nome|idioma"
   const selectedTemplate = templates.find((t) => `${t.name}|${t.language}` === templateKey) || null;
+  const isDialog360Blast = channel === "whatsapp" && mode === "blast" && selectedInstance?.channel === "360dialog";
   // Bloqueia o envio quando o número é 360dialog e não tem um template válido escolhido (sem
   // template não sai nada em disparo frio) ou o template tem mais de 1 variável (ainda não suportado).
-  const blockDialog360Submit =
-    channel === "whatsapp" &&
-    mode === "blast" &&
-    selectedInstance?.channel === "360dialog" &&
-    (!selectedTemplate || selectedTemplate.bodyVarCount > 1);
+  const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || selectedTemplate.bodyVarCount > 1);
 
   useEffect(() => {
     if (state.ok) dialogRef.current?.close();
@@ -151,50 +148,62 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
                   </select>
                 </>
               ) : null}
-              {selectedInstance?.channel === "360dialog" && (
-                <div className="flex flex-col gap-3 bg-bg border border-border rounded-md p-3 mt-1">
-                  <p className="text-xs text-text-muted">
-                    Esse número usa a API oficial (360dialog) — disparo frio exige um Message Template aprovado pela Meta (não aceita
-                    texto livre fora da janela de 24h). A mensagem lá embaixo só é usada se o contato já respondeu nas últimas 24h.
-                  </p>
+              {isDialog360Blast && (
+                <div className="flex flex-col gap-2.5 mt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold">Template aprovado (Meta)</span>
+                    <span className="text-[10px] font-bold uppercase text-primary-strong bg-primary-soft px-2 py-0.5 rounded-full">API oficial</span>
+                  </div>
                   <input type="hidden" name="dialog360_template_name" value={selectedTemplate?.name ?? ""} />
                   <input type="hidden" name="dialog360_template_lang" value={selectedTemplate?.language ?? ""} />
 
                   {loadingTemplates ? (
-                    <p className="text-xs text-text-muted">Buscando templates aprovados…</p>
+                    <p className="text-sm text-text-muted px-1 py-2">Buscando templates aprovados…</p>
                   ) : templatesError ? (
-                    <p className="text-xs text-danger font-medium">
-                      {templatesError} Sincronize os templates no Hub do 360dialog ("Synchronise templates with Meta") e reabra esse formulário.
-                    </p>
-                  ) : templates.length === 0 ? (
-                    <p className="text-xs text-danger font-medium">
-                      Nenhum template aprovado encontrado pra esse número. Se você já aprovou um no Meta Business Manager, sincronize no Hub do
-                      360dialog ("Synchronise templates with Meta") e reabra esse formulário.
-                    </p>
-                  ) : (
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="template_key" className="text-xs font-semibold text-text-muted">
-                        Template (Meta, aprovado)
-                      </label>
-                      <select
-                        id="template_key"
-                        value={templateKey}
-                        onChange={(e) => setTemplateKey(e.target.value)}
-                        className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-                      >
-                        {templates.map((t) => (
-                          <option key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>
-                            {t.name} ({t.language})
-                          </option>
-                        ))}
-                      </select>
-                      {selectedTemplate?.bodyText && <p className="text-xs text-text-muted bg-surface border border-border rounded-md p-2">{selectedTemplate.bodyText}</p>}
-                      {selectedTemplate && selectedTemplate.bodyVarCount > 1 && (
-                        <p className="text-xs text-danger font-medium">
-                          Esse template tem mais de 1 variável no corpo — ainda não suportado (só {"{{1}}"} = primeiro nome). Escolha outro.
-                        </p>
-                      )}
+                    <div className="bg-danger-soft border border-danger/30 rounded-lg p-3">
+                      <p className="text-xs text-danger font-medium">{templatesError}</p>
+                      <p className="text-xs text-danger/80 mt-1">
+                        Sincronize no Hub do 360dialog ("Synchronise templates with Meta") e reabra esse formulário.
+                      </p>
                     </div>
+                  ) : templates.length === 0 ? (
+                    <div className="bg-warning-soft border border-warning-text/20 rounded-lg p-3">
+                      <p className="text-xs text-warning-text font-medium">Nenhum template aprovado encontrado pra esse número.</p>
+                      <p className="text-xs text-warning-text/80 mt-1">
+                        Se você já aprovou um no Meta Business Manager, sincronize no Hub do 360dialog ("Synchronise templates with Meta") e
+                        reabra esse formulário.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
+                      {templates.map((t) => {
+                        const key = `${t.name}|${t.language}`;
+                        const active = key === templateKey;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setTemplateKey(key)}
+                            aria-pressed={active}
+                            className={`text-left border rounded-lg p-2.5 cursor-pointer transition-colors ${
+                              active ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold truncate">{t.name}</span>
+                              <span className="text-[10px] font-bold uppercase text-text-muted bg-bg px-1.5 py-0.5 rounded shrink-0">{t.language}</span>
+                            </div>
+                            {t.bodyText && <p className="text-xs text-text-muted mt-1 line-clamp-2">{t.bodyText}</p>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {selectedTemplate && selectedTemplate.bodyVarCount > 1 && (
+                    <p className="text-xs text-danger font-medium">
+                      Esse template tem mais de 1 variável no corpo — ainda não suportado (só {"{{1}}"} = primeiro nome). Escolha outro.
+                    </p>
                   )}
                 </div>
               )}
@@ -222,26 +231,28 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="templates" className="text-sm font-semibold">
-              {mode === "agent" ? "Mensagem de abertura" : selectedInstance?.channel === "360dialog" ? "Mensagem(ns) — resposta dentro de 24h" : "Mensagem(ns)"}
-            </label>
-            <textarea
-              id="templates"
-              name="templates"
-              rows={5}
-              required
-              placeholder={
-                mode === "agent"
-                  ? "Primeira mensagem que o agente manda pra puxar assunto. Uma variação por linha. Use {nome} pro primeiro nome."
-                  : "Uma variação por linha. Use {nome} pro primeiro nome."
-              }
-              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary font-mono"
-            />
-            {mode === "agent" && (
-              <p className="text-xs text-text-muted">Depois dessa mensagem, o agente responde sozinho seguindo o prompt configurado na aba Agentes.</p>
-            )}
-          </div>
+          {!isDialog360Blast && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="templates" className="text-sm font-semibold">
+                {mode === "agent" ? "Mensagem de abertura" : "Mensagem(ns)"}
+              </label>
+              <textarea
+                id="templates"
+                name="templates"
+                rows={5}
+                required
+                placeholder={
+                  mode === "agent"
+                    ? "Primeira mensagem que o agente manda pra puxar assunto. Uma variação por linha. Use {nome} pro primeiro nome."
+                    : "Uma variação por linha. Use {nome} pro primeiro nome."
+                }
+                className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary font-mono"
+              />
+              {mode === "agent" && (
+                <p className="text-xs text-text-muted">Depois dessa mensagem, o agente responde sozinho seguindo o prompt configurado na aba Agentes.</p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
