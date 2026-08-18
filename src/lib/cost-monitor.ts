@@ -1,11 +1,13 @@
-// Monitor de custo de IA por workspace: custo real do mês (tokens Anthropic) vs. orçamento definido.
-// Usado na Visão geral (banner de alerta) e nas Métricas (card de orçamento). Colaborador-only.
+// Monitor de custo de IA por workspace: custo real do mês (tokens do provider certo por agente) vs.
+// orçamento definido. Usado na Visão geral (banner de alerta) e nas Métricas (card de orçamento,
+// custo por agente). Colaborador-only.
 import { createClient } from "@/lib/supabase/server";
-import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
+import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { COST_USD_TO_BRL } from "@/lib/cost-constants";
 import { eachDayBrt, dayKeyBrt } from "@/lib/period";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 export { COST_USD_TO_BRL };
 
 function startOfMonthIso(): string {
@@ -15,36 +17,54 @@ function startOfMonthIso(): string {
   return start.toISOString();
 }
 
-// Soma o custo de IA (respostas de agente) do mês corrente pra um workspace, em USD.
-export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<number> {
+// Mapa agent_id -> provider desse workspace — cada mensagem precisa saber QUAL agente a gerou pra
+// precificar certo (Gemini é ~10-12x mais barato por token que o Sonnet; usar o preço errado infla
+// ou reduz o custo mostrado sem relação com o gasto real).
+async function getProviderByAgent(workspaceId: string): Promise<Map<string, "claude" | "gemini">> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("messages")
-    .select("input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
-    .eq("workspace_id", workspaceId)
-    .eq("role", "assistant")
-    .not("agent_id", "is", null)
-    .gte("created_at", startOfMonthIso());
-
-  return (data || []).reduce((sum, row) => sum + costRowUsd(row), 0);
+  const { data } = await supabase.from("agents").select("id, llm_provider").eq("workspace_id", workspaceId);
+  return new Map((data || []).map((a) => [a.id as string, (a.llm_provider as "claude" | "gemini") || "claude"]));
 }
 
 export type AgentCostRow = { agentId: string; name: string; costUsd: number; messages: number; conversations: number };
 export type DailyCostPoint = { date: string; ia: number };
 export type Range = { from: Date; to: Date };
 
-function costRowUsd(row: {
-  input_tokens: number | null;
-  output_tokens: number | null;
-  cache_creation_input_tokens: number | null;
-  cache_read_input_tokens: number | null;
-}): number {
+function costRowUsd(
+  row: {
+    input_tokens: number | null;
+    output_tokens: number | null;
+    cache_creation_input_tokens: number | null;
+    cache_read_input_tokens: number | null;
+  },
+  provider: "claude" | "gemini" = "claude"
+): number {
+  if (provider === "gemini") {
+    return estimateGeminiCostUsd(GEMINI_MODEL, { inputTokens: row.input_tokens || 0, outputTokens: row.output_tokens || 0 });
+  }
   return estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
     inputTokens: row.input_tokens || 0,
     outputTokens: row.output_tokens || 0,
     cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
     cacheReadInputTokens: row.cache_read_input_tokens || 0,
   });
+}
+
+// Soma o custo de IA (respostas de agente) do mês corrente pra um workspace, em USD.
+export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<number> {
+  const supabase = await createClient();
+  const [{ data }, providerByAgent] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("agent_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
+      .eq("workspace_id", workspaceId)
+      .eq("role", "assistant")
+      .not("agent_id", "is", null)
+      .gte("created_at", startOfMonthIso()),
+    getProviderByAgent(workspaceId),
+  ]);
+
+  return (data || []).reduce((sum, row) => sum + costRowUsd(row, providerByAgent.get(row.agent_id as string)), 0);
 }
 
 // Versões com período arbitrário (filtro de Métricas/Visão geral) — as funções "MonthToDate" acima
@@ -62,16 +82,17 @@ export async function getCostByAgentInRange(workspaceId: string, range: Range): 
       .gte("created_at", range.from.toISOString())
       .lte("created_at", range.to.toISOString())
       .limit(20000),
-    supabase.from("agents").select("id, name").eq("workspace_id", workspaceId),
+    supabase.from("agents").select("id, name, llm_provider").eq("workspace_id", workspaceId),
   ]);
 
   const nameById = new Map((agents || []).map((a) => [a.id as string, a.name as string]));
+  const providerById = new Map((agents || []).map((a) => [a.id as string, (a.llm_provider as "claude" | "gemini") || "claude"]));
   const acc = new Map<string, { costUsd: number; messages: number; conv: Set<string> }>();
 
   for (const m of msgs || []) {
     const id = m.agent_id as string;
     const bucket = acc.get(id) || { costUsd: 0, messages: 0, conv: new Set<string>() };
-    bucket.costUsd += costRowUsd(m);
+    bucket.costUsd += costRowUsd(m, providerById.get(id));
     bucket.messages += 1;
     bucket.conv.add(m.contact_id as string);
     acc.set(id, bucket);
@@ -87,15 +108,18 @@ export async function getCostByAgentInRange(workspaceId: string, range: Range): 
 // por mensagem), não a API oficial paga.
 export async function getDailyCostInRange(workspaceId: string, range: Range): Promise<DailyCostPoint[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("messages")
-    .select("created_at, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
-    .eq("workspace_id", workspaceId)
-    .eq("role", "assistant")
-    .not("agent_id", "is", null)
-    .gte("created_at", range.from.toISOString())
-    .lte("created_at", range.to.toISOString())
-    .limit(20000);
+  const [{ data }, providerByAgent] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("agent_id, created_at, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
+      .eq("workspace_id", workspaceId)
+      .eq("role", "assistant")
+      .not("agent_id", "is", null)
+      .gte("created_at", range.from.toISOString())
+      .lte("created_at", range.to.toISOString())
+      .limit(20000),
+    getProviderByAgent(workspaceId),
+  ]);
 
   const days = eachDayBrt(range.from, range.to);
   const usdByDay = new Map(days.map((d) => [d, 0]));
@@ -103,7 +127,7 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
   for (const row of data || []) {
     const key = dayKeyBrt(row.created_at as string);
     if (!usdByDay.has(key)) continue;
-    usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row));
+    usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row, providerByAgent.get(row.agent_id as string)));
   }
 
   return days.map((d) => ({

@@ -3,9 +3,10 @@ import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { AgentCard } from "@/components/agent-card";
 import { AddAgentForm } from "@/components/add-agent-form";
 import { AttentionPanel } from "@/components/attention-panel";
-import { estimateAnthropicCostUsd } from "@/lib/pricing-calculator";
+import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
 export default async function AgentesPage() {
   await assertPageAccess("/agentes", { colaboradorOnly: true });
@@ -16,7 +17,7 @@ export default async function AgentesPage() {
     ? await Promise.all([
         supabase
           .from("agents")
-          .select("id, name, evolution_instance_name, phone_number, photo_url, connection_status, status")
+          .select("id, name, evolution_instance_name, phone_number, photo_url, connection_status, status, llm_provider")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
         supabase
@@ -33,16 +34,22 @@ export default async function AgentesPage() {
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
 
-  // Soma tokens por agente e converte pra custo estimado em USD (mesma tabela de preço da calculadora).
+  // Soma tokens por agente e converte pra custo estimado em USD, no preço do provider DESSE agente
+  // (Gemini é bem mais barato por token que o Sonnet — usar o preço errado engana o custo mostrado).
+  const providerByAgent = new Map((agents || []).map((a) => [a.id as string, (a.llm_provider as "claude" | "gemini") || "claude"]));
   const costByAgent = new Map<string, number>();
   for (const row of usageRows || []) {
     if (!row.agent_id) continue;
-    const cost = estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
-      inputTokens: row.input_tokens || 0,
-      outputTokens: row.output_tokens || 0,
-      cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
-      cacheReadInputTokens: row.cache_read_input_tokens || 0,
-    });
+    const provider = providerByAgent.get(row.agent_id) || "claude";
+    const cost =
+      provider === "gemini"
+        ? estimateGeminiCostUsd(GEMINI_MODEL, { inputTokens: row.input_tokens || 0, outputTokens: row.output_tokens || 0 })
+        : estimateAnthropicCostUsd(ANTHROPIC_MODEL, {
+            inputTokens: row.input_tokens || 0,
+            outputTokens: row.output_tokens || 0,
+            cacheCreationInputTokens: row.cache_creation_input_tokens || 0,
+            cacheReadInputTokens: row.cache_read_input_tokens || 0,
+          });
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
   }
 
