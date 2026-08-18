@@ -2,7 +2,7 @@ import { NextResponse, after } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
-import { generateReply, capBubbles, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
+import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -428,7 +428,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
   const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
   const categories = [...new Set((mediaCats || []).map((m) => m.category))];
-  const { mediaFolderNotes, maxBubbles } = agentConfig;
+  const { mediaFolderNotes, maxBubbles, bubbleCharLimit } = agentConfig;
   const tools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
   const executor = categories.length ? makeToolExecutor(supabase, agent, phone, contact.id) : undefined;
 
@@ -449,9 +449,11 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   );
   const { needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = gen;
 
-  // Cap de bolhas (custo): a Meta cobra por mensagem enviada a partir de 01/10/2026, então se o modelo
-  // quebrou em mais bolhas que o configurado, junta o excedente na última em vez de mandar cobrança extra.
-  const replyParts = capBubbles(gen.replyParts, maxBubbles);
+  // Primeiro corta qualquer bolha grande demais em pedaços de até `bubbleCharLimit` caracteres
+  // (regra de código, não depende do modelo respeitar instrução de prompt) — só depois aplica o teto
+  // de QUANTIDADE de bolhas (custo: a Meta cobra por mensagem enviada a partir de 01/10/2026), juntando
+  // o excedente na última em vez de mandar cobrança extra.
+  const replyParts = capBubbles(splitByCharLimit(gen.replyParts, bubbleCharLimit), maxBubbles);
 
   // Já recapitulou (ou tentou) a mensagem perdida fora do horário — não repete isso nas próximas respostas.
   if (contact.missed_offhours) await supabase.from("contacts").update({ missed_offhours: false }).eq("id", contact.id);

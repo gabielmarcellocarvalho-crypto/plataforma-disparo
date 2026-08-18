@@ -47,6 +47,36 @@ export function capBubbles(parts: string[], max: number): string[] {
   return [...kept, rest];
 }
 
+// Quebra UMA bolha longa em várias, sem passar de `limit` caracteres cada — regra de código (não
+// depende do modelo respeitar instrução de prompt). Corta na fronteira mais próxima ANTES do limite,
+// nessa ordem de preferência: fim de frase (. ! ?), quebra de linha, espaço — só corta no meio de uma
+// palavra se o trecho não tiver nenhum desses (ex.: link/token gigante sem espaço).
+function splitOneByCharLimit(text: string, limit: number): string[] {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) return trimmed ? [trimmed] : [];
+
+  const out: string[] = [];
+  let rest = trimmed;
+  while (rest.length > limit) {
+    const window = rest.slice(0, limit + 1); // +1 pra enxergar o separador logo após o limite
+    let cut =
+      Math.max(window.lastIndexOf(". "), window.lastIndexOf("! "), window.lastIndexOf("? "), window.lastIndexOf("\n")) + 1;
+    if (cut <= 0) cut = window.lastIndexOf(" ");
+    if (cut <= 0) cut = limit; // sem separador nenhum — corta no limite mesmo
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+// Aplica splitOneByCharLimit em cada bolha da resposta, na ordem — pode aumentar a quantidade de
+// bolhas (ex.: 1 bolha de 600 caracteres com limite 250 vira 3). Rode ANTES de capBubbles: o teto de
+// quantidade continua valendo por cima, juntando o excedente se o corte por tamanho gerar demais.
+export function splitByCharLimit(parts: string[], limit: number): string[] {
+  return parts.flatMap((p) => splitOneByCharLimit(p, limit));
+}
+
 export type ConversationMessage = { role: "user" | "assistant"; content: string };
 
 // Foto que o cliente mandou nessa mensagem, pra o modelo enxergar (Claude tem visão nativa).

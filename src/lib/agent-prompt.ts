@@ -43,8 +43,14 @@ export type AgentConfig = {
   collectFields: CollectField[];
   mediaFolderNotes: Record<string, string>;
   // Máximo de bolhas por resposta. A partir de 01/10/2026 a Meta cobra por mensagem enviada, então
-  // cada bolha extra é uma cobrança de serviço a mais — 1 = uma mensagem só (sem quebrar).
+  // cada bolha extra é uma cobrança de serviço a mais — 1 = uma mensagem só (sem quebrar). Age como
+  // teto de SEGURANÇA por cima do corte por tamanho (bubbleCharLimit) — se o corte por caracteres
+  // gerar mais bolhas que esse teto, o excedente é juntado na última (ver capBubbles).
   maxBubbles: number;
+  // Tamanho máximo (em caracteres) de uma bolha antes de forçar quebra pra próxima — regra de
+  // CÓDIGO (não depende do modelo respeitar instrução de prompt), aplicada em cima do texto já
+  // gerado, cortando em fronteira de frase/palavra sempre que possível pra não truncar no meio.
+  bubbleCharLimit: number;
   // Follow-up automático: se o contato parar de responder depois de uma resposta do agente, manda
   // uma retomada a cada `intervalDays` dias, até `maxCount` vezes — depois disso desiste (o worker de
   // cron move o contato pra "descartado" sozinho). Roda fora da geração normal do prompt (não é texto
@@ -119,6 +125,10 @@ export function getAgentMode(key: string): AgentModeDef | undefined {
 export const MAX_BUBBLES_DEFAULT = 3;
 export const MAX_BUBBLES_CAP = 4;
 
+export const BUBBLE_CHAR_LIMIT_DEFAULT = 250;
+export const BUBBLE_CHAR_LIMIT_MIN = 60;
+export const BUBBLE_CHAR_LIMIT_MAX = 2000;
+
 export const FOLLOWUP_INTERVAL_DEFAULT = 2;
 export const FOLLOWUP_INTERVAL_MAX = 30;
 export const FOLLOWUP_MAX_COUNT_DEFAULT = 3;
@@ -135,6 +145,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   collectFields: [],
   mediaFolderNotes: {},
   maxBubbles: MAX_BUBBLES_DEFAULT,
+  bubbleCharLimit: BUBBLE_CHAR_LIMIT_DEFAULT,
   followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT },
 };
 
@@ -184,6 +195,7 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
       r.mediaFolderNotes && typeof r.mediaFolderNotes === "object" ? (r.mediaFolderNotes as Record<string, string>) : {},
     // Agente antigo sem esse campo cai no padrão 3 (mantém o comportamento que já tinha).
     maxBubbles: clampBubbles(r.maxBubbles),
+    bubbleCharLimit: clampBubbleCharLimit(r.bubbleCharLimit),
     followUp: normalizeFollowUp(r.followUp),
   };
 }
@@ -203,6 +215,12 @@ function clampBubbles(raw: unknown): number {
   const n = typeof raw === "number" ? Math.floor(raw) : MAX_BUBBLES_DEFAULT;
   if (!Number.isFinite(n)) return MAX_BUBBLES_DEFAULT;
   return Math.min(MAX_BUBBLES_CAP, Math.max(1, n));
+}
+
+function clampBubbleCharLimit(raw: unknown): number {
+  const n = typeof raw === "number" ? Math.floor(raw) : BUBBLE_CHAR_LIMIT_DEFAULT;
+  if (!Number.isFinite(n)) return BUBBLE_CHAR_LIMIT_DEFAULT;
+  return Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, n));
 }
 
 // Agrupa dias consecutivos com o mesmo horário (ex: "Segunda a sábado: 08:00–20:00. Domingo: fechado.").
