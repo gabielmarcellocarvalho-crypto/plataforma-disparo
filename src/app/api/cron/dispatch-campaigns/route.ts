@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
+import { runOffHoursCatchup } from "@/lib/agent-catchup";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -256,5 +257,13 @@ export async function GET(req: Request) {
       .eq("id", campaign.id);
   }
 
-  return NextResponse.json({ ok: true, sent, failed, completed, skipped });
+  // Retomada automática de contatos que ficaram sem resposta por terem escrito fora do horário —
+  // roda aqui porque esse endpoint já é chamado a cada minuto pelo cron externo (não precisa de mais
+  // nenhum agendamento). Best-effort: falha aqui não deve derrubar a resposta do disparo de campanhas.
+  const catchup = await runOffHoursCatchup(supabase).catch((err) => {
+    console.error("Erro no catch-up pós-horário:", err);
+    return { sent: 0, skipped: 0 };
+  });
+
+  return NextResponse.json({ ok: true, sent, failed, completed, skipped, catchup });
 }
