@@ -114,10 +114,34 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
 export type ActivateCampaignFilters = {
   stages: string[]; // fases do CRM selecionadas (vazio = todas as fases, sem filtro de estágio)
   sinceDays: number | null; // só quem mudou de fase do CRM nos últimos N dias (null = sem limite)
+  contactId?: string | null; // teste com 1 lead específico — ignora stages/sinceDays/limit quando setado
+  limit?: number | null; // teste de disparo pra só os N primeiros do filtro (null = sem limite, todo mundo)
 };
 
+export type ContactSearchResult = { id: string; name: string | null; phone: string | null; email: string | null };
+
+// Busca rápida de contato por nome/telefone/e-mail — usada no seletor de "contato específico" ao
+// ativar uma campanha em modo de teste (mandar só pra 1 lead conhecido antes de liberar geral).
+export async function searchWorkspaceContacts(query: string): Promise<ContactSearchResult[]> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return [];
+  const q = query.trim();
+  if (q.length < 2) return [];
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("contacts")
+    .select("id, name, phone, email")
+    .eq("workspace_id", workspace.id)
+    .or(`name.ilike.%${q}%,phone.ilike.%${q}%,email.ilike.%${q}%`)
+    .limit(8);
+  return data || [];
+}
+
 // Popula a fila de disparo com os contatos do workspace (respeitando opt-out do canal e, opcionalmente,
-// segmentando por uma ou mais fases do CRM) e marca a campanha como ativa.
+// segmentando por uma ou mais fases do CRM) e marca a campanha como ativa. Também suporta disparo de
+// TESTE: só pra 1 contato específico (contactId) ou limitado às N primeiras pessoas do filtro (limit) —
+// pra validar mensagem/template antes de soltar pra base inteira.
 export async function activateCampaign(
   campaignId: string,
   filters: ActivateCampaignFilters = { stages: [], sinceDays: null }
@@ -138,24 +162,45 @@ export async function activateCampaign(
   const optOutColumn = campaign.channel === "whatsapp" ? "opt_out_whatsapp" : "opt_out_email";
   const contactColumn = campaign.channel === "whatsapp" ? "phone" : "email";
 
-  let query = supabase
-    .from("contacts")
-    .select("id")
-    .eq("workspace_id", workspace.id)
-    .eq(optOutColumn, false)
-    .not(contactColumn, "is", null);
+  let contacts: { id: string }[] | null;
 
-  if (filters.stages.length > 0) {
-    const validStages = filters.stages.filter(isContactStage);
-    if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
-    query = query.in("stage", validStages);
-  }
-  if (filters.sinceDays && filters.sinceDays > 0) {
-    const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();
-    query = query.gte("stage_changed_at", since);
-  }
+  if (filters.contactId) {
+    // Teste com 1 lead específico — ignora fase/dias/limite, mas continua respeitando opt-out e
+    // exigindo telefone/e-mail válido (senão o disparo real ia falhar do mesmo jeito).
+    const { data } = await supabase
+      .from("contacts")
+      .select("id")
+      .eq("id", filters.contactId)
+      .eq("workspace_id", workspace.id)
+      .eq(optOutColumn, false)
+      .not(contactColumn, "is", null)
+      .maybeSingle();
+    if (!data) return { error: `Contato não encontrado, com opt-out, ou sem ${contactColumn === "phone" ? "telefone" : "e-mail"} válido.` };
+    contacts = [data];
+  } else {
+    let query = supabase
+      .from("contacts")
+      .select("id")
+      .eq("workspace_id", workspace.id)
+      .eq(optOutColumn, false)
+      .not(contactColumn, "is", null);
 
-  const { data: contacts } = await query;
+    if (filters.stages.length > 0) {
+      const validStages = filters.stages.filter(isContactStage);
+      if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
+      query = query.in("stage", validStages);
+    }
+    if (filters.sinceDays && filters.sinceDays > 0) {
+      const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();
+      query = query.gte("stage_changed_at", since);
+    }
+    if (filters.limit && filters.limit > 0) {
+      query = query.order("created_at", { ascending: false }).limit(filters.limit);
+    }
+
+    const { data } = await query;
+    contacts = data;
+  }
 
   if (!contacts || contacts.length === 0) {
     return { error: `Nenhum contato encontrado com esse filtro e ${contactColumn === "phone" ? "telefone" : "e-mail"} válido, sem opt-out.` };
