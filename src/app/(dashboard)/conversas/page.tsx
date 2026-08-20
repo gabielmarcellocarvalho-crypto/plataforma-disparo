@@ -50,7 +50,7 @@ export default async function ConversasPage() {
     contactIds.length > 0
       ? supabase
           .from("contacts")
-          .select("id, name, phone, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
+          .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
           .in("id", contactIds)
       : Promise.resolve({ data: [] }),
     contactIds.length > 0

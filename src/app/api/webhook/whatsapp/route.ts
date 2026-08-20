@@ -1,7 +1,7 @@
 import { NextResponse, after } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
+import { sendText, sendMedia, getMediaBase64, fetchContactProfilePicture } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
@@ -255,11 +255,16 @@ async function processWebhook(body: {
 
   const { data: contact } = await supabase
     .from("contacts")
-    .select("id")
+    .select("id, photo_url")
     .eq("workspace_id", instance.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
   if (!contact) return; // número fora da base — sem agente de IA aqui, não há o que fazer
+
+  if (!contact.photo_url) {
+    const photoUrl = await fetchContactProfilePicture(instanceName, phone);
+    if (photoUrl) await supabase.from("contacts").update({ photo_url: photoUrl }).eq("id", contact.id);
+  }
 
   await supabase.from("messages").insert({
     workspace_id: instance.workspace_id,
@@ -294,7 +299,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir.
   let { data: contact } = await supabase
     .from("contacts")
-    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours")
+    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url")
     .eq("workspace_id", agent.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -303,13 +308,23 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
     const { data: created } = await supabase
       .from("contacts")
       .insert({ workspace_id: agent.workspace_id, phone, name: data.pushName || null })
-      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours")
+      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url")
       .maybeSingle();
     contact = created;
   }
   if (!contact) return;
 
   if (contact.opt_out_whatsapp) return;
+
+  // Busca a foto de perfil do WhatsApp só na 1ª vez (contato sem foto salva ainda) — não repete a
+  // cada mensagem. Best-effort: sem foto pública, fica null e segue normal.
+  if (!contact.photo_url) {
+    const photoUrl = await fetchContactProfilePicture(agent.evolution_instance_name, phone);
+    if (photoUrl) {
+      await supabase.from("contacts").update({ photo_url: photoUrl }).eq("id", contact.id);
+      contact.photo_url = photoUrl;
+    }
+  }
 
   const { text, images, unsupported, media } = await resolveIncoming(agent.evolution_instance_name, data);
 

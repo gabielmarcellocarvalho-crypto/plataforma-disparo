@@ -38,6 +38,7 @@ type Contact = {
   id: string;
   name: string | null;
   phone: string | null;
+  photo_url: string | null;
   stage: string;
   needs_attention: boolean;
   attention_reason: string | null;
@@ -67,6 +68,19 @@ export type Conversation = { contact: Contact; agent: Agent | null; instance: In
 function initials(name: string | null, phone: string | null) {
   const source = (name || phone || "?").trim();
   return source.slice(0, 2).toUpperCase();
+}
+
+function Avatar({ photoUrl, name, phone, size }: { photoUrl: string | null; name: string | null; phone: string | null; size: "sm" | "md" | "lg" }) {
+  const sizeClass = size === "sm" ? "w-10 h-10 text-xs" : size === "md" ? "w-11 h-11 text-sm" : "w-14 h-14 text-base";
+  if (photoUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={photoUrl} alt="" className={`${sizeClass} rounded-full object-cover shrink-0`} aria-hidden />;
+  }
+  return (
+    <span className={`grid place-items-center ${sizeClass} rounded-full bg-primary-soft text-primary-strong font-bold shrink-0`} aria-hidden>
+      {initials(name, phone)}
+    </span>
+  );
 }
 
 function formatTime(iso: string) {
@@ -365,9 +379,7 @@ export function ConversationsPanel({
                   }`}
                 >
                   {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-r-full bg-primary-strong" aria-hidden />}
-                  <span className="grid place-items-center w-10 h-10 rounded-full bg-primary-soft text-primary-strong text-xs font-bold shrink-0" aria-hidden>
-                    {initials(c.contact.name, c.contact.phone)}
-                  </span>
+                  <Avatar photoUrl={c.contact.photo_url} name={c.contact.name} phone={c.contact.phone} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[15px] font-semibold truncate flex items-center gap-1.5 min-w-0">
@@ -423,9 +435,7 @@ export function ConversationsPanel({
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
-              <span className="grid place-items-center w-11 h-11 rounded-full bg-primary-soft text-primary-strong text-sm font-bold shrink-0" aria-hidden>
-                {initials(selected.contact.name, selected.contact.phone)}
-              </span>
+              <Avatar photoUrl={selected.contact.photo_url} name={selected.contact.name} phone={selected.contact.phone} size="md" />
               <div className="min-w-0 flex-1">
                 <button
                   type="button"

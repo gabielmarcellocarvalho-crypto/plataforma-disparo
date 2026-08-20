@@ -157,3 +157,17 @@ export async function fetchInstanceInfo(
     photoUrl: info?.profilePicUrl || null,
   };
 }
+
+// Foto de perfil do WhatsApp de um CONTATO (não da instância) — usada pra mostrar avatar real em
+// Conversas/CRM em vez de iniciais. Contato sem foto pública (privacidade) ou número inválido
+// retorna null — tratado como "sem foto", nunca quebra o fluxo de quem chama.
+export async function fetchContactProfilePicture(instanceName: string, phone: string): Promise<string | null> {
+  try {
+    const res = (await request("POST", `/chat/fetchProfilePictureUrl/${instanceName}`, { number: phone })) as {
+      profilePictureUrl?: string | null;
+    };
+    return res?.profilePictureUrl || null;
+  } catch {
+    return null; // best-effort — sem foto não pode travar o resto do webhook
+  }
+}

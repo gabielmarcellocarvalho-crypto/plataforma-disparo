@@ -11,6 +11,7 @@ type Contact = {
   name: string | null;
   phone: string | null;
   email: string | null;
+  photo_url: string | null;
   stage: string;
   stage_changed_at: string;
   custom_fields: Record<string, unknown> | null;
@@ -172,9 +173,14 @@ function ContactCard({
         transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 hover:border-primary-soft ${dragging ? "opacity-40" : ""}`}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <span className="grid place-items-center w-7 h-7 rounded-full bg-primary-soft text-primary-strong text-[10px] font-bold shrink-0" aria-hidden>
-          {initials(contact.name, contact.phone, contact.email)}
-        </span>
+        {contact.photo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={contact.photo_url} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" aria-hidden />
+        ) : (
+          <span className="grid place-items-center w-7 h-7 rounded-full bg-primary-soft text-primary-strong text-[10px] font-bold shrink-0" aria-hidden>
+            {initials(contact.name, contact.phone, contact.email)}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold truncate group-hover:text-primary-strong transition-colors">
             {contact.name || contact.phone || contact.email || "sem nome"}

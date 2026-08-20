@@ -208,6 +208,7 @@ export type ContactDetail = {
   name: string | null;
   phone: string | null;
   email: string | null;
+  photo_url: string | null;
   stage: string;
   stage_changed_at: string;
   custom_fields: Record<string, string> | null;
@@ -228,7 +229,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   const [{ data: contact }, { data: notes }, { count: messageCount }] = await Promise.all([
     supabase
       .from("contacts")
-      .select("id, name, phone, email, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at")
+      .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at")
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
       .maybeSingle(),

@@ -13,7 +13,7 @@ export default async function CrmPage() {
     ? await Promise.all([
         supabase
           .from("contacts")
-          .select("id, name, phone, email, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at")
+          .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: false })
           .limit(CONTACT_LIMIT),
