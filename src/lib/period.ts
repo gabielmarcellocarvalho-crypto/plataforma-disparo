@@ -6,7 +6,7 @@
 // gráfico precisam bater com o dia real do usuário no Brasil, não com o dia UTC do servidor. Sem
 // isso, mensagem enviada às 21h-23h59 (horário de Brasília) cai no dia seguinte em UTC e "some" do
 // dia certo no gráfico.
-export type PeriodPreset = "hoje" | "7d" | "30d" | "mes_atual" | "mes_passado" | "custom";
+export type PeriodPreset = "hoje" | "7d" | "30d" | "mes_atual" | "mes_passado" | "tudo" | "custom";
 
 export type Period = { from: Date; to: Date; preset: PeriodPreset; label: string };
 
@@ -16,7 +16,14 @@ export const PERIOD_PRESETS: { key: PeriodPreset; label: string }[] = [
   { key: "30d", label: "30 dias" },
   { key: "mes_atual", label: "Este mês" },
   { key: "mes_passado", label: "Mês passado" },
+  { key: "tudo", label: "Todo o período" },
 ];
+
+// Início "de tudo" — anterior a qualquer workspace real da plataforma (lançada em 2026), usado só
+// pelo preset "tudo" pra não filtrar por data nenhuma sem precisar de uma query extra descobrindo a
+// data do contato mais antigo. Não é literalmente "desde sempre" (epoch 1970), pra eachDayBrt não
+// gerar uma lista de dias absurda se algum lugar iterar o intervalo todo.
+const ALL_TIME_START = new Date("2026-01-01T00:00:00.000Z");
 
 const BRT_OFFSET_HOURS = 3; // America/Sao_Paulo = UTC-3, fixo (sem DST desde 2019)
 
@@ -68,6 +75,8 @@ export function resolvePeriod(sp: { preset?: string; from?: string; to?: string 
       const to = endOfDayBrt(ny, nm, 0); // dia 0 do mês atual = último dia do mês anterior
       return { from, to, preset, label: "mês passado" };
     }
+    case "tudo":
+      return { from: ALL_TIME_START, to: now, preset, label: "todo o período" };
     case "mes_atual":
     default:
       return { from: startOfDayBrt(ny, nm, 1), to: now, preset: "mes_atual", label: "este mês" };
@@ -80,13 +89,18 @@ export function dayKeyBrt(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso));
 }
 
+// Teto de segurança pro preset "tudo" (ou qualquer range custom bem largo) — sem isso, o gráfico de
+// "por dia" tentaria desenhar um ponto por dia do intervalo inteiro. Acima do teto, só para de
+// adicionar dias (trunca no fim do intervalo) em vez de deixar a lista crescer sem limite.
+const MAX_DAILY_POINTS = 400;
+
 export function eachDayBrt(from: Date, to: Date): string[] {
   const [fy, fm, fd] = brtParts(from);
   const [ty, tm, td] = brtParts(to);
   const days: string[] = [];
   let cursor = startOfDayBrt(fy, fm, fd);
   const last = startOfDayBrt(ty, tm, td);
-  while (cursor <= last) {
+  while (cursor <= last && days.length < MAX_DAILY_POINTS) {
     days.push(dayKeyBrt(cursor.toISOString()));
     cursor = new Date(cursor.getTime() + 86_400_000); // +24h — seguro aqui pois BRT não tem DST
   }
