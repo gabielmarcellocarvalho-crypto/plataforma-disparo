@@ -4,6 +4,7 @@ import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manager";
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
+import { EmailFromEditor } from "@/components/email-from-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
 import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
@@ -17,7 +18,7 @@ export default async function ConfiguracoesPage() {
       ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
       : Promise.resolve({ data: [] }),
     isColaborador ? listApiKeys() : Promise.resolve([]),
-    isColaborador && workspace ? supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
+    isColaborador && workspace ? supabase.from("workspaces").select("plan, email_from").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const currentPlan = resolveWorkspacePlan(workspaceRow?.plan);
 
@@ -62,7 +63,8 @@ export default async function ConfiguracoesPage() {
         <>
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
             <h3 className="font-bold text-[15px] mb-1">E-mail</h3>
-            <p className="text-xs text-text-muted">Remetente de e-mail ainda não configurado (precisa de RESEND_API_KEY).</p>
+            <p className="text-xs text-text-muted mb-4">Remetente das campanhas de e-mail desse workspace.</p>
+            {workspace && <EmailFromEditor workspaceId={workspace.id} current={workspaceRow?.email_from ?? null} />}
           </div>
 
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

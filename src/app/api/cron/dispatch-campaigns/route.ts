@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
+import { sendCampaignEmail } from "@/lib/email";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
@@ -71,10 +72,9 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
-    .eq("status", "ativa")
-    .eq("channel", "whatsapp");
+    .eq("status", "ativa");
 
   let sent = 0;
   let failed = 0;
@@ -123,7 +123,7 @@ export async function GET(req: Request) {
 
     const { data: recipient } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, contacts(id, name, phone, opt_out_whatsapp, stage)")
+      .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage)")
       .eq("campaign_id", campaign.id)
       .eq("status", "pendente")
       .order("created_at", { ascending: true })
@@ -137,13 +137,15 @@ export async function GET(req: Request) {
     }
 
     const contact = recipient.contacts as unknown as
-      | { id: string; name: string | null; phone: string | null; opt_out_whatsapp: boolean; stage: string }
+      | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string }
       | null;
 
-    if (!contact || !contact.phone || contact.opt_out_whatsapp) {
+    const isEmail = campaign.channel === "email";
+
+    if (!contact || (isEmail ? !contact.email || contact.opt_out_email : !contact.phone || contact.opt_out_whatsapp)) {
       await supabase
         .from("campaign_recipients")
-        .update({ status: "invalido", error_message: "Sem telefone válido ou optou por sair." })
+        .update({ status: "invalido", error_message: isEmail ? "Sem e-mail válido ou optou por sair." : "Sem telefone válido ou optou por sair." })
         .eq("id", recipient.id);
       continue;
     }
@@ -152,7 +154,7 @@ export async function GET(req: Request) {
     // pela instância escolhida na campanha (whatsapp_instance_id) — se a campanha não escolheu
     // nenhuma (criada antes dessa opção existir, ou workspace com só 1 número), cai no único número
     // conectado do workspace; se o workspace tem mais de 1 e a campanha não escolheu, não dá pra
-    // adivinhar qual disparar, então pula.
+    // adivinhar qual disparar, então pula. Não se aplica a campanha de e-mail.
     let blastInstance: {
       id: string;
       channel: string;
@@ -160,7 +162,7 @@ export async function GET(req: Request) {
       phone_number_id: string | null;
       dialog360_api_key: string | null;
     } | null = null;
-    if (campaign.mode !== "agent") {
+    if (!isEmail && campaign.mode !== "agent") {
       if (campaign.whatsapp_instance_id) {
         const { data } = await supabase
           .from("whatsapp_instances")
@@ -181,10 +183,10 @@ export async function GET(req: Request) {
       }
     }
 
-    const isDialog360Blast = campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
+    const isDialog360Blast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
 
     // 360dialog é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
-    // disparo — isso é conversa viva, não campanha); Evolution/agente usam o texto livre configurado.
+    // disparo — isso é conversa viva, não campanha); Evolution/agente/e-mail usam o texto livre configurado.
     const text = isDialog360Blast ? null : pickMessage(campaign.message_templates, contact.name);
     if (!isDialog360Blast && !text) {
       await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
@@ -196,13 +198,25 @@ export async function GET(req: Request) {
     }
 
     const instanceName =
-      campaign.mode === "agent"
-        ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
-        : blastInstance?.channel === "evolution"
-          ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
-          : null;
+      isEmail
+        ? null
+        : campaign.mode === "agent"
+          ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
+          : blastInstance?.channel === "evolution"
+            ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
+            : null;
 
-    if (isDialog360Blast) {
+    // E-mail precisa do remetente verificado do workspace (cada cliente pode ter domínio próprio no
+    // Resend) — sem isso configurado, falha com mensagem clara em vez de tentar mandar de qualquer jeito.
+    let emailFrom: string | null = null;
+    if (isEmail) {
+      const { data: ws } = await supabase.from("workspaces").select("email_from").eq("id", campaign.workspace_id).maybeSingle();
+      emailFrom = ws?.email_from || null;
+      if (!emailFrom) {
+        skipped.push(`${campaign.id}:sem-remetente-email`);
+        continue;
+      }
+    } else if (isDialog360Blast) {
       if (!blastInstance!.dialog360_api_key || !blastInstance!.phone_number_id) {
         skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
         continue;
@@ -219,17 +233,19 @@ export async function GET(req: Request) {
     const loggedContent = isDialog360Blast ? `[Template 360dialog: ${campaign.dialog360_template_name}]` : (text as string);
 
     try {
-      if (isDialog360Blast) {
+      if (isEmail) {
+        await sendCampaignEmail(emailFrom!, contact.email!, campaign.subject || campaign.name, text as string);
+      } else if (isDialog360Blast) {
         const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
         await sendDialog360Template(
           blastInstance!.dialog360_api_key!,
-          contact.phone,
+          contact.phone!,
           campaign.dialog360_template_name!,
           campaign.dialog360_template_lang || "pt_BR",
           bodyParams
         );
       } else {
-        await sendText(instanceName!, contact.phone, text as string);
+        await sendText(instanceName!, contact.phone!, text as string);
       }
       await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
       await supabase.from("messages").insert({

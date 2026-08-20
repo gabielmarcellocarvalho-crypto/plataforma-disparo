@@ -14,6 +14,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
 
   const name = String(formData.get("name") || "").trim();
   const channel = String(formData.get("channel") || "");
+  const subject = String(formData.get("subject") || "").trim() || null;
   const mode = String(formData.get("mode") || "blast");
   const agentId = String(formData.get("agent_id") || "").trim() || null;
   const whatsappInstanceId = String(formData.get("whatsapp_instance_id") || "").trim() || null;
@@ -30,6 +31,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   if (mode !== "blast" && mode !== "agent") return { error: "Modo inválido." };
   if (mode === "agent" && channel !== "whatsapp") return { error: "Modo agente só está disponível pro canal WhatsApp." };
   if (mode === "agent" && !agentId) return { error: "Escolha qual agente vai conduzir essa campanha." };
+  if (channel === "email" && !subject) return { error: "Informe o assunto do e-mail." };
 
   const templates = templatesRaw
     .split("\n")
@@ -90,6 +92,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       dialog360_template_name: whatsappInstance?.channel === "360dialog" ? dialog360TemplateName : null,
       dialog360_template_lang: whatsappInstance?.channel === "360dialog" ? dialog360TemplateLang || "pt_BR" : null,
       dialog360_template_var_count: dialog360TemplateVarCount,
+      subject: channel === "email" ? subject : null,
       message_templates: templates,
       // ramp = cota diária crescente (anti-ban), mesma faixa já validada no piloto: 50 disparos no
       // dia 1 da campanha, 80 no dia 2, até estabilizar em 300/dia a partir do 6º dia.

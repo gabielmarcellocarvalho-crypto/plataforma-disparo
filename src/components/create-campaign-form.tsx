@@ -92,6 +92,21 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
             </select>
           </div>
 
+          {channel === "email" && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="subject" className="text-sm font-semibold">
+                Assunto
+              </label>
+              <input
+                id="subject"
+                name="subject"
+                required
+                placeholder="Assunto do e-mail"
+                className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+              />
+            </div>
+          )}
+
           {channel === "whatsapp" && (
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-semibold">Quem conduz o disparo</span>

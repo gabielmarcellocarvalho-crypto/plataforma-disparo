@@ -51,6 +51,24 @@ export async function updateWorkspacePlan(workspaceId: string, plan: string): Pr
   return { error: null };
 }
 
+// Remetente das campanhas de e-mail desse workspace ("Nome <email@dominio.com.br>") — cada cliente
+// pode ter seu próprio domínio verificado no Resend, não é 1 remetente global pra todo mundo.
+export async function updateEmailFrom(workspaceId: string, emailFrom: string): Promise<CreateWorkspaceState> {
+  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode mudar o remetente." };
+
+  const trimmed = emailFrom.trim();
+  const emailMatch = trimmed.match(/<([^>]+)>/) ?? [null, trimmed];
+  const emailPart = (emailMatch[1] || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailPart)) return { error: "E-mail inválido — use o formato \"Nome <email@dominio.com>\" ou só o e-mail." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("workspaces").update({ email_from: trimmed }).eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar o remetente." };
+
+  revalidatePath("/configuracoes");
+  return { error: null };
+}
+
 // Remove um workspace inteiro — apaga em cascata TODOS os dados dele (contatos, agentes, conversas,
 // campanhas). Só colaborador (equipe da agência). Usa o admin client porque não há policy de DELETE
 // em workspaces (RLS bloquearia o client do usuário); a autorização é feita aqui, no servidor.
