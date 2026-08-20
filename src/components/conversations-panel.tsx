@@ -48,7 +48,16 @@ type Contact = {
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
 // Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
 type Instance = { id: string; name: string; channel: "evolution" | "360dialog" };
-type Message = { id: string; contact_id: string; agent_id: string | null; role: string; content: string; created_at: string };
+type Message = {
+  id: string;
+  contact_id: string;
+  agent_id: string | null;
+  role: string;
+  content: string;
+  media_url: string | null;
+  media_type: "image" | "audio" | "document" | null;
+  created_at: string;
+};
 export type Vendor = { id: string; name: string };
 
 // Sempre exatamente um dos dois presente: agent (conversa com IA) OU instance (disparo avulso, humano
@@ -62,6 +71,37 @@ function initials(name: string | null, phone: string | null) {
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Placeholders sintéticos que o backend grava quando não há texto de verdade pra acompanhar a mídia
+// (foto sem legenda) — não faz sentido mostrar esse texto técnico junto do preview visual.
+const MEDIA_ONLY_PLACEHOLDER = /^\[(o cliente enviou uma foto|arquivo enviado: .*)\]$/;
+
+function MediaAttachment({ url, type }: { url: string; type: "image" | "audio" | "document" }) {
+  if (type === "image") {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="block mb-1.5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="Imagem da conversa" className="max-w-full max-h-64 rounded-lg border border-border object-cover" />
+      </a>
+    );
+  }
+  if (type === "audio") {
+    return (
+      <audio controls src={url} className="w-full max-w-[240px] mb-1.5 h-9">
+        Seu navegador não suporta áudio.
+      </audio>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-semibold underline mb-1.5">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+      </svg>
+      Ver arquivo
+    </a>
+  );
 }
 
 export function ConversationsPanel({
@@ -478,7 +518,8 @@ export function ConversationsPanel({
                     m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
                   }`}
                 >
-                  {m.content}
+                  {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} />}
+                  {!MEDIA_ONLY_PLACEHOLDER.test(m.content) && m.content}
                   <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
                 </div>
               ))}

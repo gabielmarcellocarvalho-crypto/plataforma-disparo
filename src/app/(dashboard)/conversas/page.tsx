@@ -32,7 +32,7 @@ export default async function ConversasPage() {
       .eq("workspace_id", workspace.id),
     supabase
       .from("messages")
-      .select("id, contact_id, agent_id, role, content, created_at")
+      .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
       .eq("workspace_id", workspace.id)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),

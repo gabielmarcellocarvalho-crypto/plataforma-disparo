@@ -5,6 +5,7 @@ import { sendText, sendMedia, getMediaBase64 } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
+import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 
@@ -74,6 +75,18 @@ function makeToolExecutor(supabase: AdminClient, agent: Agent, phone: string, co
           mediatype,
           fileName: m.file_name || undefined,
         }).catch((e) => console.error("Erro ao enviar arquivo:", e));
+        // Registra na conversa (antes não gerava linha nenhuma em `messages` — a foto saía pro
+        // WhatsApp mas sumia da tela de Conversas). Reaproveita a URL que já existe em agent_media,
+        // sem subir de novo.
+        await supabase.from("messages").insert({
+          workspace_id: agent.workspace_id,
+          contact_id: contactId,
+          agent_id: agent.id,
+          role: "assistant",
+          content: m.caption || `[arquivo enviado: ${m.file_name || m.category}]`,
+          media_url: m.url,
+          media_type: mediatype,
+        });
       }
       await supabase.from("contact_media_sent").upsert(novos.map((m) => ({ contact_id: contactId, agent_media_id: m.id })));
 
@@ -129,32 +142,38 @@ function toSupportedImageType(mimetype: string): AgentImage["mediaType"] {
   return "image/jpeg"; // WhatsApp manda jpeg na esmagadora maioria dos casos
 }
 
+type RawIncomingMedia = { base64: string; mimetype: string; kind: "image" | "audio" };
+
 // Resolve o conteúdo da mensagem recebida em algo que o agente consegue usar:
 // texto direto, transcrição de áudio (Whisper), ou foto (base64 pra visão do Claude).
 // `unsupported` != null quando é um tipo que o agente não processa (vídeo/documento, ou
-// áudio sem OPENAI_API_KEY) — nesses casos a conversa vai pra atenção humana.
+// áudio sem OPENAI_API_KEY) — nesses casos a conversa vai pra atenção humana. `media` carrega o
+// arquivo cru (áudio ou imagem) pra guardar no storage e mostrar depois em Conversas — antes era só
+// usado na hora (transcrição/visão) e descartado.
 async function resolveIncoming(
   instanceName: string,
   data: EvolutionMessage
-): Promise<{ text: string | null; images: AgentImage[]; unsupported: string | null }> {
+): Promise<{ text: string | null; images: AgentImage[]; unsupported: string | null; media: RawIncomingMedia | null }> {
   const msg = data.message;
   const messageId = data.key?.id;
 
   const directText = msg?.conversation || msg?.extendedTextMessage?.text || null;
-  if (directText) return { text: directText, images: [], unsupported: null };
+  if (directText) return { text: directText, images: [], unsupported: null, media: null };
 
   // Áudio → transcrição
   if (msg?.audioMessage) {
-    if (!messageId || !transcriptionAvailable()) return { text: null, images: [], unsupported: "áudio" };
+    if (!messageId || !transcriptionAvailable()) return { text: null, images: [], unsupported: "áudio", media: null };
     const media = await getMediaBase64(instanceName, messageId);
     const transcription = media ? await transcribeAudio(media.base64, media.mimetype) : null;
-    if (transcription) return { text: transcription, images: [], unsupported: null };
-    return { text: null, images: [], unsupported: "áudio" };
+    if (transcription) {
+      return { text: transcription, images: [], unsupported: null, media: media ? { ...media, kind: "audio" } : null };
+    }
+    return { text: null, images: [], unsupported: "áudio", media: null };
   }
 
   // Imagem → visão
   if (msg?.imageMessage) {
-    if (!messageId) return { text: null, images: [], unsupported: "imagem" };
+    if (!messageId) return { text: null, images: [], unsupported: "imagem", media: null };
     const media = await getMediaBase64(instanceName, messageId);
     if (media) {
       const caption = msg.imageMessage.caption || "";
@@ -162,14 +181,15 @@ async function resolveIncoming(
         text: caption,
         images: [{ base64: media.base64, mediaType: toSupportedImageType(media.mimetype) }],
         unsupported: null,
+        media: { ...media, kind: "image" },
       };
     }
-    return { text: null, images: [], unsupported: "imagem" };
+    return { text: null, images: [], unsupported: "imagem", media: null };
   }
 
-  if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo" };
-  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento" };
-  return { text: null, images: [], unsupported: null };
+  if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo", media: null };
+  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null };
+  return { text: null, images: [], unsupported: null, media: null };
 }
 
 export async function POST(req: Request) {
@@ -290,7 +310,7 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   if (contact.opt_out_whatsapp) return;
 
-  const { text, images, unsupported } = await resolveIncoming(agent.evolution_instance_name, data);
+  const { text, images, unsupported, media } = await resolveIncoming(agent.evolution_instance_name, data);
 
   if (!text && images.length === 0) {
     if (unsupported) {
@@ -305,6 +325,10 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
   // Foto sem legenda ainda precisa virar uma linha de texto no histórico — o modelo recebe a
   // imagem de fato via `images`, mas o registro guarda um marcador legível pra revisão humana.
   const userContent = text || "[o cliente enviou uma foto]";
+
+  // Sobe o áudio/foto original pro storage — best-effort, não trava a resposta se falhar.
+  const mediaUrl = media ? await uploadConversationMedia(supabase, agent.workspace_id, contact.id, media.base64, media.mimetype) : null;
+  const mediaType = mediaUrl ? media!.kind : null;
 
   // Detecta mensagem repetida ANTES de logar a atual (a query já exclui ela por construção) — pega
   // loop/teste (copy-paste da mesma mensagem) sem esperar o limite de volume geral. Dois níveis:
@@ -332,6 +356,8 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
       agent_id: agent.id,
       role: "user",
       content: userContent,
+      media_url: mediaUrl,
+      media_type: mediaType,
     })
     .select("id")
     .single();
