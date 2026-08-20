@@ -164,10 +164,12 @@ function NavLink({
   );
 }
 
-// Agentes e Configurações nunca aparecem pra cliente, em nenhum tipo de acesso — só a agência mexe
-// nisso. Os demais itens seguem o tipo de acesso do cliente (accessType null = ainda não
-// classificado, mantém o comportamento antigo de ver tudo até a agência definir o plano dele).
-const COLABORADOR_ONLY_PATHS = new Set(["/agentes", "/configuracoes"]);
+// Agentes nunca aparece pra cliente, em nenhum tipo de acesso — só a agência mexe nisso.
+// Configurações agora É liberada pro cliente (só a parte de conectar número — a própria página
+// esconde plano/API keys de quem não é colaborador). Os demais itens seguem o tipo de acesso do
+// cliente (accessType null = ainda não classificado, mantém o comportamento antigo de ver tudo até
+// a agência definir o plano dele).
+const COLABORADOR_ONLY_PATHS = new Set(["/agentes"]);
 
 export function Sidebar({
   workspaceSlot,

@@ -8,16 +8,16 @@ import { listApiKeys } from "@/app/actions/api-keys";
 import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
 export default async function ConfiguracoesPage() {
-  await assertPageAccess("/configuracoes", { colaboradorOnly: true });
-  const { workspace } = await getCurrentWorkspace();
+  await assertPageAccess("/configuracoes");
+  const { workspace, isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const [{ data: instances }, apiKeys, { data: workspaceRow }] = await Promise.all([
     workspace
       ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
       : Promise.resolve({ data: [] }),
-    listApiKeys(),
-    workspace ? supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
+    isColaborador ? listApiKeys() : Promise.resolve([]),
+    isColaborador && workspace ? supabase.from("workspaces").select("plan").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const currentPlan = resolveWorkspacePlan(workspaceRow?.plan);
 
@@ -28,19 +28,25 @@ export default async function ConfiguracoesPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Configurações</h1>
-        <p className="text-text-muted text-sm mt-1">Conexões do workspace {workspace?.name}.</p>
+        <p className="text-text-muted text-sm mt-1">
+          {isColaborador ? `Conexões do workspace ${workspace?.name}.` : "Conecte ou reconecte seu número de WhatsApp aqui."}
+        </p>
       </div>
 
-      <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
-        <h3 className="font-bold text-[15px] mb-1">Plano do workspace</h3>
-        <p className="text-xs text-text-muted mb-4">Define até onde vai o funil de conversão mostrado na Visão geral desse cliente.</p>
-        {workspace && <WorkspacePlanEditor workspaceId={workspace.id} currentPlan={currentPlan} />}
-      </div>
+      {isColaborador && (
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
+          <h3 className="font-bold text-[15px] mb-1">Plano do workspace</h3>
+          <p className="text-xs text-text-muted mb-4">Define até onde vai o funil de conversão mostrado na Visão geral desse cliente.</p>
+          {workspace && <WorkspacePlanEditor workspaceId={workspace.id} currentPlan={currentPlan} />}
+        </div>
+      )}
 
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
         <h3 className="font-bold text-[15px] mb-1">WhatsApp — disparo em massa</h3>
         <p className="text-xs text-text-muted mb-4">
-          Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes.
+          {isColaborador
+            ? "Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes."
+            : "Se o número desconectar (QR expirado, troca de aparelho), reconecte por aqui."}
         </p>
         <WhatsappInstancesManager
           initialInstances={(instances || []).map((i) => ({
@@ -52,15 +58,19 @@ export default async function ConfiguracoesPage() {
         />
       </div>
 
-      <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
-        <h3 className="font-bold text-[15px] mb-1">E-mail</h3>
-        <p className="text-xs text-text-muted">Remetente de e-mail ainda não configurado (precisa de RESEND_API_KEY).</p>
-      </div>
+      {isColaborador && (
+        <>
+          <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
+            <h3 className="font-bold text-[15px] mb-1">E-mail</h3>
+            <p className="text-xs text-text-muted">Remetente de e-mail ainda não configurado (precisa de RESEND_API_KEY).</p>
+          </div>
 
-      <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
-        <h3 className="font-bold text-[15px] mb-1">API — receber leads de fora</h3>
-        <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} />
-      </div>
+          <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
+            <h3 className="font-bold text-[15px] mb-1">API — receber leads de fora</h3>
+            <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
