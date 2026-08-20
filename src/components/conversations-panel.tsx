@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   takeOverConversation,
   resolveAttention,
@@ -133,8 +133,14 @@ export function ConversationsPanel({
   vendors: Vendor[];
   showResponsavel: boolean;
 }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
+  const [refreshing, startRefresh] = useTransition();
+
+  function handleRefresh() {
+    startRefresh(() => router.refresh());
+  }
 
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -341,6 +347,31 @@ export function ConversationsPanel({
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Atualizar conversas"
+              aria-label="Atualizar conversas"
+              className="shrink-0 grid place-items-center w-9 h-9 rounded-md cursor-pointer border border-border text-text-muted hover:border-primary-soft disabled:opacity-60"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+                className={refreshing ? "animate-spin" : ""}
+              >
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            </button>
           </div>
 
           {filtersOpen && (
@@ -543,6 +574,31 @@ export function ConversationsPanel({
                 </select>
               )}
 
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Buscar mensagens novas"
+                aria-label="Buscar mensagens novas"
+                className="grid place-items-center w-8 h-8 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                  className={refreshing ? "animate-spin" : ""}
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={() => handleClearHistory(selected.contact.id, selected.agent?.id ?? null)}
