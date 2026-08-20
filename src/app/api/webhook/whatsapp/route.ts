@@ -160,15 +160,16 @@ async function resolveIncoming(
   const directText = msg?.conversation || msg?.extendedTextMessage?.text || null;
   if (directText) return { text: directText, images: [], unsupported: null, media: null };
 
-  // Áudio → transcrição
+  // Áudio → transcrição. Busca a mídia SEMPRE que houver messageId, mesmo sem transcrição
+  // disponível (Whisper indisponível/falhou) — sem isso, o áudio nem aparecia salvo na conversa,
+  // só marcava atenção humana sem deixar rastro nenhum pra quem for revisar.
   if (msg?.audioMessage) {
-    if (!messageId || !transcriptionAvailable()) return { text: null, images: [], unsupported: "áudio", media: null };
+    if (!messageId) return { text: null, images: [], unsupported: "áudio", media: null };
     const media = await getMediaBase64(instanceName, messageId);
-    const transcription = media ? await transcribeAudio(media.base64, media.mimetype) : null;
-    if (transcription) {
-      return { text: transcription, images: [], unsupported: null, media: media ? { ...media, kind: "audio" } : null };
-    }
-    return { text: null, images: [], unsupported: "áudio", media: null };
+    const transcription = media && transcriptionAvailable() ? await transcribeAudio(media.base64, media.mimetype) : null;
+    const rawMedia: RawIncomingMedia | null = media ? { ...media, kind: "audio" } : null;
+    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia };
+    return { text: null, images: [], unsupported: "áudio", media: rawMedia };
   }
 
   // Imagem → visão
@@ -314,6 +315,19 @@ async function handleAgentMessage(supabase: AdminClient, agent: Agent, phone: st
 
   if (!text && images.length === 0) {
     if (unsupported) {
+      // Mesmo sem o agente conseguir processar (ex.: áudio sem transcrição disponível), ainda sobe e
+      // registra a mídia na conversa — antes disso sumia por completo, só marcava atenção humana sem
+      // deixar rastro nenhum pra quem fosse revisar depois.
+      const mediaUrl = media ? await uploadConversationMedia(supabase, agent.workspace_id, contact.id, media.base64, media.mimetype) : null;
+      await supabase.from("messages").insert({
+        workspace_id: agent.workspace_id,
+        contact_id: contact.id,
+        agent_id: agent.id,
+        role: "user",
+        content: `[${unsupported} recebido — não processado automaticamente]`,
+        media_url: mediaUrl,
+        media_type: mediaUrl ? media!.kind : null,
+      });
       await supabase
         .from("contacts")
         .update({ needs_attention: true, attention_reason: `Enviou ${unsupported}, o agente não conseguiu processar automaticamente.` })

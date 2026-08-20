@@ -24,8 +24,11 @@ export async function uploadConversationMedia(
   workspaceId: string,
   contactId: string,
   base64: string,
-  mimetype: string
+  rawMimetype: string
 ): Promise<string | null> {
+  // WhatsApp manda áudio como "audio/ogg; codecs=opus" (com parâmetro) — o bucket compara mime type
+  // exato contra a allowlist, então precisa normalizar (só "tipo/subtipo") antes de subir/checar extensão.
+  const mimetype = rawMimetype.split(";")[0].trim().toLowerCase();
   const ext = EXT_BY_MIME[mimetype] || mimetype.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "bin";
   const path = `${workspaceId}/${contactId}/${crypto.randomUUID()}.${ext}`;
   const buffer = Buffer.from(base64, "base64");
