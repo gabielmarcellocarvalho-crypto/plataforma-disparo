@@ -494,7 +494,14 @@ export function ConversationsPanel({
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
-              <Avatar photoUrl={selected.contact.photo_url} name={selected.contact.name} phone={selected.contact.phone} size="md" />
+              <button
+                type="button"
+                onClick={() => setDrawerContactId(selected.contact.id)}
+                title="Ver detalhes do lead"
+                className="cursor-pointer shrink-0"
+              >
+                <Avatar photoUrl={selected.contact.photo_url} name={selected.contact.name} phone={selected.contact.phone} size="md" />
+              </button>
               <div className="min-w-0 flex-1">
                 <button
                   type="button"
