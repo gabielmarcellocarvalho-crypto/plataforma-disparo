@@ -58,6 +58,24 @@ export async function sendDialog360Template(
   });
 }
 
+// Mídia (imagem/áudio/documento) via link público — só funciona dentro da janela de 24h, igual
+// texto livre (fora da janela a Meta exige template, e template não carrega mídia arbitrária).
+export async function sendDialog360Media(
+  apiKey: string,
+  to: string,
+  kind: "image" | "audio" | "document",
+  link: string,
+  caption?: string
+): Promise<SendResult> {
+  return post(apiKey, "/messages", {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: kind,
+    [kind]: { link, ...(kind !== "audio" && caption ? { caption } : {}) },
+  });
+}
+
 // Registra a URL de webhook desse canal no 360dialog — chamar uma vez ao cadastrar o número (via
 // script/curl manual com a API key real, não pela UI ainda). Endpoint tirado da doc oficial; como o
 // 360dialog tem variações de versão de API, VALIDAR contra a conta real antes de depender disso.

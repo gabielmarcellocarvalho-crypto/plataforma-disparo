@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   takeOverConversation,
   resolveAttention,
   sendManualMessage,
+  sendManualMedia,
   clearConversationHistory,
   dismissFlag,
   sendInstanceMessage,
+  sendInstanceMedia,
   clearInstanceConversationHistory,
 } from "@/app/actions/conversations";
 import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
@@ -158,6 +160,10 @@ export function ConversationsPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [drawerContactId, setDrawerContactId] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
 
   const campaignOptions = useMemo(
     () => Array.from(new Set(conversations.map((c) => c.contact.origin_campaign).filter((v): v is string => Boolean(v)))).sort(),
@@ -189,6 +195,9 @@ export function ConversationsPanel({
 
   const selected = conversations.find((c) => keyOf(c) === selectedKey) || null;
   const orderedMessages = selected ? [...selected.messages].reverse() : [];
+  // Composer travado: conversa com agente de IA que ainda não foi assumida manualmente, ou uma
+  // ação em andamento — mesma regra pro texto, anexo e gravação de áudio.
+  const composerLocked = (Boolean(selected?.agent) && !selected?.contact.needs_attention) || pending;
 
   function handleTakeOver(contactId: string) {
     setError(null);
@@ -252,6 +261,56 @@ export function ConversationsPanel({
       if (result.error) setError(result.error);
       else setDraft("");
     });
+  }
+
+  function handleSendFile(file: File) {
+    if (!selected) return;
+    setError(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    startTransition(async () => {
+      const result = selected.agent
+        ? await sendManualMedia(selected.contact.id, selected.agent.id, formData)
+        : await sendInstanceMedia(selected.contact.id, selected.instance!.id, formData);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite escolher o mesmo arquivo de novo depois
+    if (file) handleSendFile(file);
+  }
+
+  async function handleToggleRecording() {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const mimeType = recorder.mimeType || "audio/webm";
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        if (blob.size > 0) {
+          const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+          handleSendFile(new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType }));
+        }
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      setError("Não foi possível acessar o microfone (verifique a permissão do navegador).");
+    }
   }
 
   return (
@@ -540,18 +599,54 @@ export function ConversationsPanel({
                 e.preventDefault();
                 handleSend();
               }}
-              className="flex items-center gap-2.5 p-4 border-t border-border"
+              className="flex items-center gap-2 p-4 border-t border-border"
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileInputChange}
+                accept="image/*,audio/*,application/pdf"
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={composerLocked || recording}
+                title="Anexar arquivo"
+                aria-label="Anexar arquivo"
+                className="grid place-items-center w-9 h-9 rounded-full shrink-0 text-text-muted hover:text-text hover:bg-bg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M21.44 11.05 12.25 20.24a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.19 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.6-2.6l8.49-8.48" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleRecording}
+                disabled={composerLocked}
+                title={recording ? "Parar e enviar gravação" : "Gravar áudio"}
+                aria-label={recording ? "Parar e enviar gravação" : "Gravar áudio"}
+                className={`grid place-items-center w-9 h-9 rounded-full shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                  recording ? "bg-danger text-white animate-pulse" : "text-text-muted hover:text-text hover:bg-bg"
+                }`}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              </button>
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending}
+                disabled={composerLocked}
                 placeholder={!selected.agent || selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
                 className="flex-1 border border-border rounded-full px-4 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
               />
               <button
                 type="submit"
-                disabled={(Boolean(selected.agent) && !selected.contact.needs_attention) || pending || !draft.trim()}
+                disabled={composerLocked || !draft.trim()}
                 className="bg-primary-strong text-white text-sm font-bold px-5 py-2.5 rounded-full cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
               >
                 Enviar
