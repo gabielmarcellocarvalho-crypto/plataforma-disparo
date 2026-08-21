@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
 import { sendCampaignEmail } from "@/lib/email";
+import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
@@ -234,7 +235,13 @@ export async function GET(req: Request) {
 
     try {
       if (isEmail) {
-        await sendCampaignEmail(emailFrom!, contact.email!, campaign.subject || campaign.name, text as string);
+        await sendCampaignEmail(
+          emailFrom!,
+          contact.email!,
+          campaign.subject || campaign.name,
+          text as string,
+          unsubscribeUrl(new URL(req.url).origin, contact.id)
+        );
       } else if (isDialog360Blast) {
         const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
         await sendDialog360Template(

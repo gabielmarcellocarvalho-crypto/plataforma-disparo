@@ -7,6 +7,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // /redefinir-senha NÃO é público de propósito: só chega lá com sessão de recovery já criada pelo callback.
 // /api/cron: chamado por cron externo (Vercel Cron ou VPS), sem sessão — protegido pelo próprio
 // CRON_SECRET dentro de cada rota, não pela sessão do middleware.
+// /api/unsubscribe: link clicado pelo destinatário do e-mail de campanha, sem sessão nenhuma —
+// autenticado por token assinado na própria URL (ver src/lib/unsubscribe.ts).
 const PUBLIC_PATHS = [
   "/login",
   "/esqueci-senha",
@@ -14,6 +16,7 @@ const PUBLIC_PATHS = [
   "/api/webhook",
   "/api/v1/leads",
   "/api/cron",
+  "/api/unsubscribe",
   "/politica-privacidade",
   "/termos-de-uso",
   "/exclusao-de-dados",
