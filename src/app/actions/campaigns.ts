@@ -25,13 +25,53 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const delayMax = parseInt(String(formData.get("delay_max") || "180"), 10);
   const hourStart = parseInt(String(formData.get("hour_start") || "9"), 10);
   const hourEnd = parseInt(String(formData.get("hour_end") || "20"), 10);
+  const ctaPhone = String(formData.get("cta_phone") || "").trim() || null;
+  const ctaMessage = String(formData.get("cta_message") || "").trim() || null;
+  const sequenceDaysRaw = String(formData.get("sequence_days") || "[]");
+  const sequenceStepsRaw = String(formData.get("sequence_steps") || "[]");
 
   if (!name) return { error: "Informe um nome pra campanha." };
   if (channel !== "whatsapp" && channel !== "email") return { error: "Canal inválido." };
-  if (mode !== "blast" && mode !== "agent") return { error: "Modo inválido." };
+  if (mode !== "blast" && mode !== "agent" && mode !== "sequence") return { error: "Modo inválido." };
   if (mode === "agent" && channel !== "whatsapp") return { error: "Modo agente só está disponível pro canal WhatsApp." };
   if (mode === "agent" && !agentId) return { error: "Escolha qual agente vai conduzir essa campanha." };
-  if (channel === "email" && !subject) return { error: "Informe o assunto do e-mail." };
+  if (mode === "sequence" && channel !== "email") return { error: "Modo sequência só está disponível pro canal e-mail." };
+  if (channel === "email" && mode === "blast" && !subject) return { error: "Informe o assunto do e-mail." };
+
+  // Sequência: cada e-mail tem assunto/corpo/CTA próprios, ordenados por dia relativo à entrada do
+  // contato (Dia 1, Dia 5...) — o motor de envio (email-sequence.ts) depende dessa ordem crescente
+  // pra calcular o intervalo até o próximo passo.
+  let sequenceSteps: { dayOffset: number; subject: string; body: string; ctaLabel: string }[] = [];
+  let sequenceDays: number[] = [];
+  if (mode === "sequence") {
+    if (!ctaPhone || !/^\d{10,15}$/.test(ctaPhone)) return { error: "Informe o número de WhatsApp do CTA (só dígitos, com DDI)." };
+    try {
+      const parsed = JSON.parse(sequenceStepsRaw);
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error();
+      sequenceSteps = parsed
+        .map((s: unknown) => {
+          const step = s as Record<string, unknown>;
+          return {
+            dayOffset: Math.max(1, Math.floor(Number(step.dayOffset) || 1)),
+            subject: String(step.subject || "").trim(),
+            body: String(step.body || "").trim(),
+            ctaLabel: String(step.ctaLabel || "Saiba mais").trim(),
+          };
+        })
+        .filter((s) => s.subject && s.body)
+        .sort((a, b) => a.dayOffset - b.dayOffset);
+      if (sequenceSteps.length === 0) throw new Error();
+    } catch {
+      return { error: "Preencha assunto e corpo de pelo menos 1 e-mail da sequência." };
+    }
+    try {
+      const parsedDays = JSON.parse(sequenceDaysRaw);
+      sequenceDays = Array.isArray(parsedDays) ? parsedDays.filter((d) => typeof d === "number" && d >= 0 && d <= 6) : [];
+    } catch {
+      sequenceDays = [];
+    }
+    if (sequenceDays.length === 0) return { error: "Escolha pelo menos 1 dia de envio." };
+  }
 
   const templates = templatesRaw
     .split("\n")
@@ -76,7 +116,8 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
 
   // 360dialog é sempre template (não existe "responder dentro de 24h" numa campanha de disparo —
   // isso é conversa viva, tratada em Conversas, não campanha) — só Evolution/agente exigem mensagem.
-  if (whatsappInstance?.channel !== "360dialog" && templates.length === 0) {
+  // Sequência não usa message_templates (cada passo tem seu próprio corpo em sequence_steps).
+  if (mode !== "sequence" && whatsappInstance?.channel !== "360dialog" && templates.length === 0) {
     return { error: "Escreva pelo menos uma mensagem." };
   }
 
@@ -92,15 +133,20 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       dialog360_template_name: whatsappInstance?.channel === "360dialog" ? dialog360TemplateName : null,
       dialog360_template_lang: whatsappInstance?.channel === "360dialog" ? dialog360TemplateLang || "pt_BR" : null,
       dialog360_template_var_count: dialog360TemplateVarCount,
-      subject: channel === "email" ? subject : null,
+      subject: channel === "email" && mode === "blast" ? subject : null,
       message_templates: templates,
+      sequence_steps: mode === "sequence" ? sequenceSteps : [],
+      cta_phone: mode === "sequence" ? ctaPhone : null,
+      cta_message: mode === "sequence" ? ctaMessage : null,
       // ramp = cota diária crescente (anti-ban), mesma faixa já validada no piloto: 50 disparos no
       // dia 1 da campanha, 80 no dia 2, até estabilizar em 300/dia a partir do 6º dia.
+      // Em modo sequência não há ramp (é 1 e-mail por contato por passo, sem cota diária de novos
+      // disparos) — só os dias da semana e a janela de horário importam.
       ramp_config: {
         delaySeconds: [delayMin, delayMax],
         hourStart,
         hourEnd,
-        days: [1, 2, 3, 4, 5, 6],
+        days: mode === "sequence" ? sequenceDays : [1, 2, 3, 4, 5, 6],
         ramp: [50, 80, 120, 170, 230, 300],
       },
       status: "rascunho",

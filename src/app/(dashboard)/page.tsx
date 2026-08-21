@@ -4,7 +4,7 @@ import { FunnelChart } from "@/components/charts/funnel-chart";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { OverviewInsightsBox } from "@/components/overview-insights-box";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
-import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources } from "@/lib/overview-metrics";
+import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources, getEmailClickMetrics } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel, planHasConversion } from "@/lib/workspace-plan";
 import { getAttentionAlerts } from "@/lib/attention-center";
@@ -112,6 +112,8 @@ export default async function OverviewPage({
     attentionAlerts = await getAttentionAlerts(workspace.id);
   }
 
+  const emailClicks = workspace ? await getEmailClickMetrics(workspace.id, period) : { sent: 0, clicked: 0, clickRatePct: null };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -165,6 +167,27 @@ export default async function OverviewPage({
         conversion={{ ...conversion, showFechamento: plan !== "sdr", ...response, leadSources }}
         hasConversion={hasConversion}
       />
+
+      {emailClicks.sent > 0 && (
+        <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
+          <h3 className="font-bold text-[15px] mb-1">Cliques de e-mail</h3>
+          <p className="text-xs text-text-muted mb-4">Sequências de e-mail {period.label} — clique no CTA leva pro WhatsApp e conta como conversão.</p>
+          <div className="grid grid-cols-3 gap-3 max-w-md">
+            <div className="bg-bg border border-border rounded-xl p-4">
+              <b className="block text-xl font-extrabold tabular-nums">{emailClicks.sent}</b>
+              <span className="text-xs font-semibold text-text-muted block mt-1.5">e-mails enviados</span>
+            </div>
+            <div className="bg-bg border border-border rounded-xl p-4">
+              <b className="block text-xl font-extrabold tabular-nums">{emailClicks.clicked}</b>
+              <span className="text-xs font-semibold text-text-muted block mt-1.5">cliques (conversão)</span>
+            </div>
+            <div className="bg-bg border border-border rounded-xl p-4">
+              <b className="block text-xl font-extrabold tabular-nums">{emailClicks.clickRatePct === null ? "—" : `${emailClicks.clickRatePct}%`}</b>
+              <span className="text-xs font-semibold text-text-muted block mt-1.5">taxa de clique</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {hasConversion && (
         <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">

@@ -14,7 +14,9 @@ function fromDisplayName(from: string): string {
   return (match ? match[1] : from).trim();
 }
 
-export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscribeUrl: string): string {
+export type EmailCta = { label: string; url: string };
+
+export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscribeUrl: string, cta?: EmailCta): string {
   const senderName = escapeHtml(fromDisplayName(from));
   const paragraphs = bodyText
     .split("\n")
@@ -22,6 +24,14 @@ export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscri
     .filter(Boolean)
     .map((line) => `<p style="margin:0 0 14px;color:#1a1a1a;font-size:15px;line-height:1.6;">${escapeHtml(line)}</p>`)
     .join("");
+
+  const ctaBlock = cta
+    ? `<tr><td style="padding:0 28px 24px;">
+        <a href="${cta.url}" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:8px;">
+          ${escapeHtml(cta.label)}
+        </a>
+      </td></tr>`
+    : "";
 
   return `<!doctype html>
 <html>
@@ -33,8 +43,9 @@ export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscri
         </td>
       </tr>
       <tr>
-        <td style="padding:24px 28px;">${paragraphs}</td>
+        <td style="padding:24px 28px 8px;">${paragraphs}</td>
       </tr>
+      ${ctaBlock}
       <tr>
         <td style="padding:16px 28px;border-top:1px solid #eee;">
           <p style="margin:0;color:#999;font-size:12px;">
@@ -47,7 +58,7 @@ export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscri
 </html>`;
 }
 
-export async function sendCampaignEmail(from: string, to: string, subject: string, bodyText: string, unsubscribeUrl: string): Promise<void> {
+export async function sendCampaignEmail(from: string, to: string, subject: string, bodyText: string, unsubscribeUrl: string, cta?: EmailCta): Promise<void> {
   if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY não configurada.");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -56,8 +67,8 @@ export async function sendCampaignEmail(from: string, to: string, subject: strin
       from,
       to,
       subject,
-      text: bodyText,
-      html: buildCampaignEmailHtml(from, bodyText, unsubscribeUrl),
+      text: bodyText + (cta ? `\n\n${cta.label}: ${cta.url}` : ""),
+      html: buildCampaignEmailHtml(from, bodyText, unsubscribeUrl, cta),
       // List-Unsubscribe (RFC 8058) — Gmail/Outlook/Yahoo mostram um botão nativo de cancelar
       // inscrição usando isso, sem precisar abrir o link no navegador. Exigido pelas políticas de
       // remetente em massa da Gmail/Yahoo desde 2024 — sem isso, risco maior de cair em spam.

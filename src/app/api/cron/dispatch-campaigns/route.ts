@@ -5,6 +5,7 @@ import { sendDialog360Template } from "@/lib/dialog360";
 import { sendCampaignEmail } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
+import { runEmailSequences } from "@/lib/email-sequence";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -75,7 +76,8 @@ export async function GET(req: Request) {
     .select(
       "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
-    .eq("status", "ativa");
+    .eq("status", "ativa")
+    .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
 
   let sent = 0;
   let failed = 0;
@@ -288,5 +290,12 @@ export async function GET(req: Request) {
     return { sent: 0, skipped: 0 };
   });
 
-  return NextResponse.json({ ok: true, sent, failed, completed, skipped, catchup });
+  // Sequência de e-mails por dia (Dia 1/5/10/15/21...) — mesmo motivo de rodar aqui: esse endpoint
+  // já é invocado a cada minuto, não precisa de agendamento novo.
+  const emailSequences = await runEmailSequences(supabase, new URL(req.url).origin).catch((err) => {
+    console.error("Erro na sequência de e-mail:", err);
+    return { sent: 0, skipped: 0 };
+  });
+
+  return NextResponse.json({ ok: true, sent, failed, completed, skipped, catchup, emailSequences });
 }

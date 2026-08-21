@@ -9,6 +9,25 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
 import type { Range } from "@/lib/cost-monitor";
 
+export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: number | null };
+
+// Enviados/clicados das sequências de e-mail (Dia 1/5/10/15/21...) — cada linha de email_clicks já É
+// um "envio de passo", clicked_at preenchido = converteu (clicou no CTA, foi pro WhatsApp).
+export async function getEmailClickMetrics(workspaceId: string, range: Range): Promise<EmailClickMetrics> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("email_clicks")
+    .select("clicked_at")
+    .eq("workspace_id", workspaceId)
+    .gte("sent_at", range.from.toISOString())
+    .lte("sent_at", range.to.toISOString())
+    .limit(20000);
+
+  const sent = data?.length ?? 0;
+  const clicked = (data || []).filter((r) => r.clicked_at).length;
+  return { sent, clicked, clickRatePct: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null };
+}
+
 export type VolumeMetrics = {
   leadsRecebidos: number;
   leadsAbordados: number;

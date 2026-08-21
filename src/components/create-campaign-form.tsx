@@ -7,16 +7,36 @@ import { listWhatsappTemplates } from "@/app/actions/whatsapp";
 const INITIAL_STATE: ActionResult = { error: null };
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
+const WEEK_DAY_LABELS: { value: number; label: string }[] = [
+  { value: 0, label: "Dom" },
+  { value: 1, label: "Seg" },
+  { value: 2, label: "Ter" },
+  { value: 3, label: "Qua" },
+  { value: 4, label: "Qui" },
+  { value: 5, label: "Sex" },
+  { value: 6, label: "Sáb" },
+];
 
 type AgentOption = { id: string; name: string; connection_status: string };
 type WhatsappInstanceOption = { id: string; channel: "evolution" | "360dialog"; department: string };
 type Dialog360Template = { name: string; language: string; category: string; bodyText: string | null; bodyVarCount: number };
+type SequenceStep = { dayOffset: number; subject: string; body: string; ctaLabel: string };
+
+let stepKeySeq = 0;
+function newStep(dayOffset: number): SequenceStep & { key: number } {
+  stepKeySeq += 1;
+  return { key: stepKeySeq, dayOffset, subject: "", body: "", ctaLabel: "Saiba mais" };
+}
 
 export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { agents?: AgentOption[]; whatsappInstances?: WhatsappInstanceOption[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [channel, setChannel] = useState<"whatsapp" | "email">("whatsapp");
-  const [mode, setMode] = useState<"blast" | "agent">("blast");
+  const [mode, setMode] = useState<"blast" | "agent" | "sequence">("blast");
   const [agentId, setAgentId] = useState(agents[0]?.id || "");
+  const [steps, setSteps] = useState<(SequenceStep & { key: number })[]>([newStep(1)]);
+  const [ctaPhone, setCtaPhone] = useState("");
+  const [ctaMessage, setCtaMessage] = useState("");
+  const [sequenceDays, setSequenceDays] = useState<number[]>([2, 3, 4]);
   const [instanceId, setInstanceId] = useState(whatsappInstances[0]?.id || "");
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
@@ -38,8 +58,24 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   }, [state.ok]);
 
   useEffect(() => {
-    if (channel !== "whatsapp") setMode("blast");
+    if (channel === "whatsapp" && mode === "sequence") setMode("blast");
+    if (channel === "email" && mode === "agent") setMode("blast");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel]);
+
+  function updateStep(key: number, patch: Partial<SequenceStep>) {
+    setSteps((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
+  }
+  function addStep() {
+    const lastDay = steps[steps.length - 1]?.dayOffset ?? 0;
+    setSteps((prev) => [...prev, newStep(lastDay + 5)]);
+  }
+  function removeStep(key: number) {
+    setSteps((prev) => (prev.length > 1 ? prev.filter((s) => s.key !== key) : prev));
+  }
+  function toggleSequenceDay(day: number) {
+    setSequenceDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()));
+  }
 
   useEffect(() => {
     if (selectedInstance?.channel !== "360dialog") {
@@ -94,6 +130,37 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
 
           {channel === "email" && (
             <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-semibold">Tipo de disparo</span>
+              <input type="hidden" name="mode" value={mode} />
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("blast")}
+                  aria-pressed={mode === "blast"}
+                  className={`text-left border rounded-md p-3 cursor-pointer transition-colors ${
+                    mode === "blast" ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                  }`}
+                >
+                  <div className="text-sm font-bold">Disparo único</div>
+                  <div className="text-xs text-text-muted mt-0.5">Manda 1 e-mail agora pros contatos filtrados.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("sequence")}
+                  aria-pressed={mode === "sequence"}
+                  className={`text-left border rounded-md p-3 cursor-pointer transition-colors ${
+                    mode === "sequence" ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                  }`}
+                >
+                  <div className="text-sm font-bold">Sequência por dia</div>
+                  <div className="text-xs text-text-muted mt-0.5">Vários e-mails espaçados por dia (ex.: Dia 1, 5, 10…), com CTA pro WhatsApp.</div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {channel === "email" && mode === "blast" && (
+            <div className="flex flex-col gap-1.5">
               <label htmlFor="subject" className="text-sm font-semibold">
                 Assunto
               </label>
@@ -104,6 +171,114 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
                 placeholder="Assunto do e-mail"
                 className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
               />
+            </div>
+          )}
+
+          {channel === "email" && mode === "sequence" && (
+            <div className="flex flex-col gap-3 bg-bg border border-border rounded-md p-3">
+              <input type="hidden" name="cta_phone" value={ctaPhone} />
+              <input type="hidden" name="cta_message" value={ctaMessage} />
+              <input type="hidden" name="sequence_days" value={JSON.stringify(sequenceDays)} />
+              <input type="hidden" name="sequence_steps" value={JSON.stringify(steps.map(({ key: _key, ...s }) => s))} />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="cta_phone_input" className="text-xs font-semibold text-text-muted">
+                    WhatsApp do CTA (só números, com DDI)
+                  </label>
+                  <input
+                    id="cta_phone_input"
+                    value={ctaPhone}
+                    onChange={(e) => setCtaPhone(e.target.value.replace(/\D/g, ""))}
+                    placeholder="5521999999999"
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="cta_message_input" className="text-xs font-semibold text-text-muted">
+                    Mensagem pronta no WhatsApp
+                  </label>
+                  <input
+                    id="cta_message_input"
+                    value={ctaMessage}
+                    onChange={(e) => setCtaMessage(e.target.value)}
+                    placeholder="Olá! Vim pelo e-mail…"
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-text-muted">Dias de envio</span>
+                <div className="flex gap-1.5">
+                  {WEEK_DAY_LABELS.map((d) => (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => toggleSequenceDay(d.value)}
+                      className={`text-[11px] font-bold px-2 py-1.5 rounded-md border cursor-pointer ${
+                        sequenceDays.includes(d.value) ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold text-text-muted">E-mails da sequência (dia relativo à entrada do contato)</span>
+                {steps.map((step, i) => (
+                  <div key={step.key} className="flex flex-col gap-1.5 border border-border rounded-md p-2.5 bg-surface">
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] font-bold text-text-muted shrink-0">Dia</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={step.dayOffset}
+                        onChange={(e) => updateStep(step.key, { dayOffset: Number(e.target.value) || 1 })}
+                        className="w-16 border border-border rounded-md px-2 py-1 text-xs outline-none focus:border-primary"
+                      />
+                      <input
+                        value={step.subject}
+                        onChange={(e) => updateStep(step.key, { subject: e.target.value })}
+                        placeholder="Assunto desse e-mail"
+                        required
+                        className="flex-1 border border-border rounded-md px-2 py-1 text-xs outline-none focus:border-primary"
+                      />
+                      {steps.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeStep(step.key)}
+                          aria-label="Remover e-mail"
+                          className="text-danger text-xs font-bold px-1 cursor-pointer shrink-0"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={step.body}
+                      onChange={(e) => updateStep(step.key, { body: e.target.value })}
+                      rows={3}
+                      required
+                      placeholder="Corpo do e-mail. Use {nome} pro primeiro nome."
+                      className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary font-mono"
+                    />
+                    <input
+                      value={step.ctaLabel}
+                      onChange={(e) => updateStep(step.key, { ctaLabel: e.target.value })}
+                      placeholder="Texto do botão (ex.: SOLICITAR UMA AVALIAÇÃO)"
+                      required
+                      className="border border-border rounded-md px-2 py-1 text-xs outline-none focus:border-primary"
+                    />
+                    <span className="text-[10px] text-text-muted">E-mail {i + 1} de {steps.length}</span>
+                  </div>
+                ))}
+                <button type="button" onClick={addStep} className="text-xs font-bold text-primary-strong hover:underline w-fit cursor-pointer">
+                  + Adicionar e-mail
+                </button>
+              </div>
             </div>
           )}
 
@@ -246,7 +421,7 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
             </div>
           )}
 
-          {!isDialog360Blast && (
+          {!isDialog360Blast && mode !== "sequence" && (
             <div className="flex flex-col gap-1.5">
               <label htmlFor="templates" className="text-sm font-semibold">
                 {mode === "agent" ? "Mensagem de abertura" : "Mensagem(ns)"}
@@ -269,32 +444,49 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
-                Delay mín. (s)
-              </label>
-              <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+          {mode === "sequence" ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
+                  Janela início (h)
+                </label>
+                <input id="hour_start" name="hour_start" type="number" defaultValue={8} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
+                  Janela fim (h)
+                </label>
+                <input id="hour_end" name="hour_end" type="number" defaultValue={12} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
-                Delay máx. (s)
-              </label>
-              <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
+                  Delay mín. (s)
+                </label>
+                <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
+                  Delay máx. (s)
+                </label>
+                <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
+                  Janela início (h)
+                </label>
+                <input id="hour_start" name="hour_start" type="number" defaultValue={9} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
+                  Janela fim (h)
+                </label>
+                <input id="hour_end" name="hour_end" type="number" defaultValue={20} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
-                Janela início (h)
-              </label>
-              <input id="hour_start" name="hour_start" type="number" defaultValue={9} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
-                Janela fim (h)
-              </label>
-              <input id="hour_end" name="hour_end" type="number" defaultValue={20} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-            </div>
-          </div>
+          )}
 
           {state.error && <p className="text-sm text-danger font-medium">{state.error}</p>}
 
