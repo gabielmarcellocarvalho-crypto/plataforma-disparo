@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserColaborador } from "@/lib/workspace";
 import { isWorkspacePlan } from "@/lib/workspace-plan";
+import { extractDominantColor } from "@/lib/logo-color";
 
 export type CreateWorkspaceState = { error: string | null };
 
@@ -67,6 +68,44 @@ export async function updateEmailFrom(workspaceId: string, emailFrom: string): P
 
   revalidatePath("/configuracoes");
   return { error: null };
+}
+
+export type UploadLogoResult = { error: string | null; logoUrl?: string; brandColor?: string | null };
+
+// Logo do cliente pro cabeçalho do e-mail de campanha. A cor de marca (brand_color) é recalculada
+// automaticamente a partir da cor dominante da própria imagem — não existe seletor de cor manual:
+// trocar a logo é a forma de trocar a cor.
+export async function uploadWorkspaceLogo(workspaceId: string, formData: FormData): Promise<UploadLogoResult> {
+  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode trocar a logo." };
+
+  const file = formData.get("logo");
+  if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo de imagem." };
+  if (file.size > 2 * 1024 * 1024) return { error: "Imagem muito grande (máx. 2MB)." };
+  if (!["image/png", "image/jpeg", "image/webp", "image/svg+xml"].includes(file.type)) {
+    return { error: "Formato inválido — use PNG, JPG, WEBP ou SVG." };
+  }
+
+  const admin = createAdminClient();
+  const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
+  const path = `${workspaceId}/${crypto.randomUUID()}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: upErr } = await admin.storage.from("workspace-logos").upload(path, buffer, { contentType: file.type, upsert: false });
+  if (upErr) return { error: "Não foi possível subir a logo." };
+
+  const { data: pub } = admin.storage.from("workspace-logos").getPublicUrl(path);
+
+  // SVG não tem bitmap decodificável pelo extrator — mantém a cor de marca já salva (se houver).
+  const brandColor = file.type === "image/svg+xml" ? undefined : await extractDominantColor(buffer);
+
+  const update: { logo_url: string; brand_color?: string | null } = { logo_url: pub.publicUrl };
+  if (brandColor !== undefined) update.brand_color = brandColor;
+
+  const { error } = await admin.from("workspaces").update(update).eq("id", workspaceId);
+  if (error) return { error: "Logo subiu, mas não deu pra salvar no workspace." };
+
+  revalidatePath("/configuracoes");
+  return { error: null, logoUrl: pub.publicUrl, brandColor: update.brand_color };
 }
 
 // Remove um workspace inteiro — apaga em cascata TODOS os dados dele (contatos, agentes, conversas,

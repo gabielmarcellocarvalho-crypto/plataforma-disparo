@@ -5,6 +5,7 @@ import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manage
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
 import { EmailFromEditor } from "@/components/email-from-editor";
+import { WorkspaceLogoEditor } from "@/components/workspace-logo-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
 import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
@@ -18,7 +19,9 @@ export default async function ConfiguracoesPage() {
       ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
       : Promise.resolve({ data: [] }),
     isColaborador ? listApiKeys() : Promise.resolve([]),
-    isColaborador && workspace ? supabase.from("workspaces").select("plan, email_from").eq("id", workspace.id).maybeSingle() : Promise.resolve({ data: null }),
+    isColaborador && workspace
+      ? supabase.from("workspaces").select("plan, email_from, logo_url, brand_color").eq("id", workspace.id).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
   const currentPlan = resolveWorkspacePlan(workspaceRow?.plan);
 
@@ -65,6 +68,18 @@ export default async function ConfiguracoesPage() {
             <h3 className="font-bold text-[15px] mb-1">E-mail</h3>
             <p className="text-xs text-text-muted mb-4">Remetente das campanhas de e-mail desse workspace.</p>
             {workspace && <EmailFromEditor workspaceId={workspace.id} current={workspaceRow?.email_from ?? null} />}
+          </div>
+
+          <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
+            <h3 className="font-bold text-[15px] mb-1">Logo e cor de marca</h3>
+            <p className="text-xs text-text-muted mb-4">Aparece no cabeçalho dos e-mails de campanha desse workspace.</p>
+            {workspace && (
+              <WorkspaceLogoEditor
+                workspaceId={workspace.id}
+                currentLogoUrl={workspaceRow?.logo_url ?? null}
+                currentBrandColor={workspaceRow?.brand_color ?? null}
+              />
+            )}
           </div>
 
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

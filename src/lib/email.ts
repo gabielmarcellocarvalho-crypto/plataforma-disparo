@@ -16,7 +16,19 @@ function fromDisplayName(from: string): string {
 
 export type EmailCta = { label: string; url: string };
 
-export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscribeUrl: string, cta?: EmailCta): string {
+// Cor de marca padrão (roxo da própria plataforma) — usada quando o workspace do cliente não tem
+// uma cor própria configurada (workspaces.brand_color).
+const DEFAULT_BRAND_COLOR = "#7C3AED";
+
+export function buildCampaignEmailHtml(
+  from: string,
+  bodyText: string,
+  unsubscribeUrl: string,
+  cta?: EmailCta,
+  brandColor?: string | null,
+  logoUrl?: string | null
+): string {
+  const color = brandColor || DEFAULT_BRAND_COLOR;
   const senderName = escapeHtml(fromDisplayName(from));
   const paragraphs = bodyText
     .split("\n")
@@ -26,30 +38,34 @@ export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscri
     .join("");
 
   const ctaBlock = cta
-    ? `<tr><td style="padding:0 28px 24px;">
-        <a href="${cta.url}" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:8px;">
+    ? `<tr><td style="padding:8px 28px 28px;">
+        <a href="${cta.url}" style="display:inline-block;background:${color};color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:13px 26px;border-radius:8px;">
           ${escapeHtml(cta.label)}
         </a>
       </td></tr>`
     : "";
 
+  const headerContent = logoUrl
+    ? `<img src="${logoUrl}" alt="${senderName}" height="32" style="height:32px;width:auto;display:block;">`
+    : `<span style="font-size:15px;font-weight:700;color:${color};">${senderName}</span>`;
+
   return `<!doctype html>
 <html>
-  <body style="margin:0;padding:24px 12px;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+  <body style="margin:0;padding:32px 16px;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
     <table role="presentation" width="100%" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
       <tr>
-        <td style="padding:24px 28px 8px;border-bottom:1px solid #eee;">
-          <span style="font-size:14px;font-weight:700;color:#7C3AED;">${senderName}</span>
+        <td style="padding:20px 28px;border-bottom:2px solid ${color};">
+          ${headerContent}
         </td>
       </tr>
       <tr>
-        <td style="padding:24px 28px 8px;">${paragraphs}</td>
+        <td style="padding:28px 28px 4px;">${paragraphs}</td>
       </tr>
       ${ctaBlock}
       <tr>
-        <td style="padding:16px 28px;border-top:1px solid #eee;">
-          <p style="margin:0;color:#999;font-size:12px;">
-            Se não quiser mais receber esses e-mails, <a href="${unsubscribeUrl}" style="color:#7C3AED;">clique aqui pra sair da lista</a>.
+        <td style="padding:18px 28px;border-top:1px solid #eee;">
+          <p style="margin:0;color:#999;font-size:12px;line-height:1.5;">
+            Se não quiser mais receber esses e-mails, <a href="${unsubscribeUrl}" style="color:${color};">clique aqui pra sair da lista</a>.
           </p>
         </td>
       </tr>
@@ -58,7 +74,16 @@ export function buildCampaignEmailHtml(from: string, bodyText: string, unsubscri
 </html>`;
 }
 
-export async function sendCampaignEmail(from: string, to: string, subject: string, bodyText: string, unsubscribeUrl: string, cta?: EmailCta): Promise<void> {
+export async function sendCampaignEmail(
+  from: string,
+  to: string,
+  subject: string,
+  bodyText: string,
+  unsubscribeUrl: string,
+  cta?: EmailCta,
+  brandColor?: string | null,
+  logoUrl?: string | null
+): Promise<void> {
   if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY não configurada.");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -68,7 +93,7 @@ export async function sendCampaignEmail(from: string, to: string, subject: strin
       to,
       subject,
       text: bodyText + (cta ? `\n\n${cta.label}: ${cta.url}` : ""),
-      html: buildCampaignEmailHtml(from, bodyText, unsubscribeUrl, cta),
+      html: buildCampaignEmailHtml(from, bodyText, unsubscribeUrl, cta, brandColor, logoUrl),
       // List-Unsubscribe (RFC 8058) — Gmail/Outlook/Yahoo mostram um botão nativo de cancelar
       // inscrição usando isso, sem precisar abrir o link no navegador. Exigido pelas políticas de
       // remetente em massa da Gmail/Yahoo desde 2024 — sem isso, risco maior de cair em spam.

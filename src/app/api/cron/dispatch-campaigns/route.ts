@@ -212,9 +212,13 @@ export async function GET(req: Request) {
     // E-mail precisa do remetente verificado do workspace (cada cliente pode ter domínio próprio no
     // Resend) — sem isso configurado, falha com mensagem clara em vez de tentar mandar de qualquer jeito.
     let emailFrom: string | null = null;
+    let emailBrandColor: string | null = null;
+    let emailLogoUrl: string | null = null;
     if (isEmail) {
-      const { data: ws } = await supabase.from("workspaces").select("email_from").eq("id", campaign.workspace_id).maybeSingle();
+      const { data: ws } = await supabase.from("workspaces").select("email_from, brand_color, logo_url").eq("id", campaign.workspace_id).maybeSingle();
       emailFrom = ws?.email_from || null;
+      emailBrandColor = ws?.brand_color || null;
+      emailLogoUrl = ws?.logo_url || null;
       if (!emailFrom) {
         skipped.push(`${campaign.id}:sem-remetente-email`);
         continue;
@@ -242,7 +246,10 @@ export async function GET(req: Request) {
           contact.email!,
           campaign.subject || campaign.name,
           text as string,
-          unsubscribeUrl(new URL(req.url).origin, contact.id)
+          unsubscribeUrl(new URL(req.url).origin, contact.id),
+          undefined,
+          emailBrandColor,
+          emailLogoUrl
         );
       } else if (isDialog360Blast) {
         const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];

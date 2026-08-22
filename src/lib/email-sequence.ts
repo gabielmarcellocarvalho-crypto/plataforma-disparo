@@ -60,8 +60,10 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
     const hourEnd = cfg.hourEnd ?? 12;
     if (!days.includes(weekday) || hour < hourStart || hour >= hourEnd) continue; // fora da janela — tenta de novo no próximo tick dentro dela
 
-    const { data: emailFromRow } = await supabase.from("workspaces").select("email_from").eq("id", campaign.workspace_id).maybeSingle();
-    const emailFrom = emailFromRow?.email_from;
+    const { data: wsRow } = await supabase.from("workspaces").select("email_from, brand_color, logo_url").eq("id", campaign.workspace_id).maybeSingle();
+    const emailFrom = wsRow?.email_from;
+    const brandColor = wsRow?.brand_color || null;
+    const logoUrl = wsRow?.logo_url || null;
     if (!emailFrom) continue; // sem remetente configurado — não dá pra mandar nada dessa campanha
 
     const { data: recipients } = await supabase
@@ -110,7 +112,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
       const unsubUrl = unsubscribeUrl(siteOrigin, contact.id);
 
       try {
-        await sendCampaignEmail(emailFrom, contact.email, step.subject, body, unsubUrl, { label: step.ctaLabel, url: ctaUrl });
+        await sendCampaignEmail(emailFrom, contact.email, step.subject, body, unsubUrl, { label: step.ctaLabel, url: ctaUrl }, brandColor, logoUrl);
 
         const nextIndex = stepIndex + 1;
         const nextStepAt =
