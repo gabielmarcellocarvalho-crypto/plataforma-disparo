@@ -1,16 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { WhatsappConnect } from "@/components/whatsapp-connect";
 import { Dialog360Connect } from "@/components/dialog360-connect";
+import { MetacloudConnect } from "@/components/metacloud-connect";
+import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 const ALL_DEPARTMENTS = ["vendas", "financeiro"];
 
 export type WhatsappInstanceRow = {
   id: string;
-  channel: "evolution" | "360dialog";
+  channel: WhatsappChannel;
   department: string;
   connection_status: string;
 };
@@ -38,12 +41,14 @@ export function WhatsappInstancesManager({
             <div className="flex items-center gap-2 mb-3">
               <span className="text-sm font-bold">{DEPARTMENT_LABEL[instance.department] || instance.department}</span>
               <span className="text-[10px] font-bold uppercase text-text-muted bg-bg px-2 py-0.5 rounded-full">
-                {instance.channel === "360dialog" ? "API oficial" : "Evolution"}
+                {instance.channel === "metacloud" ? "API oficial (Meta)" : instance.channel === "360dialog" ? "API oficial (360dialog)" : "Evolution"}
               </span>
             </div>
           )}
           {instance.channel === "360dialog" ? (
             <Dialog360Connect instanceId={instance.id} connected={instance.connection_status === "conectado"} department={instance.department} />
+          ) : instance.channel === "metacloud" ? (
+            <p className="text-sm font-bold text-success">✓ conectado direto via Meta</p>
           ) : (
             <WhatsappConnect initialStatus={instance.connection_status} />
           )}
@@ -78,12 +83,18 @@ function AddNumberForm({
   availableDepartments: string[];
   onCancel: () => void;
 }) {
+  const router = useRouter();
   const [choice, setChoice] = useState<"disparo" | "agente" | null>(null);
-  const [channel, setChannel] = useState<"evolution" | "360dialog">("evolution");
+  const [channel, setChannel] = useState<WhatsappChannel>("metacloud");
   const [department, setDepartment] = useState(availableDepartments[0] || "vendas");
 
+  function handleConnected() {
+    router.refresh();
+    onCancel();
+  }
+
   // Fluxo do PRIMEIRO número do workspace: escolhe se é disparo em massa ou agente de IA (agente
-  // vive em /agentes, não aqui) e, se disparo, escolhe o canal (Evolution ou 360dialog).
+  // vive em /agentes, não aqui) e, se disparo, escolhe o canal (Meta, 360dialog ou Evolution).
   if (isFirstNumber) {
     if (choice === "agente") {
       return (
@@ -102,7 +113,7 @@ function AddNumberForm({
       return (
         <div className="flex flex-col gap-3 border border-border rounded-lg p-4">
           <div className="flex gap-2">
-            {(["evolution", "360dialog"] as const).map((c) => (
+            {(["metacloud", "360dialog", "evolution"] as const).map((c) => (
               <button
                 key={c}
                 type="button"
@@ -111,11 +122,17 @@ function AddNumberForm({
                   channel === c ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
                 }`}
               >
-                {c === "evolution" ? "Evolution (não oficial)" : "360dialog (API oficial)"}
+                {c === "metacloud" ? "Meta (API oficial)" : c === "360dialog" ? "360dialog (API oficial)" : "Evolution (não oficial)"}
               </button>
             ))}
           </div>
-          {channel === "evolution" ? <WhatsappConnect initialStatus="desconectado" /> : <Dialog360Connect instanceId={null} connected={false} department="vendas" />}
+          {channel === "evolution" ? (
+            <WhatsappConnect initialStatus="desconectado" />
+          ) : channel === "360dialog" ? (
+            <Dialog360Connect instanceId={null} connected={false} department="vendas" />
+          ) : (
+            <MetacloudConnect department="vendas" onConnected={handleConnected} />
+          )}
           <button type="button" onClick={onCancel} className="text-xs text-text-muted hover:underline w-fit">
             Cancelar
           </button>
@@ -150,8 +167,8 @@ function AddNumberForm({
     );
   }
 
-  // Já existe pelo menos 1 número — número adicional só pode ser 360dialog (Evolution é fixo, 1 por
-  // workspace), num departamento ainda livre.
+  // Já existe pelo menos 1 número — número adicional só pode ser API oficial (Meta ou 360dialog;
+  // Evolution é fixo, 1 por workspace), num departamento ainda livre.
   return (
     <div className="flex flex-col gap-3 border border-border rounded-lg p-4">
       <label className="flex flex-col gap-1.5">
@@ -168,7 +185,25 @@ function AddNumberForm({
           ))}
         </select>
       </label>
-      <Dialog360Connect instanceId={null} connected={false} department={department} />
+      <div className="flex gap-2">
+        {(["metacloud", "360dialog"] as const).map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setChannel(c)}
+            className={`flex-1 text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
+              channel === c ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+            }`}
+          >
+            {c === "metacloud" ? "Meta (API oficial)" : "360dialog (API oficial)"}
+          </button>
+        ))}
+      </div>
+      {channel === "360dialog" ? (
+        <Dialog360Connect instanceId={null} connected={false} department={department} />
+      ) : (
+        <MetacloudConnect department={department} onConnected={handleConnected} />
+      )}
       <button type="button" onClick={onCancel} className="text-xs text-text-muted hover:underline w-fit">
         Cancelar
       </button>

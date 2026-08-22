@@ -3,6 +3,7 @@ import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
+import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "rascunho",
@@ -66,7 +67,7 @@ export default async function CampanhasPage() {
         </div>
         <CreateCampaignForm
           agents={agents || []}
-          whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as "evolution" | "360dialog", department: i.department }))}
+          whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as WhatsappChannel, department: i.department }))}
         />
       </div>
 

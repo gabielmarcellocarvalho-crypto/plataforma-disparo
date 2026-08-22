@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { createCampaign, type ActionResult } from "@/app/actions/campaigns";
 import { listWhatsappTemplates } from "@/app/actions/whatsapp";
+import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
@@ -18,7 +19,7 @@ const WEEK_DAY_LABELS: { value: number; label: string }[] = [
 ];
 
 type AgentOption = { id: string; name: string; connection_status: string };
-type WhatsappInstanceOption = { id: string; channel: "evolution" | "360dialog"; department: string };
+type WhatsappInstanceOption = { id: string; channel: WhatsappChannel; department: string };
 type Dialog360Template = { name: string; language: string; category: string; bodyText: string | null; bodyVarCount: number };
 type SequenceStep = { dayOffset: number; subject: string; body: string; ctaLabel: string };
 
@@ -42,15 +43,15 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
 
-  // Templates aprovados (360dialog) pro número escolhido — buscado direto na API, não digitado à
-  // mão. Recarrega toda vez que o número selecionado muda (cada número tem sua própria conta/API key).
+  // Templates aprovados (360dialog ou Meta direta) pro número escolhido — buscado direto na API, não
+  // digitado à mão. Recarrega toda vez que o número selecionado muda (cada número tem sua própria conta).
   const [templates, setTemplates] = useState<Dialog360Template[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [loadingTemplates, startLoadingTemplates] = useTransition();
   const [templateKey, setTemplateKey] = useState(""); // "nome|idioma"
   const selectedTemplate = templates.find((t) => `${t.name}|${t.language}` === templateKey) || null;
-  const isDialog360Blast = channel === "whatsapp" && mode === "blast" && selectedInstance?.channel === "360dialog";
-  // Bloqueia o envio quando o número é 360dialog e não tem um template válido escolhido (sem
+  const isDialog360Blast = channel === "whatsapp" && mode === "blast" && isOfficialWhatsappChannel(selectedInstance?.channel || "");
+  // Bloqueia o envio quando o número é API oficial e não tem um template válido escolhido (sem
   // template não sai nada em disparo frio) ou o template tem mais de 1 variável (ainda não suportado).
   const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || selectedTemplate.bodyVarCount > 1);
 
@@ -82,7 +83,7 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   }
 
   useEffect(() => {
-    if (selectedInstance?.channel !== "360dialog") {
+    if (!selectedInstance || !isOfficialWhatsappChannel(selectedInstance.channel)) {
       setTemplates([]);
       setTemplatesError(null);
       setTemplateKey("");
@@ -336,7 +337,8 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
                   >
                     {whatsappInstances.map((i) => (
                       <option key={i.id} value={i.id}>
-                        {DEPARTMENT_LABEL[i.department] || i.department} {i.channel === "360dialog" ? "(API oficial)" : "(Evolution)"}
+                        {DEPARTMENT_LABEL[i.department] || i.department}{" "}
+                        {i.channel === "metacloud" ? "(API oficial — Meta)" : i.channel === "360dialog" ? "(API oficial — 360dialog)" : "(Evolution)"}
                       </option>
                     ))}
                   </select>
@@ -357,15 +359,18 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
                     <div className="bg-danger-soft border border-danger/30 rounded-lg p-3">
                       <p className="text-xs text-danger font-medium">{templatesError}</p>
                       <p className="text-xs text-danger/80 mt-1">
-                        Sincronize no Hub do 360dialog ("Synchronise templates with Meta") e reabra esse formulário.
+                        {selectedInstance?.channel === "360dialog"
+                          ? 'Sincronize no Hub do 360dialog ("Synchronise templates with Meta") e reabra esse formulário.'
+                          : "Crie o template no Meta Business Manager (aprovado) e reabra esse formulário."}
                       </p>
                     </div>
                   ) : templates.length === 0 ? (
                     <div className="bg-warning-soft border border-warning-text/20 rounded-lg p-3">
                       <p className="text-xs text-warning-text font-medium">Nenhum template aprovado encontrado pra esse número.</p>
                       <p className="text-xs text-warning-text/80 mt-1">
-                        Se você já aprovou um no Meta Business Manager, sincronize no Hub do 360dialog ("Synchronise templates with Meta") e
-                        reabra esse formulário.
+                        {selectedInstance?.channel === "360dialog"
+                          ? 'Se você já aprovou um no Meta Business Manager, sincronize no Hub do 360dialog ("Synchronise templates with Meta") e reabra esse formulário.'
+                          : "Crie e aprove um template no Meta Business Manager, depois reabra esse formulário."}
                       </p>
                     </div>
                   ) : (

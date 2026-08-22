@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manager";
+import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
 import { EmailFromEditor } from "@/components/email-from-editor";
@@ -55,7 +56,7 @@ export default async function ConfiguracoesPage() {
         <WhatsappInstancesManager
           initialInstances={(instances || []).map((i) => ({
             id: i.id,
-            channel: i.channel as "evolution" | "360dialog",
+            channel: i.channel as WhatsappChannel,
             department: i.department,
             connection_status: i.connection_status,
           }))}

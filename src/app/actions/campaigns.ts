@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { isContactStage } from "@/lib/crm-stages";
 import { listDialog360Templates } from "@/lib/dialog360";
+import { listMetaCloudTemplates } from "@/lib/metacloud";
+import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -103,25 +105,31 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   // Modo blast em WhatsApp precisa saber qual número dispara — obrigatório assim que o workspace tem
   // mais de um número conectado (senão não dá pra saber qual usar); com só 1 número, o form nem
   // mostra o seletor, mas ainda manda o id no hidden input.
-  let whatsappInstance: { id: string; channel: string; dialog360_api_key: string | null } | null = null;
+  let whatsappInstance: { id: string; channel: string; dialog360_api_key: string | null; meta_waba_id: string | null } | null = null;
   let dialog360TemplateVarCount = 0;
   if (mode === "blast" && channel === "whatsapp") {
     if (!whatsappInstanceId) return { error: "Nenhum número de WhatsApp conectado pra esse workspace (conecte em Configurações)." };
     const { data } = await supabase
       .from("whatsapp_instances")
-      .select("id, channel, dialog360_api_key")
+      .select("id, channel, dialog360_api_key, meta_waba_id")
       .eq("id", whatsappInstanceId)
       .eq("workspace_id", workspace.id)
       .maybeSingle();
     if (!data) return { error: "Número selecionado não encontrado nesse workspace." };
     whatsappInstance = data;
 
-    if (data.channel === "360dialog") {
-      if (!dialog360TemplateName) return { error: "Esse número usa API oficial (360dialog) — escolha um template aprovado pra disparo frio." };
-      if (!data.dialog360_api_key) return { error: "Esse número não tem API key salva — reconecte em Configurações." };
+    if (isOfficialWhatsappChannel(data.channel)) {
+      if (!dialog360TemplateName) return { error: "Esse número usa API oficial — escolha um template aprovado pra disparo frio." };
       // Revalida contra a lista real da API na hora de criar (não confia só no que veio do form) —
       // garante que o template ainda existe/está aprovado e pega a contagem de variáveis certa.
-      const templates = await listDialog360Templates(data.dialog360_api_key).catch(() => []);
+      let templates: Awaited<ReturnType<typeof listDialog360Templates>> = [];
+      if (data.channel === "360dialog") {
+        if (!data.dialog360_api_key) return { error: "Esse número não tem API key salva — reconecte em Configurações." };
+        templates = await listDialog360Templates(data.dialog360_api_key).catch(() => []);
+      } else {
+        if (!data.meta_waba_id) return { error: "Esse número não tem WABA vinculado — reconecte em Configurações." };
+        templates = await listMetaCloudTemplates(data.meta_waba_id).catch(() => []);
+      }
       const match = templates.find((t) => t.name === dialog360TemplateName && (!dialog360TemplateLang || t.language === dialog360TemplateLang));
       if (!match) return { error: "Template não encontrado entre os aprovados desse número — atualize a lista e escolha de novo." };
       if (match.bodyVarCount > 1) return { error: "Esse template tem mais de 1 variável no corpo — ainda não suportado (só {{1}} = primeiro nome)." };
@@ -129,10 +137,10 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     }
   }
 
-  // 360dialog é sempre template (não existe "responder dentro de 24h" numa campanha de disparo —
+  // API oficial é sempre template (não existe "responder dentro de 24h" numa campanha de disparo —
   // isso é conversa viva, tratada em Conversas, não campanha) — só Evolution/agente exigem mensagem.
   // Sequência não usa message_templates (cada passo tem seu próprio corpo em sequence_steps).
-  if (mode !== "sequence" && whatsappInstance?.channel !== "360dialog" && templates.length === 0) {
+  if (mode !== "sequence" && !isOfficialWhatsappChannel(whatsappInstance?.channel || "") && templates.length === 0) {
     return { error: "Escreva pelo menos uma mensagem." };
   }
 
@@ -145,8 +153,8 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       mode,
       agent_id: mode === "agent" ? agentId : null,
       whatsapp_instance_id: whatsappInstance?.id ?? null,
-      dialog360_template_name: whatsappInstance?.channel === "360dialog" ? dialog360TemplateName : null,
-      dialog360_template_lang: whatsappInstance?.channel === "360dialog" ? dialog360TemplateLang || "pt_BR" : null,
+      dialog360_template_name: isOfficialWhatsappChannel(whatsappInstance?.channel || "") ? dialog360TemplateName : null,
+      dialog360_template_lang: isOfficialWhatsappChannel(whatsappInstance?.channel || "") ? dialog360TemplateLang || "pt_BR" : null,
       dialog360_template_var_count: dialog360TemplateVarCount,
       subject: channel === "email" && mode === "blast" ? subject : null,
       message_templates: templates,

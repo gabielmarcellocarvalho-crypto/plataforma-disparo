@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia } from "@/lib/evolution";
 import { sendDialog360Text, sendDialog360Media } from "@/lib/dialog360";
+import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 
 const MAX_MANUAL_FILE_BYTES = 20 * 1024 * 1024; // 20MB — folga sobre o limite do bucket (25MB) e do WhatsApp
@@ -142,7 +143,7 @@ export async function sendManualMedia(contactId: string, agentId: string, formDa
 
 // Envio manual pro fluxo SEM agente de IA (número de disparo avulso) — diferente de sendManualMessage,
 // não existe "agente pausado" pra assumir/devolver, então não tem trava de needs_attention: é sempre
-// um humano respondendo. Escolhe o canal certo (Evolution ou 360dialog) pela whatsapp_instances.
+// um humano respondendo. Escolhe o canal certo (Evolution, 360dialog ou Meta direta) pela whatsapp_instances.
 export async function sendInstanceMessage(contactId: string, instanceId: string, text: string): Promise<ActionResult> {
   const trimmed = text.trim();
   if (!trimmed) return { error: "Mensagem vazia." };
@@ -150,7 +151,7 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
   const supabase = await createClient();
   const [{ data: contact }, { data: instance }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id").eq("id", contactId).maybeSingle(),
-    supabase.from("whatsapp_instances").select("channel, instance_name, dialog360_api_key").eq("id", instanceId).maybeSingle(),
+    supabase.from("whatsapp_instances").select("channel, instance_name, dialog360_api_key, phone_number_id").eq("id", instanceId).maybeSingle(),
   ]);
   if (!contact || !instance) return { error: "Conversa não encontrada." };
   if (!contact.phone) return { error: "Contato sem telefone." };
@@ -159,6 +160,9 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
     if (instance.channel === "360dialog") {
       if (!instance.dialog360_api_key) return { error: "Esse número ainda não tem a API key do 360dialog configurada." };
       await sendDialog360Text(instance.dialog360_api_key, contact.phone, trimmed);
+    } else if (instance.channel === "metacloud") {
+      if (!instance.phone_number_id) return { error: "Esse número ainda não tem o phone_number_id da Meta configurado." };
+      await sendMetaCloudText(instance.phone_number_id, contact.phone, trimmed);
     } else {
       if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
       await sendText(instance.instance_name, contact.phone, trimmed);
@@ -180,8 +184,8 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
 }
 
 // Equivalente a sendManualMedia, mas pro fluxo sem agente (disparo avulso) — mesma escolha de canal
-// (Evolution ou 360dialog) que sendInstanceMessage já faz pra texto. 360dialog só entrega mídia
-// dentro da janela de 24h (mesma regra de texto livre); fora da janela, a Meta rejeita.
+// (Evolution, 360dialog ou Meta direta) que sendInstanceMessage já faz pra texto. API oficial só
+// entrega mídia dentro da janela de 24h (mesma regra de texto livre); fora da janela, a Meta rejeita.
 export async function sendInstanceMedia(contactId: string, instanceId: string, formData: FormData): Promise<ActionResult> {
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo." };
@@ -190,7 +194,7 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, f
   const supabase = await createClient();
   const [{ data: contact }, { data: instance }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id").eq("id", contactId).maybeSingle(),
-    supabase.from("whatsapp_instances").select("channel, instance_name, dialog360_api_key").eq("id", instanceId).maybeSingle(),
+    supabase.from("whatsapp_instances").select("channel, instance_name, dialog360_api_key, phone_number_id").eq("id", instanceId).maybeSingle(),
   ]);
   if (!contact || !instance) return { error: "Conversa não encontrada." };
   if (!contact.phone) return { error: "Contato sem telefone." };
@@ -205,6 +209,9 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, f
     if (instance.channel === "360dialog") {
       if (!instance.dialog360_api_key) return { error: "Esse número ainda não tem a API key do 360dialog configurada." };
       await sendDialog360Media(instance.dialog360_api_key, contact.phone, kind, mediaUrl);
+    } else if (instance.channel === "metacloud") {
+      if (!instance.phone_number_id) return { error: "Esse número ainda não tem o phone_number_id da Meta configurado." };
+      await sendMetaCloudMedia(instance.phone_number_id, contact.phone, kind, mediaUrl);
     } else {
       if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
       await sendMedia(instance.instance_name, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });

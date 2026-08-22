@@ -259,11 +259,20 @@ export const CONNECTOR_GUIDES: ConnectorGuide[] = [
   },
   {
     nome: "API Oficial via 360dialog (BSP) — Meta",
-    indicadoPara: "Atendimento contínuo com cliente pagante, volume alto, ou operação que não pode correr risco de bloqueio.",
+    indicadoPara: "Clientes já conectados nesse canal (ex.: TB Rio) — mantidos aqui, sem migração automática. Não é mais o padrão pra cliente novo.",
     risco: "Não tem risco de bloqueio por detecção — mas tem restrição por política (nota de qualidade, templates aprovados) se usada fora das regras da Meta.",
     custo:
       "360dialog cobra só a licença fixa (~R$265/mês por número), sem markup — repassa a tarifa da Meta a custo. " +
       "A Meta cobra entrega por mensagem de serviço a partir de 01/10/2026 (~R$0,037/msg no Brasil, zero dentro das 72h de anúncio CTWA). Por CLIENTE, não rateado.",
-    implementado: false,
+    implementado: true,
+  },
+  {
+    nome: "API Oficial direto via Meta (Tech Provider) — Embedded Signup",
+    indicadoPara: "Padrão pra cliente novo a partir de agora (AutomaX é Tech Provider aprovado). Mesmo risco/qualidade da 360dialog, sem intermediário.",
+    risco: "Não tem risco de bloqueio por detecção — mesma restrição por política (nota de qualidade, templates aprovados) da Cloud API.",
+    custo:
+      "Sem licença mensal de BSP (a AutomaX é o próprio Tech Provider) — só a tarifa de entrega da Meta por mensagem cobrável, direto, sem markup de intermediário. " +
+      "Mesma tarifa da Meta que no 360dialog (~R$0,037/msg no Brasil a partir de 01/10/2026), mas sem a licença fixa por número.",
+    implementado: true,
   },
 ];

@@ -4,6 +4,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { resolveStageLabels, getVisibleStages, resolveHiddenStages } from "@/lib/crm-stages";
 import { resolveWorkspacePlan, planHasSdr } from "@/lib/workspace-plan";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
+import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
@@ -84,7 +85,7 @@ export default async function ConversasPage() {
   const agentsById = new Map((agents || []).map((a) => [a.id, a]));
   const contactsById = new Map((contacts || []).map((c) => [c.id, c]));
   const instancesById = new Map(
-    (instances || []).map((i) => [i.id, { id: i.id, name: DEPARTMENT_LABEL[i.department] || i.department, channel: i.channel as "evolution" | "360dialog" }])
+    (instances || []).map((i) => [i.id, { id: i.id, name: DEPARTMENT_LABEL[i.department] || i.department, channel: i.channel as WhatsappChannel }])
   );
 
   const conversationsByKey = new Map<string, Conversation>();

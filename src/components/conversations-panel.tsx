@@ -16,6 +16,7 @@ import {
 import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { STAGE_ORDER } from "@/lib/crm-stages";
+import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
 // Mesma leitura de cor por etapa do Kanban — só exibe aqui, quem move o card é o CRM (arrastar) ou
 // o agente de IA sozinho ([[STATUS: ...]]), nunca essa tela.
@@ -50,7 +51,7 @@ type Contact = {
 };
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
 // Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
-type Instance = { id: string; name: string; channel: "evolution" | "360dialog" };
+type Instance = { id: string; name: string; channel: WhatsappChannel };
 type Message = {
   id: string;
   contact_id: string;

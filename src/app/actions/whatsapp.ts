@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, connectionState, fetchQrCode, instanceNameFor } from "@/lib/evolution";
 import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } from "@/lib/dialog360";
+import { exchangeMetaCloudCode, subscribeMetaCloudWebhook, getMetaCloudPhoneInfo, listMetaCloudTemplates } from "@/lib/metacloud";
 import { headers } from "next/headers";
 
 export type ConnectResult = { error: string | null; qrcodeBase64?: string | null };
@@ -107,10 +108,62 @@ export async function connectDialog360(
   return { error: null, ok: true };
 }
 
+export type MetaCloudConnectResult = { error: string | null; ok?: boolean };
+
+// Finaliza a conexão de um número via Embedded Signup (Tech Provider direto, sem 360dialog no meio).
+// waba_id/phone_number_id chegam do postMessage que o popup da Meta manda pro navegador — não dá pra
+// confiar cegamente nisso vindo do client (poderia ser forjado), então antes de gravar: (1) troca o
+// `code` do FB.login por token, provando que veio do fluxo real de OAuth da Meta, e (2) chama a Graph
+// API com o token de System User da própria AutomaX pra confirmar que esse WABA/número é acessível de
+// verdade — se não for, a chamada falha e nada é salvo.
+export async function connectMetaCloudInstance(
+  wabaId: string,
+  phoneNumberId: string,
+  code: string,
+  department: string
+): Promise<MetaCloudConnectResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+  if (!wabaId || !phoneNumberId || !code) return { error: "Dados incompletos do Embedded Signup — tente conectar de novo." };
+
+  try {
+    await exchangeMetaCloudCode(code);
+    await subscribeMetaCloudWebhook(wabaId);
+    const phoneInfo = await getMetaCloudPhoneInfo(phoneNumberId);
+
+    // Upsert manual em vez de .upsert({onConflict:"phone_number_id"}) de propósito — esse índice é
+    // parcial (where phone_number_id is not null), e o Postgres não infere conflito contra índice
+    // parcial sem repetir o predicado, que o client do Supabase não deixa passar. Mesmo padrão de
+    // "busca, depois insere ou atualiza" que connectDialog360 já usa.
+    const supabase = await createClient();
+    const { data: existing } = await supabase.from("whatsapp_instances").select("id").eq("phone_number_id", phoneNumberId).maybeSingle();
+
+    const row = {
+      workspace_id: workspace.id,
+      department: department || "vendas",
+      channel: "metacloud",
+      meta_waba_id: wabaId,
+      phone_number_id: phoneNumberId,
+      connection_status: "conectado",
+    };
+    const { error } = existing
+      ? await supabase.from("whatsapp_instances").update(row).eq("id", existing.id)
+      : await supabase.from("whatsapp_instances").insert(row);
+    if (error) return { error: `Conectou na Meta, mas não deu pra salvar: ${error.message}` };
+
+    void phoneInfo; // só validação por ora — exibir nome/telefone formatado fica pra quando tiver UI de edição
+    revalidatePath("/configuracoes");
+    return { error: null, ok: true };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
 export type ListTemplatesResult = { error: string | null; templates: Dialog360Template[] };
 
-// Busca os Message Templates aprovados desse número 360dialog, direto na API — usado pelo seletor
-// de template na criação de campanha (em vez do cliente digitar o nome de cabeça).
+// Busca os Message Templates aprovados desse número — 360dialog ou metacloud, mesmo formato de
+// retorno pros dois — usado pelo seletor de template na criação de campanha (em vez do cliente digitar
+// o nome de cabeça).
 export async function listWhatsappTemplates(instanceId: string): Promise<ListTemplatesResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo.", templates: [] };
@@ -118,17 +171,22 @@ export async function listWhatsappTemplates(instanceId: string): Promise<ListTem
   const supabase = await createClient();
   const { data: instance } = await supabase
     .from("whatsapp_instances")
-    .select("channel, dialog360_api_key")
+    .select("channel, dialog360_api_key, meta_waba_id")
     .eq("id", instanceId)
     .eq("workspace_id", workspace.id)
     .maybeSingle();
-  if (!instance || instance.channel !== "360dialog" || !instance.dialog360_api_key) {
-    return { error: "Esse número não usa API oficial (360dialog) ou ainda não tem API key salva.", templates: [] };
-  }
+  if (!instance) return { error: "Número não encontrado.", templates: [] };
 
   try {
-    const templates = await listDialog360Templates(instance.dialog360_api_key);
-    return { error: null, templates };
+    if (instance.channel === "360dialog") {
+      if (!instance.dialog360_api_key) return { error: "Esse número ainda não tem API key do 360dialog salva.", templates: [] };
+      return { error: null, templates: await listDialog360Templates(instance.dialog360_api_key) };
+    }
+    if (instance.channel === "metacloud") {
+      if (!instance.meta_waba_id) return { error: "Esse número ainda não tem WABA vinculado.", templates: [] };
+      return { error: null, templates: await listMetaCloudTemplates(instance.meta_waba_id) };
+    }
+    return { error: "Esse número não usa API oficial (360dialog/Meta).", templates: [] };
   } catch (err) {
     return { error: (err as Error).message, templates: [] };
   }

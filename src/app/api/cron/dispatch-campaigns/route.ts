@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
+import { sendMetaCloudTemplate } from "@/lib/metacloud";
+import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
 import { sendCampaignEmail } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
@@ -187,16 +189,18 @@ export async function GET(req: Request) {
     }
 
     const isDialog360Blast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
+    const isMetacloudBlast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "metacloud";
+    const isOfficialBlast = !isEmail && campaign.mode !== "agent" && isOfficialWhatsappChannel(blastInstance?.channel || "");
 
-    // 360dialog é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
+    // API oficial é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
     // disparo — isso é conversa viva, não campanha); Evolution/agente/e-mail usam o texto livre configurado.
-    const text = isDialog360Blast ? null : pickMessage(campaign.message_templates, contact.name);
-    if (!isDialog360Blast && !text) {
+    const text = isOfficialBlast ? null : pickMessage(campaign.message_templates, contact.name);
+    if (!isOfficialBlast && !text) {
       await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
       continue;
     }
-    if (isDialog360Blast && !campaign.dialog360_template_name) {
-      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem template 360dialog configurado." }).eq("id", recipient.id);
+    if (isOfficialBlast && !campaign.dialog360_template_name) {
+      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem template configurado." }).eq("id", recipient.id);
       continue;
     }
 
@@ -228,6 +232,11 @@ export async function GET(req: Request) {
         skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
         continue;
       }
+    } else if (isMetacloudBlast) {
+      if (!blastInstance!.phone_number_id) {
+        skipped.push(`${campaign.id}:metacloud-sem-credenciais`);
+        continue;
+      }
     } else if (!instanceName) {
       skipped.push(`${campaign.id}:sem-instancia`);
       continue;
@@ -237,7 +246,7 @@ export async function GET(req: Request) {
 
     // Conteúdo gravado no histórico da conversa (Conversas/CRM) — pro template, guarda uma referência
     // legível já que o corpo real fica só na Meta, não temos o texto renderizado aqui.
-    const loggedContent = isDialog360Blast ? `[Template 360dialog: ${campaign.dialog360_template_name}]` : (text as string);
+    const loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
 
     try {
       if (isEmail) {
@@ -255,6 +264,15 @@ export async function GET(req: Request) {
         const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
         await sendDialog360Template(
           blastInstance!.dialog360_api_key!,
+          contact.phone!,
+          campaign.dialog360_template_name!,
+          campaign.dialog360_template_lang || "pt_BR",
+          bodyParams
+        );
+      } else if (isMetacloudBlast) {
+        const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
+        await sendMetaCloudTemplate(
+          blastInstance!.phone_number_id!,
           contact.phone!,
           campaign.dialog360_template_name!,
           campaign.dialog360_template_lang || "pt_BR",
