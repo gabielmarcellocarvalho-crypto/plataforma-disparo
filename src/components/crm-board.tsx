@@ -467,8 +467,11 @@ export function CrmBoard({
         />
       )}
 
+      {/* Sem minWidth:max-content de propósito — com flex-1 + min-w, poucas colunas esticam pra
+          preencher a largura toda; muitas colunas encolhem até o min-w e só aí o overflow-x-auto
+          do wrapper entra em ação (scroll horizontal), igual um board profissional de verdade. */}
       <div className="flex-1 min-h-0 overflow-x-auto">
-        <div className="flex gap-4 h-full pb-2" style={{ minWidth: "max-content" }}>
+        <div className="flex gap-3 h-full min-w-full pb-2">
           {visibleStages.map((stage) => {
             const cards = filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage);
             return (
@@ -476,7 +479,7 @@ export function CrmBoard({
                 key={stage}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(stage)}
-                className="w-[268px] shrink-0 flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
+                className="flex-1 min-w-[264px] max-w-[360px] flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
               >
                 <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[stage]}`} aria-hidden />

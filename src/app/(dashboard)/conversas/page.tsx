@@ -125,7 +125,7 @@ export default async function ConversasPage() {
   });
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-3.5rem)] min-h-0">
+    <div className="flex flex-col gap-3 h-full min-h-0">
       <ConversationsPanel
         conversations={conversations}
         stageLabels={stageLabels}

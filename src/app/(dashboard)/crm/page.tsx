@@ -26,7 +26,7 @@ export default async function CrmPage() {
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
 
   return (
-    <div className="flex flex-col gap-5 h-[calc(100vh-3.5rem)] min-h-0">
+    <div className="flex flex-col gap-3 h-full min-h-0">
       <CrmBoard contacts={rows} stageLabels={stageLabels} hiddenStages={hiddenStages} workspaceId={workspace?.id ?? ""} />
     </div>
   );

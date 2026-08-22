@@ -143,7 +143,7 @@ function NavLink({
   return (
     <Link
       href={href}
-      className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+      className={`group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-semibold transition-colors ${
         active ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
       }`}
     >
@@ -196,13 +196,13 @@ export function Sidebar({
 
   return (
     <aside
-      className={`w-[250px] flex flex-col fixed inset-y-0 left-0 z-40 p-3.5 gap-1 text-sidebar-text overflow-y-auto transition-transform duration-200 ease-out lg:translate-x-0 ${
+      className={`w-[230px] flex flex-col fixed inset-y-0 left-0 z-40 p-3 gap-1 text-sidebar-text overflow-y-auto transition-transform duration-200 ease-out lg:translate-x-0 ${
         open ? "translate-x-0" : "-translate-x-full"
       }`}
       style={{ background: "linear-gradient(180deg, var(--color-sidebar) 0%, var(--color-sidebar-deep) 100%)" }}
     >
-      <div className="flex items-center gap-2.5 px-2 py-3 mb-3">
-        <Image src="/logo-automax.png" alt="AutomaX" width={40} height={27} className="shrink-0" priority />
+      <div className="flex items-center gap-2.5 px-1.5 py-2.5 mb-2.5">
+        <Image src="/logo-automax.png" alt="AutomaX" width={36} height={24} className="shrink-0" priority />
         <div className="leading-tight">
           <div className="font-extrabold text-[15px] text-white">AutomaX</div>
           <div className="text-[11px] text-sidebar-muted">Automatize processos. Multiplique resultados</div>
