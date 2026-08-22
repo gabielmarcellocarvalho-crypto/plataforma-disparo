@@ -13,7 +13,6 @@ declare global {
         opts: { config_id: string; response_type: string; override_default_response_type: boolean; extras: Record<string, unknown> }
       ) => void;
     };
-    fbAsyncInit?: () => void;
   }
 }
 
@@ -39,12 +38,17 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
 
-  useEffect(() => {
-    window.fbAsyncInit = () => {
-      window.FB?.init({ appId: appId || "", xfbml: false, version: "v21.0" });
-      setSdkReady(true);
-    };
-  }, [appId]);
+  // Inicializa via onReady do <Script> em vez de window.fbAsyncInit de propósito — fbAsyncInit é o
+  // padrão "clássico" do SDK, mas depende de definir esse global ANTES do script carregar; com
+  // next/script (injeta o <script> de forma assíncrona, fora da ordem normal de render), dava pra
+  // esse efeito rodar depois do script já ter carregado e chamado fbAsyncInit — aí ele nunca mais
+  // dispara, sdkReady fica false pra sempre e o botão "Conectar" fica desabilitado (sem avisar por
+  // quê, só parece "não faz nada" ao clicar). onReady do next/script dispara certo mesmo se o script
+  // já tiver carregado antes (troca de página/remount), o que resolve os dois casos.
+  function handleSdkLoad() {
+    window.FB?.init({ appId: appId || "", xfbml: false, version: "v21.0" });
+    setSdkReady(true);
+  }
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -112,14 +116,17 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
 
   return (
     <div className="flex flex-col gap-2">
-      <Script src="https://connect.facebook.net/en_US/sdk.js" strategy="afterInteractive" />
+      {/* onReady (não onLoad) de propósito — dispara tanto no primeiro carregamento quanto em
+          remounts com o script já carregado (troca de workspace, reabrir o formulário), diferente de
+          onLoad que só dispara 1x na vida da página. */}
+      <Script src="https://connect.facebook.net/en_US/sdk.js" strategy="afterInteractive" onReady={handleSdkLoad} />
       <button
         type="button"
         onClick={handleClick}
         disabled={!sdkReady || pending}
         className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md w-fit cursor-pointer disabled:opacity-60"
       >
-        {pending ? "Conectando…" : "Conectar via Meta"}
+        {pending ? "Conectando…" : sdkReady ? "Conectar via Meta" : "Carregando…"}
       </button>
       {error && <p className="text-sm text-danger font-medium">{error}</p>}
     </div>
