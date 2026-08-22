@@ -54,7 +54,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
     const steps = (campaign.sequence_steps || []) as SequenceStep[];
     if (steps.length === 0 || !campaign.cta_phone) continue;
 
-    const cfg = (campaign.ramp_config || {}) as { days?: number[]; hourStart?: number; hourEnd?: number };
+    const cfg = (campaign.ramp_config || {}) as { days?: number[]; hourStart?: number; hourEnd?: number; maxSendsPerRun?: number };
     const days = cfg.days?.length ? cfg.days : DEFAULT_DAYS;
     const hourStart = cfg.hourStart ?? 8;
     const hourEnd = cfg.hourEnd ?? 12;
@@ -66,13 +66,20 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
     const logoUrl = wsRow?.logo_url || null;
     if (!emailFrom) continue; // sem remetente configurado — não dá pra mandar nada dessa campanha
 
+    // Teto por campanha (ramp_config.maxSendsPerRun) — opcional, pra espalhar uma base grande em
+    // mais de uma janela (ex.: terça+quarta em vez de estourar tudo terça de manhã) sem afetar o
+    // ritmo de outras campanhas de sequência rodando no mesmo tick.
+    const remaining = MAX_SENDS_PER_RUN - sent;
+    const campaignCap = cfg.maxSendsPerRun && cfg.maxSendsPerRun > 0 ? Math.min(cfg.maxSendsPerRun, remaining) : remaining;
+    let sentThisCampaign = 0;
+
     const { data: recipients } = await supabase
       .from("campaign_recipients")
       .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .lte("next_step_at", now.toISOString()) // NULL não passa aqui — ver query separada abaixo pro 1º envio
-      .limit(MAX_SENDS_PER_RUN - sent);
+      .limit(campaignCap);
 
     const { data: freshRecipients } = await supabase
       .from("campaign_recipients")
@@ -80,12 +87,12 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .is("next_step_at", null) // ainda não recebeu nenhum passo — 1º envio (Dia 1)
-      .limit(MAX_SENDS_PER_RUN - sent);
+      .limit(campaignCap);
 
-    const pending = [...(freshRecipients || []), ...(recipients || [])];
+    const pending = [...(freshRecipients || []), ...(recipients || [])].slice(0, campaignCap);
 
     for (const r of pending) {
-      if (sent >= MAX_SENDS_PER_RUN) {
+      if (sent >= MAX_SENDS_PER_RUN || sentThisCampaign >= campaignCap) {
         skipped++;
         continue;
       }
@@ -129,6 +136,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
           })
           .eq("id", r.id);
         sent++;
+        sentThisCampaign++;
       } catch (err) {
         await supabase
           .from("campaign_recipients")
