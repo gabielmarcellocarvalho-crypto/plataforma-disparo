@@ -37,6 +37,7 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   const [ctaPhone, setCtaPhone] = useState("");
   const [ctaMessage, setCtaMessage] = useState("");
   const [sequenceDays, setSequenceDays] = useState<number[]>([2, 3, 4]);
+  const [blastDays, setBlastDays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [instanceId, setInstanceId] = useState(whatsappInstances[0]?.id || "");
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
@@ -75,6 +76,9 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   }
   function toggleSequenceDay(day: number) {
     setSequenceDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()));
+  }
+  function toggleBlastDay(day: number) {
+    setBlastDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()));
   }
 
   useEffect(() => {
@@ -460,30 +464,50 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
-                  Delay mín. (s)
-                </label>
-                <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+            <div className="flex flex-col gap-3">
+              <input type="hidden" name="blast_days" value={JSON.stringify(blastDays)} />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
+                    Delay mín. (s)
+                  </label>
+                  <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
+                    Delay máx. (s)
+                  </label>
+                  <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
+                    Janela início (h)
+                  </label>
+                  <input id="hour_start" name="hour_start" type="number" defaultValue={9} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
+                    Janela fim (h)
+                  </label>
+                  <input id="hour_end" name="hour_end" type="number" defaultValue={20} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                </div>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
-                  Delay máx. (s)
-                </label>
-                <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
-                  Janela início (h)
-                </label>
-                <input id="hour_start" name="hour_start" type="number" defaultValue={9} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
-                  Janela fim (h)
-                </label>
-                <input id="hour_end" name="hour_end" type="number" defaultValue={20} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                <span className="text-xs font-semibold text-text-muted">Dias de envio</span>
+                <div className="flex gap-1.5">
+                  {WEEK_DAY_LABELS.map((d) => (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => toggleBlastDay(d.value)}
+                      className={`text-[11px] font-bold px-2 py-1.5 rounded-md border cursor-pointer ${
+                        blastDays.includes(d.value) ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

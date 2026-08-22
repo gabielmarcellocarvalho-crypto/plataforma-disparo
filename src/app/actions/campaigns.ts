@@ -29,6 +29,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const ctaMessage = String(formData.get("cta_message") || "").trim() || null;
   const sequenceDaysRaw = String(formData.get("sequence_days") || "[]");
   const sequenceStepsRaw = String(formData.get("sequence_steps") || "[]");
+  const blastDaysRaw = String(formData.get("blast_days") || "[]");
 
   if (!name) return { error: "Informe um nome pra campanha." };
   if (channel !== "whatsapp" && channel !== "email") return { error: "Canal inválido." };
@@ -71,6 +72,20 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       sequenceDays = [];
     }
     if (sequenceDays.length === 0) return { error: "Escolha pelo menos 1 dia de envio." };
+  }
+
+  // Disparo único/agente: dias da semana em que o cron pode processar a fila dessa campanha —
+  // mesmo campo ramp_config.days já usado pela sequência, só que escolhido na tela em vez de fixo.
+  let blastDays: number[] = [1, 2, 3, 4, 5, 6];
+  if (mode !== "sequence") {
+    try {
+      const parsedDays = JSON.parse(blastDaysRaw);
+      const filtered = Array.isArray(parsedDays) ? parsedDays.filter((d) => typeof d === "number" && d >= 0 && d <= 6) : [];
+      if (filtered.length === 0) return { error: "Escolha pelo menos 1 dia de envio." };
+      blastDays = filtered;
+    } catch {
+      return { error: "Escolha pelo menos 1 dia de envio." };
+    }
   }
 
   const templates = templatesRaw
@@ -146,7 +161,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
         delaySeconds: [delayMin, delayMax],
         hourStart,
         hourEnd,
-        days: mode === "sequence" ? sequenceDays : [1, 2, 3, 4, 5, 6],
+        days: mode === "sequence" ? sequenceDays : blastDays,
         ramp: [50, 80, 120, 170, 230, 300],
       },
       status: "rascunho",
