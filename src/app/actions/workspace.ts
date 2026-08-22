@@ -95,8 +95,10 @@ export async function uploadWorkspaceLogo(workspaceId: string, formData: FormDat
 
   const { data: pub } = admin.storage.from("workspace-logos").getPublicUrl(path);
 
-  // SVG não tem bitmap decodificável pelo extrator — mantém a cor de marca já salva (se houver).
-  const brandColor = file.type === "image/svg+xml" ? undefined : await extractDominantColor(buffer);
+  // SVG/WEBP não têm decodificador puro-JS aqui (só PNG/JPEG) — mantém a cor de marca já salva (se houver)
+  // em vez de apagar. Só PNG/JPEG recalculam de fato.
+  const decodable = file.type === "image/png" || file.type === "image/jpeg";
+  const brandColor = decodable ? await extractDominantColor(buffer, file.type) : undefined;
 
   const update: { logo_url: string; brand_color?: string | null } = { logo_url: pub.publicUrl };
   if (brandColor !== undefined) update.brand_color = brandColor;

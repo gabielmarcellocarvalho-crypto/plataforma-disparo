@@ -1,20 +1,36 @@
-import sharp from "sharp";
+import { PNG } from "pngjs";
+import jpeg from "jpeg-js";
 
 // Extrai a cor dominante "de marca" de uma logo — não é uma média simples do bitmap (isso ia dar um
 // cinza/branco lavado, já que a maioria das logos tem bastante fundo branco/transparente). Em vez
-// disso: reduz a imagem, ignora pixels quase-brancos, quase-pretos e transparentes, agrupa o resto
-// em baldes de cor e escolhe o balde mais frequente entre os mais saturados.
-export async function extractDominantColor(buffer: Buffer): Promise<string | null> {
-  try {
-    const { data, info } = await sharp(buffer)
-      .resize(64, 64, { fit: "inside" })
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+// disso: ignora pixels quase-brancos, quase-pretos e transparentes, agrupa o resto em baldes de cor
+// e escolhe o balde mais frequente.
+//
+// Decodificação 100% JS (pngjs/jpeg-js, sem binário nativo) de propósito — um extrator "bonzinho" que
+// depende de biblioteca nativa (ex.: sharp) quebra em produção sempre que o runtime serverless não
+// carrega o binário certo (já aconteceu aqui: ERR_DLOPEN_FAILED faltando libvips na Vercel). Preferir
+// a solução mais simples e portátil, mesmo que decodifique menos formatos, evita essa classe de erro.
+function decodeRawRgba(buffer: Buffer, mimetype: string): { data: Buffer | Uint8Array; width: number; height: number } | null {
+  if (mimetype === "image/png") {
+    const png = PNG.sync.read(buffer);
+    return { data: png.data, width: png.width, height: png.height };
+  }
+  if (mimetype === "image/jpeg") {
+    const img = jpeg.decode(buffer, { useTArray: true });
+    return { data: img.data, width: img.width, height: img.height };
+  }
+  return null; // webp/svg — sem decodificador puro-JS disponível, cor de marca não é recalculada
+}
 
+export async function extractDominantColor(buffer: Buffer, mimetype: string): Promise<string | null> {
+  try {
+    const decoded = decodeRawRgba(buffer, mimetype);
+    if (!decoded) return null;
+
+    const { data } = decoded;
     const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
 
-    for (let i = 0; i < data.length; i += info.channels) {
+    for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
