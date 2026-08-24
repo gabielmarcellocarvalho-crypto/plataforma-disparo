@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, type LlmProvider } from "@/app/actions/agents";
+import { useRouter } from "next/navigation";
+import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
@@ -68,12 +69,15 @@ export function AgentEditView({
   knowledge: KnowledgeDoc[];
   canManage: boolean;
 }) {
+  const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [delayMin, setDelayMin] = useState(agent.reply_delay_min_seconds);
   const [delayMax, setDelayMax] = useState(agent.reply_delay_max_seconds);
   const [delaySaved, setDelaySaved] = useState(false);
   const [delayError, setDelayError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const isInstanceLinked = Boolean(agent.whatsapp_instance_channel);
@@ -101,6 +105,15 @@ export function AgentEditView({
   function handleToggleStatus() {
     startTransition(async () => {
       await toggleAgentStatus(agent.id, agent.status === "ativo" ? "pausado" : "ativo");
+    });
+  }
+
+  function handleDelete() {
+    setDeleteError(null);
+    startTransition(async () => {
+      const result = await deleteAgent(agent.id);
+      if (result.error) setDeleteError(result.error);
+      else router.push("/agentes");
     });
   }
 
@@ -274,6 +287,49 @@ export function AgentEditView({
         <div className="bg-surface border border-border rounded-2xl shadow-sm p-6">
           <h2 className="text-sm font-bold mb-3">Material de estudo do agente ({knowledge.length})</h2>
           <AgentKnowledgeLibrary agentId={agent.id} docs={knowledge} />
+        </div>
+      )}
+
+      {canManage && (
+        <div className="bg-danger-soft border border-danger/30 rounded-2xl shadow-sm p-6">
+          <h2 className="text-sm font-bold text-danger mb-1">Remover agente</h2>
+          <p className="text-xs text-danger/80 mb-3">
+            Apaga o agente e todo o histórico de conversa, biblioteca de mídia e material de estudo dele.
+            {isInstanceLinked
+              ? " O número em Configurações continua conectado, só deixa de ter agente vinculado."
+              : " A instância do WhatsApp fica desconectada."}
+            {" "}Não dá pra desfazer.
+          </p>
+          {!confirmingDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="text-xs font-bold text-danger border border-danger/40 px-3 py-2 rounded-md cursor-pointer hover:bg-danger/10"
+            >
+              Remover agente
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-danger">Tem certeza?</span>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={pending}
+                className="text-xs font-bold px-3 py-1.5 rounded-md text-text-muted hover:bg-bg cursor-pointer disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={pending}
+                className="text-xs font-bold px-3 py-1.5 rounded-md bg-danger text-white cursor-pointer disabled:opacity-60"
+              >
+                {pending ? "Removendo…" : "Sim, remover"}
+              </button>
+            </div>
+          )}
+          {deleteError && <p className="text-xs text-danger font-medium mt-2">{deleteError}</p>}
         </div>
       )}
     </div>

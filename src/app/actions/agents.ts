@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentWorkspace } from "@/lib/workspace";
+import { getCurrentWorkspace, isCurrentUserColaborador } from "@/lib/workspace";
 import { createInstance, setWebhook, fetchQrCode, fetchInstanceInfo, agentInstanceNameFor } from "@/lib/evolution";
 import { buildSystemPrompt, normalizeAgentConfig, type AgentConfig } from "@/lib/agent-prompt";
 import { extractKnowledgeText } from "@/lib/agent-knowledge";
@@ -116,6 +116,26 @@ export async function refreshAgentStatus(agentId: string) {
   }
 
   revalidatePath("/agentes");
+}
+
+export type DeleteAgentResult = { error: string | null; ok?: boolean };
+
+// Apaga o agente E tudo que depende dele por cascade no banco: histórico de conversa (messages),
+// biblioteca de mídia (agent_media) e documentos (agent_knowledge) desse agente especificamente —
+// não mexe no contato em si (fica em Contatos/CRM normalmente) nem no número em Configurações, se o
+// agente usava um número reaproveitado de lá (whatsapp_instance_id só desvincula, a instância
+// continua conectada pra outro uso). Campanha modo "Agente de IA" que apontava pra esse agente fica
+// com agent_id nulo (ON DELETE SET NULL) — para de funcionar até apontar pra outro agente.
+// Não desconecta a instância Evolution no lado da Evolution API (fica órfã lá, sem efeito prático).
+export async function deleteAgent(agentId: string): Promise<DeleteAgentResult> {
+  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode remover um agente." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("agents").delete().eq("id", agentId);
+  if (error) return { error: "Não foi possível remover o agente." };
+
+  revalidatePath("/agentes");
+  return { error: null, ok: true };
 }
 
 export type LlmProvider = "claude" | "gemini";
