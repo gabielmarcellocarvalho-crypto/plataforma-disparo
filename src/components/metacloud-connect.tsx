@@ -52,14 +52,31 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
-      if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") return;
+      if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") {
+        // Log em vez de ignorar em silêncio — se a Meta mudar o domínio que usa pro popup, isso é o
+        // único jeito de perceber (não tem erro nenhum em lugar nenhum, só "nada acontece").
+        if (typeof event.data === "string" ? event.data.includes("WA_EMBEDDED_SIGNUP") : (event.data as { type?: string })?.type === "WA_EMBEDDED_SIGNUP") {
+          console.warn("Embedded Signup: mensagem WA_EMBEDDED_SIGNUP recebida de origem não esperada:", event.origin);
+        }
+        return;
+      }
+      // A Meta às vezes manda event.data já como objeto (não serializado), dependendo da versão do
+      // SDK — JSON.parse quebraria com TypeError nesse caso (parse só aceita string), e como isso
+      // ficava dentro de um try/catch mudo, o postMessage inteiro era descartado sem deixar rastro.
       let payload: EmbeddedSignupMessage;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
+      if (typeof event.data === "string") {
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+      } else if (event.data && typeof event.data === "object") {
+        payload = event.data as EmbeddedSignupMessage;
+      } else {
         return;
       }
       if (payload.type !== "WA_EMBEDDED_SIGNUP") return;
+      console.log("Embedded Signup: evento recebido —", payload.event, payload.data);
 
       if (payload.event === "FINISH" && payload.data?.waba_id && payload.data?.phone_number_id) {
         const code = codeRef.current;
