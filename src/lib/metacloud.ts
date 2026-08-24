@@ -98,9 +98,12 @@ export async function subscribeMetaCloudWebhook(wabaId: string): Promise<void> {
 // como verificação server-side de que o popup foi legítimo (o code prova que veio do fluxo real da
 // Meta). O envio em si usa o token de System User, não esse token de curta duração.
 export async function exchangeMetaCloudCode(code: string): Promise<void> {
-  const appId = process.env.META_APP_ID;
+  // NEXT_PUBLIC_META_APP_ID de propósito — o App ID não é segredo (já vai pro navegador de qualquer
+  // jeito, é usado no FB.init do botão de conectar), então não faz sentido duplicar numa variável
+  // server-only separada. META_APP_SECRET esse sim é sensível e só existe no servidor.
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const appSecret = process.env.META_APP_SECRET;
-  if (!appId || !appSecret) throw new Error("META_APP_ID/META_APP_SECRET não configurados.");
+  if (!appId || !appSecret) throw new Error("NEXT_PUBLIC_META_APP_ID/META_APP_SECRET não configurados.");
   const url = `${BASE_URL}/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${encodeURIComponent(code)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Falha ao validar code do Embedded Signup: ${res.status} ${await res.text().catch(() => "")}`);
