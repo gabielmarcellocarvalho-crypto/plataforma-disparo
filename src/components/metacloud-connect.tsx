@@ -33,7 +33,13 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   const [sdkReady, setSdkReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // O code (callback do FB.login, só dispara quando o popup fecha) e o waba_id/phone_number_id
+  // (postMessage FINISH, mandado pelo popup um pouco ANTES de fechar) chegam em ordem não garantida
+  // — na prática o postMessage costuma chegar primeiro. Guarda os dois em refs (não state, pra não
+  // depender de re-render) e só finaliza quando os dois já tiverem chegado, não importa a ordem.
   const codeRef = useRef<string | null>(null);
+  const finishDataRef = useRef<{ wabaId: string; phoneNumberId: string } | null>(null);
+  const finalizedRef = useRef(false);
 
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
@@ -48,6 +54,26 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   function handleSdkLoad() {
     window.FB?.init({ appId: appId || "", xfbml: false, version: "v21.0" });
     setSdkReady(true);
+  }
+
+  // Chamado depois que QUALQUER uma das duas peças (code ou waba/phone) chega — só age de verdade
+  // quando as duas já estiverem disponíveis. `finalizedRef` evita chamar 2x se por algum motivo o
+  // postMessage disparar mais de uma vez (a Meta já fez isso em alguns navegadores).
+  function tryFinalize() {
+    if (finalizedRef.current) return;
+    const code = codeRef.current;
+    const finish = finishDataRef.current;
+    if (!code || !finish) return;
+    finalizedRef.current = true;
+    startTransition(async () => {
+      const result = await connectMetaCloudInstance(finish.wabaId, finish.phoneNumberId, code, department);
+      if (result.error) {
+        setError(result.error);
+        finalizedRef.current = false; // permite tentar de novo sem precisar reabrir o popup
+      } else {
+        onConnected?.();
+      }
+    });
   }
 
   useEffect(() => {
@@ -79,17 +105,8 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
       console.log("Embedded Signup: evento recebido —", payload.event, payload.data);
 
       if (payload.event === "FINISH" && payload.data?.waba_id && payload.data?.phone_number_id) {
-        const code = codeRef.current;
-        if (!code) {
-          setError("Não recebemos o código de autorização da Meta — tenta conectar de novo.");
-          return;
-        }
-        const { waba_id: wabaId, phone_number_id: phoneNumberId } = payload.data;
-        startTransition(async () => {
-          const result = await connectMetaCloudInstance(wabaId, phoneNumberId, code, department);
-          if (result.error) setError(result.error);
-          else onConnected?.();
-        });
+        finishDataRef.current = { wabaId: payload.data.waba_id, phoneNumberId: payload.data.phone_number_id };
+        tryFinalize();
       } else if (payload.event === "CANCEL") {
         setError("Conexão cancelada.");
       } else if (payload.event === "ERROR") {
@@ -103,15 +120,28 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   function handleClick() {
     setError(null);
     codeRef.current = null;
+    finishDataRef.current = null;
+    finalizedRef.current = false;
     if (!window.FB || !configId) {
       setError("Embedded Signup não está configurado (faltam NEXT_PUBLIC_META_APP_ID/NEXT_PUBLIC_META_CONFIG_ID).");
       return;
     }
     window.FB.login(
       (response) => {
-        // FB.login com response_type "code" devolve o code aqui — o waba_id/phone_number_id chegam
-        // depois, via postMessage (handleMessage acima). Guarda o code pra usar quando o postMessage vier.
-        if (response.authResponse?.code) codeRef.current = response.authResponse.code;
+        // Só dispara quando o popup fecha — pode chegar antes OU depois do postMessage FINISH
+        // (handleMessage acima), por isso passa pelo mesmo tryFinalize em vez de agir sozinho aqui.
+        if (response.authResponse?.code) {
+          codeRef.current = response.authResponse.code;
+          tryFinalize();
+        } else if (!finalizedRef.current) {
+          // Callback só dispara 1x (popup fechou) — sem code aqui não tem como completar depois,
+          // mesmo que o FINISH (waba/phone) já tenha chegado.
+          setError(
+            finishDataRef.current
+              ? "Recebemos a confirmação do número, mas não veio o código de autorização da Meta — tenta conectar de novo."
+              : "Conexão não foi concluída — tenta de novo e espera a Meta fechar o popup sozinha."
+          );
+        }
       },
       {
         config_id: configId,
