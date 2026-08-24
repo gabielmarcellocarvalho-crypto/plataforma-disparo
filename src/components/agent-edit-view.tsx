@@ -135,7 +135,9 @@ export function AgentEditView({
             <AgentAvatar photoUrl={agent.photo_url} name={agent.name} size="lg" />
             <div className="min-w-0">
               <h1 className="text-xl font-extrabold tracking-tight truncate">{agent.name}</h1>
-              <p className="text-sm text-text-muted truncate">{formatPhone(agent.phone_number) || "sem número conectado"}</p>
+              <p className="text-sm text-text-muted truncate">
+                {isInstanceLinked ? "Número conectado em Configurações" : formatPhone(agent.phone_number) || "sem número conectado"}
+              </p>
             </div>
           </div>
 

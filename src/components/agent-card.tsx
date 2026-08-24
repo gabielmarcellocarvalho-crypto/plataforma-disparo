@@ -66,7 +66,9 @@ export function AgentCard({
           <AgentAvatar photoUrl={agent.photo_url} name={agent.name} />
           <div className="min-w-0">
             <div className="font-bold text-[15px] truncate">{agent.name}</div>
-            <div className="text-xs text-text-muted truncate">{formatPhone(agent.phone_number) || "sem número conectado"}</div>
+            <div className="text-xs text-text-muted truncate">
+              {isInstanceLinked ? "Número conectado em Configurações" : formatPhone(agent.phone_number) || "sem número conectado"}
+            </div>
           </div>
         </div>
 
