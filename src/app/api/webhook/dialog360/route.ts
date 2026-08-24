@@ -1,6 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, type Dialog360WebhookBody } from "@/lib/dialog360";
+import { runAgentTurn, type Agent } from "@/lib/agent-turn";
+import { type AgentChannel } from "@/lib/agent-channel";
 
 // Webhook da API oficial (Cloud API da Meta) — rota separada da do Evolution porque o formato do
 // payload é completamente diferente (não é o formato da Evolution/Baileys). Serve os DOIS canais
@@ -56,10 +58,34 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
   for (const msg of incoming) {
     const { data: instance } = await supabase
       .from("whatsapp_instances")
-      .select("id, workspace_id")
+      .select("id, workspace_id, channel, dialog360_api_key")
       .eq("phone_number_id", msg.phoneNumberId)
       .maybeSingle();
     if (!instance) continue; // número não cadastrado em nenhum workspace — ignora
+
+    // Número com agente de IA vinculado (1 número servindo disparo + SDR, ex.: campanha manda o
+    // template e o mesmo número depois conduz a conversa) — passa pro núcleo compartilhado do agente
+    // em vez de só logar. Sem agente vinculado, segue o comportamento de sempre (linha abaixo).
+    const { data: agentRow } = await supabase
+      .from("agents")
+      .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider")
+      .eq("whatsapp_instance_id", instance.id)
+      .maybeSingle();
+
+    if (agentRow) {
+      const channel: AgentChannel =
+        instance.channel === "360dialog"
+          ? { kind: "360dialog", apiKey: instance.dialog360_api_key || "" }
+          : { kind: "metacloud", phoneNumberId: msg.phoneNumberId };
+      if (channel.kind === "360dialog" && !channel.apiKey) continue; // instância mal configurada — não dá pra responder
+      await runAgentTurn(supabase, agentRow as Agent, channel, msg.from, msg.contactName, {
+        text: msg.text,
+        images: [],
+        unsupported: null,
+        media: null,
+      });
+      continue;
+    }
 
     const { data: contact } = await supabase
       .from("contacts")

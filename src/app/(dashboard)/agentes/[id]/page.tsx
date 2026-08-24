@@ -14,14 +14,28 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
   const { isColaborador } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const { data: agent } = await supabase
+  const { data: agentRow, error: agentError } = await supabase
     .from("agents")
     .select(
-      "id, name, system_prompt, config, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider"
+      "id, name, system_prompt, config, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider, whatsapp_instances(channel)"
     )
     .eq("id", id)
     .maybeSingle();
-  if (!agent) notFound();
+
+  // Erro real de consulta (ex.: migration pendente) NUNCA deve virar 404 — um agente que existe de
+  // verdade sumiria da tela como se tivesse sido apagado.
+  if (agentError) {
+    return (
+      <div className="bg-danger-soft border border-danger/30 rounded-lg p-6 text-danger">
+        <p className="font-bold text-sm">Não foi possível carregar o agente.</p>
+        <p className="text-xs mt-1 font-mono">{agentError.message}</p>
+      </div>
+    );
+  }
+  if (!agentRow) notFound();
+
+  const linkedInstance = agentRow.whatsapp_instances as unknown as { channel: string } | null;
+  const agent = { ...agentRow, whatsapp_instance_channel: (linkedInstance?.channel as "360dialog" | "metacloud" | undefined) ?? null };
 
   const [{ data: usageRows }, { data: mediaRows }, { data: knowledgeRows }] = await Promise.all([
     supabase

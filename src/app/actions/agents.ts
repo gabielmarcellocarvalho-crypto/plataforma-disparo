@@ -23,10 +23,41 @@ export async function createAgent(_prevState: CreateAgentState, formData: FormDa
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
 
-  // Gera o id no client pra já mandar o evolution_instance_name (derivado do id) no mesmo insert —
-  // a coluna é NOT NULL, não dá pra criar a linha e só depois preencher.
-  const agentId = crypto.randomUUID();
   const supabase = await createClient();
+
+  // Agente pode reaproveitar um número já conectado em Configurações (API oficial) em vez de ter
+  // instância Evolution própria — mesmo número dispara campanha em massa e conduz a conversa depois.
+  const whatsappInstanceId = String(formData.get("whatsapp_instance_id") || "").trim() || null;
+  if (whatsappInstanceId) {
+    const { data: instance } = await supabase
+      .from("whatsapp_instances")
+      .select("id, channel")
+      .eq("id", whatsappInstanceId)
+      .eq("workspace_id", workspace.id)
+      .maybeSingle();
+    if (!instance) return { error: "Número selecionado não encontrado nesse workspace." };
+    if (instance.channel === "evolution") return { error: "Número Evolution não pode ser reaproveitado aqui — cada agente Evolution tem sua própria instância." };
+
+    const { error } = await supabase.from("agents").insert({
+      workspace_id: workspace.id,
+      name,
+      system_prompt: buildSystemPrompt(config),
+      config,
+      evolution_instance_name: null,
+      whatsapp_instance_id: whatsappInstanceId,
+      connection_status: "conectado", // o número já está conectado desde Configurações
+    });
+    // Índice único (idx_agents_whatsapp_instance) barra 2 agentes no mesmo número — mensagem clara
+    // em vez do erro cru do Postgres, caso outro agente tenha pego esse número entre a checagem acima
+    // e o insert (corrida rara, mas possível).
+    if (error) return { error: error.message.includes("idx_agents_whatsapp_instance") ? "Esse número já está em uso por outro agente." : "Não foi possível criar o agente." };
+
+    revalidatePath("/agentes");
+    return { error: null, ok: true };
+  }
+
+  // Gera o id no client pra já mandar o evolution_instance_name (derivado do id) no mesmo insert.
+  const agentId = crypto.randomUUID();
   const { data, error } = await supabase
     .from("agents")
     .insert({
@@ -51,6 +82,7 @@ export async function connectAgent(agentId: string): Promise<ConnectResult> {
   const supabase = await createClient();
   const { data: agent } = await supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle();
   if (!agent) return { error: "Agente não encontrado." };
+  if (!agent.evolution_instance_name) return { error: "Esse agente usa um número já conectado em Configurações — não tem QR code aqui." };
 
   try {
     const { qrcodeBase64 } = await createInstance(agent.evolution_instance_name);
@@ -71,7 +103,7 @@ export async function connectAgent(agentId: string): Promise<ConnectResult> {
 export async function refreshAgentStatus(agentId: string) {
   const supabase = await createClient();
   const { data: agent } = await supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle();
-  if (!agent) return;
+  if (!agent || !agent.evolution_instance_name) return; // sem instância Evolution — status vem de Configurações, não daqui
 
   try {
     const { connectionStatus, phoneNumber, photoUrl } = await fetchInstanceInfo(agent.evolution_instance_name);

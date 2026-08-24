@@ -8,7 +8,8 @@ import { AgentAvatar } from "@/components/agent-avatar";
 type Agent = {
   id: string;
   name: string;
-  evolution_instance_name: string;
+  evolution_instance_name: string | null;
+  whatsapp_instance_channel: "360dialog" | "metacloud" | null;
   phone_number: string | null;
   photo_url: string | null;
   connection_status: string;
@@ -41,7 +42,10 @@ export function AgentCard({
 }) {
   const [pending, startTransition] = useTransition();
 
-  const style = CONNECTION_STYLES[agent.connection_status] || DEFAULT_CONNECTION_STYLE;
+  const isInstanceLinked = Boolean(agent.whatsapp_instance_channel);
+  const style = isInstanceLinked
+    ? { label: `Conectado (${agent.whatsapp_instance_channel === "360dialog" ? "360dialog" : "Meta"})`, bg: "bg-success-soft", text: "text-success", dot: "bg-success" }
+    : CONNECTION_STYLES[agent.connection_status] || DEFAULT_CONNECTION_STYLE;
 
   function handleToggleStatus() {
     startTransition(async () => {
@@ -94,14 +98,16 @@ export function AgentCard({
           <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} aria-hidden />
           {style.label}
         </span>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={pending}
-          className="text-xs font-semibold text-primary-strong hover:underline disabled:opacity-60 cursor-pointer"
-        >
-          Atualizar status
-        </button>
+        {!isInstanceLinked && (
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={pending}
+            className="text-xs font-semibold text-primary-strong hover:underline disabled:opacity-60 cursor-pointer"
+          >
+            Atualizar status
+          </button>
+        )}
       </div>
 
       {canManage && (

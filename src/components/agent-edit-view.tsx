@@ -13,7 +13,11 @@ type Agent = {
   name: string;
   system_prompt: string;
   config: unknown;
-  evolution_instance_name: string;
+  evolution_instance_name: string | null;
+  // Presente quando o agente usa um número já conectado em Configurações (360dialog/metacloud) em
+  // vez de ter sua própria instância Evolution — nesse caso não tem QR code pra escanear, o número já
+  // está conectado desde antes.
+  whatsapp_instance_channel: "360dialog" | "metacloud" | null;
   phone_number: string | null;
   photo_url: string | null;
   connection_status: string;
@@ -72,8 +76,11 @@ export function AgentEditView({
   const [delayError, setDelayError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const connected = agent.connection_status === "open";
-  const style = CONNECTION_STYLES[agent.connection_status] || DEFAULT_CONNECTION_STYLE;
+  const isInstanceLinked = Boolean(agent.whatsapp_instance_channel);
+  const connected = isInstanceLinked || agent.connection_status === "open";
+  const style = isInstanceLinked
+    ? { label: `Conectado (${agent.whatsapp_instance_channel === "360dialog" ? "360dialog" : "Meta"})`, bg: "bg-success-soft", text: "text-success", dot: "bg-success" }
+    : CONNECTION_STYLES[agent.connection_status] || DEFAULT_CONNECTION_STYLE;
   const mediaCategories = [...new Set(media.map((m) => m.category))];
 
   function handleConnect() {
@@ -139,14 +146,16 @@ export function AgentEditView({
             <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} aria-hidden />
             {style.label}
           </span>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={pending}
-            className="text-xs font-semibold text-primary-strong hover:underline disabled:opacity-60 cursor-pointer"
-          >
-            Atualizar status
-          </button>
+          {!isInstanceLinked && (
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={pending}
+              className="text-xs font-semibold text-primary-strong hover:underline disabled:opacity-60 cursor-pointer"
+            >
+              Atualizar status
+            </button>
+          )}
         </div>
 
         {canManage && (
@@ -155,10 +164,12 @@ export function AgentEditView({
               <span className="text-text-muted">Modelo</span>
               <span className="font-semibold">{model}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Instância</span>
-              <span className="font-semibold font-mono">{agent.evolution_instance_name}</span>
-            </div>
+            {agent.evolution_instance_name && (
+              <div className="flex justify-between">
+                <span className="text-text-muted">Instância</span>
+                <span className="font-semibold font-mono">{agent.evolution_instance_name}</span>
+              </div>
+            )}
             <div className="flex justify-between col-span-2">
               <span className="text-text-muted">Custo estimado (todas as conversas)</span>
               <span className="font-bold">
@@ -168,7 +179,15 @@ export function AgentEditView({
           </div>
         )}
 
-        {canManage && !connected && (
+        {isInstanceLinked && (
+          <p className="text-xs text-text-muted border-t border-border pt-3">
+            Esse agente usa o número já conectado em Configurações — o mesmo número também pode
+            disparar campanha em massa (modo &quot;Agente de IA&quot; na criação de campanha). Pra
+            reconectar/trocar o número, use a tela de Configurações.
+          </p>
+        )}
+
+        {canManage && !isInstanceLinked && !connected && (
           <div className="flex flex-col items-start gap-2 border-t border-border pt-3">
             <button
               type="button"
