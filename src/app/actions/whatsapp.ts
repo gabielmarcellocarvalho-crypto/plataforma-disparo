@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, connectionState, fetchQrCode, instanceNameFor } from "@/lib/evolution";
 import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } from "@/lib/dialog360";
-import { exchangeMetaCloudCode, subscribeMetaCloudWebhook, getMetaCloudPhoneInfo, listMetaCloudTemplates } from "@/lib/metacloud";
+import { exchangeMetaCloudCode, subscribeMetaCloudWebhook, registerMetaCloudPhone, getMetaCloudPhoneInfo, listMetaCloudTemplates } from "@/lib/metacloud";
 import { headers } from "next/headers";
 
 export type ConnectResult = { error: string | null; qrcodeBase64?: string | null };
@@ -129,6 +129,10 @@ export async function connectMetaCloudInstance(
   try {
     await exchangeMetaCloudCode(code);
     await subscribeMetaCloudWebhook(wabaId);
+    // Sem isso, todo envio (template, texto, mídia) falha com "(#133010) Account not registered" —
+    // passo separado da assinatura do webhook, exigido pela Cloud API mesmo com o número já
+    // aparecendo conectado no Business Manager.
+    await registerMetaCloudPhone(phoneNumberId);
     const phoneInfo = await getMetaCloudPhoneInfo(phoneNumberId);
 
     // Upsert manual em vez de .upsert({onConflict:"phone_number_id"}) de propósito — esse índice é

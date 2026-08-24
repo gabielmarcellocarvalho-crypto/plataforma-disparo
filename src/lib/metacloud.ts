@@ -94,6 +94,21 @@ export async function subscribeMetaCloudWebhook(wabaId: string): Promise<void> {
   if (!res.ok) throw new Error(`Falha ao assinar webhook no WABA ${wabaId}: ${res.status} ${await res.text().catch(() => "")}`);
 }
 
+// Outro passo obrigatório, separado da assinatura do webhook — sem isso, QUALQUER envio (template,
+// texto, mídia) falha com "(#133010) Account not registered", mesmo o número já aparecendo como
+// conectado no nosso banco e no Business Manager da Meta. O PIN de verificação em 2 etapas é gerado
+// aqui e descartado — não guardamos em lugar nenhum porque nada no fluxo atual precisa dele de novo
+// (só seria necessário pra um de-register/re-register manual, que não existe na plataforma ainda).
+export async function registerMetaCloudPhone(phoneNumberId: string): Promise<void> {
+  const pin = String(Math.floor(100000 + Math.random() * 900000));
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}/register`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+  });
+  if (!res.ok) throw new Error(`Falha ao registrar número na Cloud API: ${res.status} ${await res.text().catch(() => "")}`);
+}
+
 // Troca o `code` do Embedded Signup (FB.login com response_type: 'code') por um token — usado só
 // como verificação server-side de que o popup foi legítimo (o code prova que veio do fluxo real da
 // Meta). O envio em si usa o token de System User, não esse token de curta duração.
