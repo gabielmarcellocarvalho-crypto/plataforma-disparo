@@ -106,20 +106,26 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
       }
 
       const step = steps[stepIndex];
+      // O token só precisa existir de fato no banco a tempo de alguém CLICAR no link (ou seja, depois
+      // que o e-mail já foi entregue) — gerar o UUID aqui não exige inserir a linha ainda. Inserindo só
+      // depois do envio confirmado, "quantos e-mails saíram" (Visão geral) conta entrega de verdade, não
+      // tentativa: uma falha (ex.: cota do Resend estourada) não infla o número de "enviados".
       const token = crypto.randomUUID();
-      await supabase.from("email_clicks").insert({
-        workspace_id: campaign.workspace_id,
-        campaign_id: campaign.id,
-        contact_id: contact.id,
-        step: stepIndex + 1,
-        token,
-      });
       const ctaUrl = `${siteOrigin}/api/e/${token}`;
       const body = step.body.replaceAll("{nome}", firstName(contact.name));
       const unsubUrl = unsubscribeUrl(siteOrigin, contact.id);
 
       try {
         await sendCampaignEmail(emailFrom, contact.email, step.subject, body, unsubUrl, { label: step.ctaLabel, url: ctaUrl }, brandColor, logoUrl);
+
+        await supabase.from("email_clicks").insert({
+          workspace_id: campaign.workspace_id,
+          campaign_id: campaign.id,
+          contact_id: contact.id,
+          step: stepIndex + 1,
+          token,
+          sent_at: now.toISOString(),
+        });
 
         const nextIndex = stepIndex + 1;
         const nextStepAt =

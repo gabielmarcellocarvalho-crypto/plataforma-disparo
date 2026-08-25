@@ -112,7 +112,7 @@ export default async function OverviewPage({
     attentionAlerts = await getAttentionAlerts(workspace.id);
   }
 
-  const emailClicks = workspace ? await getEmailClickMetrics(workspace.id, period) : { sent: 0, clicked: 0, clickRatePct: null };
+  const emailClicks = workspace ? await getEmailClickMetrics(workspace.id, period) : { sent: 0, clicked: 0, clickRatePct: null, failedNow: 0 };
 
   return (
     <div className="flex flex-col gap-4">
@@ -168,11 +168,11 @@ export default async function OverviewPage({
         hasConversion={hasConversion}
       />
 
-      {emailClicks.sent > 0 && (
+      {(emailClicks.sent > 0 || emailClicks.failedNow > 0) && (
         <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
           <h3 className="font-bold text-[15px] mb-1">Cliques de e-mail</h3>
           <p className="text-xs text-text-muted mb-4">Sequências de e-mail {period.label} — clique no CTA leva pro WhatsApp e conta como conversão.</p>
-          <div className="grid grid-cols-3 gap-3 max-w-md">
+          <div className={`grid gap-3 max-w-lg ${emailClicks.failedNow > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
             <div className="bg-bg border border-border rounded-xl p-4">
               <b className="block text-xl font-extrabold tabular-nums">{emailClicks.sent}</b>
               <span className="text-xs font-semibold text-text-muted block mt-1.5">e-mails enviados</span>
@@ -185,6 +185,12 @@ export default async function OverviewPage({
               <b className="block text-xl font-extrabold tabular-nums">{emailClicks.clickRatePct === null ? "—" : `${emailClicks.clickRatePct}%`}</b>
               <span className="text-xs font-semibold text-text-muted block mt-1.5">taxa de clique</span>
             </div>
+            {emailClicks.failedNow > 0 && (
+              <div className="bg-danger-soft border border-danger/30 rounded-xl p-4">
+                <b className="block text-xl font-extrabold tabular-nums text-danger">{emailClicks.failedNow}</b>
+                <span className="text-xs font-semibold text-danger block mt-1.5">com falha agora</span>
+              </div>
+            )}
           </div>
         </div>
       )}

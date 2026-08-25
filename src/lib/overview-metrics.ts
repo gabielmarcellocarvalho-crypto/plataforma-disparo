@@ -9,23 +9,36 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
 import type { Range } from "@/lib/cost-monitor";
 
-export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: number | null };
+export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: number | null; failedNow: number };
 
-// Enviados/clicados das sequências de e-mail (Dia 1/5/10/15/21...) — cada linha de email_clicks já É
-// um "envio de passo", clicked_at preenchido = converteu (clicou no CTA, foi pro WhatsApp).
+// Enviados/clicados das sequências de e-mail (Dia 1/5/10/15/21...) — cada linha de email_clicks só
+// existe depois de um envio CONFIRMADO pelo Resend (nunca de uma tentativa que falhou), então "sent"
+// aqui já é entrega de verdade, não tentativa. clicked_at preenchido = converteu (clicou no CTA, foi
+// pro WhatsApp).
 export async function getEmailClickMetrics(workspaceId: string, range: Range): Promise<EmailClickMetrics> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("email_clicks")
-    .select("clicked_at")
-    .eq("workspace_id", workspaceId)
-    .gte("sent_at", range.from.toISOString())
-    .lte("sent_at", range.to.toISOString())
-    .limit(20000);
+  const [{ data }, { count: failedNow }] = await Promise.all([
+    supabase
+      .from("email_clicks")
+      .select("clicked_at")
+      .eq("workspace_id", workspaceId)
+      .gte("sent_at", range.from.toISOString())
+      .lte("sent_at", range.to.toISOString())
+      .limit(20000),
+    // Sem período aqui de propósito: campaign_recipients não guarda quando a falha aconteceu (só
+    // sent_at, que fica nulo em falha), então "falhando agora" é o estado atual, não um recorte do
+    // período selecionado — é um alerta de "tem algo travado", não uma métrica histórica.
+    supabase
+      .from("campaign_recipients")
+      .select("id, campaigns!inner(workspace_id, channel)", { count: "exact", head: true })
+      .eq("campaigns.workspace_id", workspaceId)
+      .eq("campaigns.channel", "email")
+      .eq("status", "falhou"),
+  ]);
 
   const sent = data?.length ?? 0;
   const clicked = (data || []).filter((r) => r.clicked_at).length;
-  return { sent, clicked, clickRatePct: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null };
+  return { sent, clicked, clickRatePct: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null, failedNow: failedNow ?? 0 };
 }
 
 export type VolumeMetrics = {
