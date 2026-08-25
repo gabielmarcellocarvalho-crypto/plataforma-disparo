@@ -165,13 +165,24 @@ export function AgentConfigForm({
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
+  // Começa "true" (fora de sincronia) se o prompt salvo já não bate com o que os campos gerariam hoje
+  // — agente antigo com prompt editado à mão, ou configurado antes de algum campo ter sido adicionado.
+  // Nesse caso NÃO regeramos sozinhos por cima (perderia uma customização de verdade), só avisamos.
+  const [promptCustomized, setPromptCustomized] = useState(
+    () => Boolean(initialSystemPrompt) && initialSystemPrompt !== buildSystemPrompt(initialConfig)
+  );
   const [llmProvider, setLlmProvider] = useState<LlmProvider>(initialLlmProvider);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function set<K extends keyof AgentConfig>(key: K, value: AgentConfig[K]) {
-    setConfig((c) => ({ ...c, [key]: value }));
+    const next = { ...config, [key]: value };
+    setConfig(next);
+    // Enquanto o operador não tiver editado o prompt final manualmente, mantém ele sincronizado sozinho
+    // com os campos acima — é isso que evita um campo novo (ex.: "Informações que preciso") ser salvo na
+    // configuração mas nunca virar instrução real pro modelo, porque ninguém clicou em "Regenerar".
+    if (!promptCustomized) setFinalPrompt(buildSystemPrompt(next));
     setSaved(false);
   }
 
@@ -185,6 +196,7 @@ export function AgentConfigForm({
         if (c.collectFields.length === 0) next.collectFields = def.defaultCollectFields.map((f) => ({ ...f }));
         if (!c.handoffBehavior.trim()) next.handoffBehavior = def.defaultHandoff;
       }
+      if (!promptCustomized) setFinalPrompt(buildSystemPrompt(next));
       return next;
     });
     setSaved(false);
@@ -294,30 +306,26 @@ export function AgentConfigForm({
         </p>
       </div>
 
-      <div className={`flex flex-col gap-1.5 border-t border-border pt-4 ${config.maxBubbles === 1 ? "opacity-50" : ""}`}>
-        <span className="text-xs font-bold text-text-muted">Quebrar bolha a cada quantos caracteres</span>
-        {config.maxBubbles === 1 ? (
-          <p className="text-xs text-text-muted">Só se aplica com "máximo de mensagens" 2 ou mais — com mensagem única, o texto sai inteiro.</p>
-        ) : (
-          <>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={BUBBLE_CHAR_LIMIT_MIN}
-                max={BUBBLE_CHAR_LIMIT_MAX}
-                value={config.bubbleCharLimit}
-                onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
-                className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-              />
-              <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
-            </div>
-            <p className="text-xs text-text-muted">
-              Se uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não
-              só instrução no prompt) — evita respostas viradas um parágrafo gigante. Continua respeitando o teto de "máximo de
-              mensagens por resposta" acima.
-            </p>
-          </>
-        )}
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Meta de caracteres por mensagem</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={BUBBLE_CHAR_LIMIT_MIN}
+            max={BUBBLE_CHAR_LIMIT_MAX}
+            value={config.bubbleCharLimit}
+            onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
+            className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+          <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
+        </div>
+        <p className="text-xs text-text-muted">
+          Isso entra pro agente de dois jeitos: (1) instrução no prompt pra ele tentar ficar dentro desse tamanho por mensagem
+          e ser mais objetivo — não é regra rígida, só uma mira; se a resposta natural for mais curta, sem problema.
+          {config.maxBubbles > 1
+            ? " (2) além disso, se mesmo assim uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não só instrução no prompt) — respeitando o teto de \"máximo de mensagens por resposta\" acima."
+            : ' (2) com "máximo de mensagens" em 1, não há corte automático — a mensagem sai inteira mesmo se passar da meta, então essa meta vira só a instrução de objetividade.'}
+        </p>
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">
@@ -450,6 +458,7 @@ export function AgentConfigForm({
             type="button"
             onClick={() => {
               setFinalPrompt(buildSystemPrompt(config));
+              setPromptCustomized(false);
               setSaved(false);
             }}
             className="text-xs font-semibold text-primary-strong hover:underline cursor-pointer"
@@ -457,11 +466,20 @@ export function AgentConfigForm({
             Regenerar a partir da configuração acima
           </button>
         </div>
+        {promptCustomized && (
+          <p className="text-xs text-warning-text bg-warning-soft border border-warning/30 rounded-md px-3 py-2">
+            Esse prompt foi editado à mão (ou ficou desatualizado em relação aos campos acima) — a partir de agora, mudar um
+            campo lá em cima <strong>não</strong> atualiza esse texto sozinho. Clique em &quot;Regenerar&quot; pra sincronizar
+            (isso substitui o texto atual pelo gerado a partir dos campos).
+          </p>
+        )}
         <div className="relative">
           <textarea
             value={finalPrompt}
             onChange={(e) => {
-              setFinalPrompt(e.target.value);
+              const v = e.target.value;
+              setFinalPrompt(v);
+              setPromptCustomized(v !== buildSystemPrompt(config));
               setSaved(false);
             }}
             rows={10}
@@ -472,8 +490,9 @@ export function AgentConfigForm({
           </span>
         </div>
         <p className="text-xs text-text-muted">
-          É esse texto que vai direto pro modelo. Os campos acima só geram (ou regeneram) esse texto — editar aqui não
-          muda os campos, e mudar os campos não edita isso automaticamente até você clicar em &quot;Regenerar&quot;.
+          É esse texto que vai direto pro modelo. Enquanto você não editar esse texto na mão, ele fica sincronizado sozinho
+          com os campos acima — se editar direto aqui, os campos acima param de atualizá-lo automaticamente (aí é só clicar em
+          &quot;Regenerar&quot; quando quiser voltar a sincronizar).
         </p>
       </div>
 

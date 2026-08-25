@@ -12,6 +12,7 @@ import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
+import { brPhoneVariant } from "@/lib/import-contacts";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -145,23 +146,40 @@ export async function runAgentTurn(
   pushName: string | null,
   resolved: ResolvedIncoming
 ) {
-  // Contato pode ser um lead novo chegando pelo agente — cria se não existir.
-  let { data: contact } = await supabase
-    .from("contacts")
-    .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url")
-    .eq("workspace_id", agent.workspace_id)
-    .eq("phone", phone)
-    .maybeSingle();
+  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url";
+
+  // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
+  // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
+  // respondeu com um dígito a mais ou a menos do que o que foi salvo na importação da campanha) — sem
+  // isso, a resposta de um lead de campanha vira um contato novo em vez de continuar a mesma conversa.
+  let { data: contact } = await supabase.from("contacts").select(CONTACT_COLUMNS).eq("workspace_id", agent.workspace_id).eq("phone", phone).maybeSingle();
+
+  if (!contact) {
+    const variant = brPhoneVariant(phone);
+    if (variant) {
+      const { data: byVariant } = await supabase
+        .from("contacts")
+        .select(CONTACT_COLUMNS)
+        .eq("workspace_id", agent.workspace_id)
+        .eq("phone", variant)
+        .maybeSingle();
+      contact = byVariant;
+    }
+  }
 
   if (!contact) {
     const { data: created } = await supabase
       .from("contacts")
       .insert({ workspace_id: agent.workspace_id, phone, name: pushName })
-      .select("id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url")
+      .select(CONTACT_COLUMNS)
       .maybeSingle();
     contact = created;
   }
   if (!contact) return;
+  // Da pra frente, `phone` continua sendo o número exato que a Meta usou pra entregar ESSA mensagem
+  // (o que garantidamente funciona pra responder agora) — mesmo se o contato foi encontrado pela
+  // variante do 9º dígito, não sobrescreve com o telefone salvo no contato (que pode ser a variante
+  // que não bate mais com o que a Meta espera pra esse envio).
 
   if (contact.opt_out_whatsapp) return;
 

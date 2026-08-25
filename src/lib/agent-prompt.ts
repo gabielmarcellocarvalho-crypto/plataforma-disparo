@@ -320,6 +320,16 @@ export function buildSystemPrompt(config: AgentConfig): string {
     );
   }
 
+  lines.push(
+    `Meta de tamanho: tente manter cada mensagem em até ${config.bubbleCharLimit} caracteres. Não é uma regra rígida — se a ` +
+      "resposta natural for mais curta, tudo bem, siga normal. Mas se perceber, ainda formulando a resposta, que ela vai passar " +
+      "bem disso, corte o que não for essencial, resuma e vá direto ao essencial em vez de detalhar tudo de uma vez — o resto dá " +
+      "pra completar se o cliente perguntar mais. Isso é só uma mira pra manter a resposta objetiva" +
+      (config.maxBubbles > 1
+        ? "; se o corte automático do sistema precisar agir, ele quebra a mensagem sozinho de qualquer forma."
+        : `. Mesmo se passar um pouco do limite, mande tudo numa mensagem só de qualquer forma — nunca quebre em várias mensagens só por causa disso.`)
+  );
+
   if (config.tone === "formal") {
     lines.push(
       'Tom de voz: formal e profissional. Você age claramente como um atendente representando a empresa — linguagem ' +

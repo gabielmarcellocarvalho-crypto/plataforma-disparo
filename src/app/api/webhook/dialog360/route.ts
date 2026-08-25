@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, type Dialog360WebhookBody } from "@/lib/dialog360";
 import { runAgentTurn, type Agent } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
+import { brPhoneVariant } from "@/lib/import-contacts";
 
 // Webhook da API oficial (Cloud API da Meta) — rota separada da do Evolution porque o formato do
 // payload é completamente diferente (não é o formato da Evolution/Baileys). Serve os DOIS canais
@@ -87,12 +88,16 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       continue;
     }
 
-    const { data: contact } = await supabase
-      .from("contacts")
-      .select("id")
-      .eq("workspace_id", instance.workspace_id)
-      .eq("phone", msg.from)
-      .maybeSingle();
+    let { data: contact } = await supabase.from("contacts").select("id").eq("workspace_id", instance.workspace_id).eq("phone", msg.from).maybeSingle();
+    if (!contact) {
+      // Mesmo fallback do 9º dígito usado em runAgentTurn — sem isso, a resposta de um lead de
+      // campanha (número salvo num formato, Meta reportando no outro) fica órfã silenciosamente aqui.
+      const variant = brPhoneVariant(msg.from);
+      if (variant) {
+        const { data: byVariant } = await supabase.from("contacts").select("id").eq("workspace_id", instance.workspace_id).eq("phone", variant).maybeSingle();
+        contact = byVariant;
+      }
+    }
     if (!contact) continue; // número fora da base — sem agente aqui, não há o que fazer
 
     await supabase.from("messages").insert({
