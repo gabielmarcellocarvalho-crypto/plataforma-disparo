@@ -4,6 +4,18 @@
 // tiver pedido real de cliente por isso.
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
+// RESEND_API_KEY é 1 chave só, compartilhada por TODOS os workspaces — a cota diária/mensal do plano
+// Resend também é compartilhada. Um 429 aqui não é "esse e-mail falhou", é "a conta inteira bateu no
+// teto agora" — quem chama precisa tratar isso como temporário (tentar de novo mais tarde), nunca como
+// falha permanente desse destinatário específico.
+export class ResendError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -103,5 +115,5 @@ export async function sendCampaignEmail(
       },
     }),
   });
-  if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new ResendError(res.status, `Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }

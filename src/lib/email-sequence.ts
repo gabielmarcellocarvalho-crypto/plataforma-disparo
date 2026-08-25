@@ -3,7 +3,7 @@
 // cron novo pra configurar. Cada passo é enviado quando `next_step_at` vence, dentro da janela de
 // dia/hora configurada (ramp_config.days/hourStart/hourEnd, mesmo formato já usado no blast).
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendCampaignEmail } from "@/lib/email";
+import { sendCampaignEmail, ResendError } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import crypto from "crypto";
 
@@ -138,6 +138,16 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
         sent++;
         sentThisCampaign++;
       } catch (err) {
+        // 429 = cota do Resend estourada pra CONTA inteira (1 chave só, compartilhada por todos os
+        // workspaces) — não é esse destinatário que é inválido. Marcar como falha permanente aqui
+        // faria a sequência inteira perder o contato pra sempre assim que a cota do dia acabasse, em
+        // vez de simplesmente tentar de novo quando ela renovar. Não mexe na linha (fica exatamente
+        // como estava, elegível de novo no próximo tick dentro da janela) e para de tentar mandar
+        // mais nessa mesma execução — mais tentativas só bateriam na mesma cota de novo.
+        if (err instanceof ResendError && err.status === 429) {
+          skipped++;
+          return { sent, skipped };
+        }
         await supabase
           .from("campaign_recipients")
           .update({ status: "falhou", error_message: (err as Error).message.slice(0, 300), stopped_reason: "erro" })

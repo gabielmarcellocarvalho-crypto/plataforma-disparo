@@ -4,7 +4,7 @@ import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
 import { sendMetaCloudTemplate } from "@/lib/metacloud";
 import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
-import { sendCampaignEmail } from "@/lib/email";
+import { sendCampaignEmail, ResendError } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
 import { runEmailSequences } from "@/lib/email-sequence";
@@ -294,11 +294,18 @@ export async function GET(req: Request) {
       }
       sent++;
     } catch (err) {
-      await supabase
-        .from("campaign_recipients")
-        .update({ status: "falhou", error_message: (err as Error).message.slice(0, 300) })
-        .eq("id", recipient.id);
-      failed++;
+      // 429 do Resend = cota da CONTA inteira estourada (1 chave só, compartilhada por todo mundo),
+      // não um problema desse destinatário — não marca "falhou" (permanente, nunca mais tentaria de
+      // novo), deixa como "pendente" pra ser pego de novo no próximo tick quando a cota renovar.
+      if (err instanceof ResendError && err.status === 429) {
+        skipped.push(`${campaign.id}:cota-resend`);
+      } else {
+        await supabase
+          .from("campaign_recipients")
+          .update({ status: "falhou", error_message: (err as Error).message.slice(0, 300) })
+          .eq("id", recipient.id);
+        failed++;
+      }
     }
 
     await supabase
