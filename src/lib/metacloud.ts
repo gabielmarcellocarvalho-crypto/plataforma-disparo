@@ -138,6 +138,62 @@ export async function getMetaCloudPhoneInfo(phoneNumberId: string): Promise<Meta
   return { displayPhoneNumber: data.display_phone_number ?? null, verifiedName: data.verified_name ?? null };
 }
 
+// Foto de perfil do WhatsApp Business — fluxo em 2 chamadas exigido pela Graph API (Resumable Upload
+// API), diferente de mandar mídia numa mensagem normal: (1) abre uma sessão de upload dentro do APP
+// (não do WABA/número) informando tamanho e tipo do arquivo, recebendo um id de sessão; (2) manda os
+// bytes crus pra essa sessão (auth via header "OAuth", não "Bearer" — a Meta exige esse esquema
+// específico aqui) e recebe de volta um "handle" de mídia; só esse handle (não uma URL, não os bytes)
+// é aceito pelo endpoint que efetivamente troca a foto do número.
+// As 2 primeiras chamadas (sessão + upload) exigem especificamente um APP access token (client_id|
+// client_secret, não o token de System User) — é assim que a documentação da Resumable Upload API
+// pede; só a última chamada (aplicar no perfil do número) usa o token de System User de sempre.
+export async function updateMetaCloudProfilePhoto(phoneNumberId: string, fileBytes: Buffer, mimeType: string): Promise<void> {
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appId || !appSecret) throw new Error("NEXT_PUBLIC_META_APP_ID/META_APP_SECRET não configurados.");
+  const appToken = `${appId}|${appSecret}`;
+
+  const sessionRes = await fetch(`${BASE_URL}/${appId}/uploads?file_length=${fileBytes.length}&file_type=${encodeURIComponent(mimeType)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${appToken}` },
+  });
+  const sessionData = (await sessionRes.json().catch(() => null)) as { id?: string } | null;
+  if (!sessionRes.ok || !sessionData?.id) {
+    throw new Error(`Falha ao abrir upload da foto: ${sessionRes.status} ${sessionData ? JSON.stringify(sessionData) : ""}`);
+  }
+
+  const uploadRes = await fetch(`${BASE_URL}/${sessionData.id}`, {
+    method: "POST",
+    headers: { Authorization: `OAuth ${appToken}`, file_offset: "0" },
+    body: new Uint8Array(fileBytes),
+  });
+  const uploadData = (await uploadRes.json().catch(() => null)) as { h?: string } | null;
+  if (!uploadRes.ok || !uploadData?.h) {
+    throw new Error(`Falha ao enviar a foto: ${uploadRes.status} ${uploadData ? JSON.stringify(uploadData) : ""}`);
+  }
+
+  const profileRes = await fetch(`${BASE_URL}/${phoneNumberId}/whatsapp_business_profile`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", profile_picture_handle: uploadData.h }),
+  });
+  if (!profileRes.ok) {
+    throw new Error(`Falha ao aplicar a foto no perfil do WhatsApp: ${profileRes.status} ${await profileRes.text().catch(() => "")}`);
+  }
+}
+
+// Foto atual, direto da Meta (não guardamos cópia própria) — usado só pra exibir na tela de
+// Configurações antes/depois da troca.
+export async function getMetaCloudProfilePhotoUrl(phoneNumberId: string): Promise<string | null> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}/whatsapp_business_profile?fields=profile_picture_url`, {
+    headers: { Authorization: `Bearer ${systemUserToken()}` },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const data = (await res.json().catch(() => null)) as { data?: Array<{ profile_picture_url?: string }> } | null;
+  return data?.data?.[0]?.profile_picture_url ?? null;
+}
+
 // Lista os Message Templates aprovados desse WABA — mesmo papel do listDialog360Templates, usado pro
 // seletor de template na criação de campanha.
 export type MetaCloudTemplate = {

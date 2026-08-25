@@ -5,7 +5,15 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, connectionState, fetchQrCode, instanceNameFor } from "@/lib/evolution";
 import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } from "@/lib/dialog360";
-import { exchangeMetaCloudCode, subscribeMetaCloudWebhook, registerMetaCloudPhone, getMetaCloudPhoneInfo, listMetaCloudTemplates } from "@/lib/metacloud";
+import {
+  exchangeMetaCloudCode,
+  subscribeMetaCloudWebhook,
+  registerMetaCloudPhone,
+  getMetaCloudPhoneInfo,
+  listMetaCloudTemplates,
+  updateMetaCloudProfilePhoto,
+  getMetaCloudProfilePhotoUrl,
+} from "@/lib/metacloud";
 import { headers } from "next/headers";
 
 export type ConnectResult = { error: string | null; qrcodeBase64?: string | null };
@@ -215,4 +223,60 @@ export async function refreshWhatsappStatus() {
   }
 
   revalidatePath("/configuracoes");
+}
+
+export type ProfilePhotoResult = { error: string | null; photoUrl?: string | null };
+
+const MAX_PROFILE_PHOTO_BYTES = 5 * 1024 * 1024; // teto da própria Meta pra foto de perfil
+
+// Troca a foto de perfil do WhatsApp Business direto pela Graph API — só pra números conectados via
+// Meta (metacloud); 360dialog e Evolution ainda não têm esse fluxo implementado.
+export async function updateInstanceProfilePhoto(instanceId: string, formData: FormData): Promise<ProfilePhotoResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const file = formData.get("photo");
+  if (!(file instanceof File) || file.size === 0) return { error: "Selecione uma imagem." };
+  if (file.size > MAX_PROFILE_PHOTO_BYTES) return { error: "Imagem maior que 5MB — escolha um arquivo menor." };
+
+  const supabase = await createClient();
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("channel, phone_number_id")
+    .eq("id", instanceId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!instance) return { error: "Número não encontrado." };
+  if (instance.channel !== "metacloud") return { error: "Troca de foto por aqui só funciona pra números conectados direto via Meta." };
+  if (!instance.phone_number_id) return { error: "Esse número ainda não tem phone_number_id vinculado." };
+
+  try {
+    const bytes = Buffer.from(await file.arrayBuffer());
+    await updateMetaCloudProfilePhoto(instance.phone_number_id, bytes, file.type || "image/jpeg");
+    const photoUrl = await getMetaCloudProfilePhotoUrl(instance.phone_number_id);
+    revalidatePath("/configuracoes");
+    return { error: null, photoUrl };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+export async function getInstanceProfilePhoto(instanceId: string): Promise<ProfilePhotoResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("channel, phone_number_id")
+    .eq("id", instanceId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!instance || instance.channel !== "metacloud" || !instance.phone_number_id) return { error: null, photoUrl: null };
+
+  try {
+    return { error: null, photoUrl: await getMetaCloudProfilePhotoUrl(instance.phone_number_id) };
+  } catch {
+    return { error: null, photoUrl: null };
+  }
 }
