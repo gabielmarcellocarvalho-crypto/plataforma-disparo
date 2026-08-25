@@ -88,6 +88,27 @@ export async function setDialog360Webhook(apiKey: string, url: string): Promise<
   if (!res.ok) throw new Error(`Falha ao configurar webhook no 360dialog: ${res.status} ${await res.text().catch(() => "")}`);
 }
 
+// Baixa uma mídia recebida (áudio/imagem) — mesmo fluxo em 2 passos de qualquer Cloud API: primeiro
+// pega a URL temporária/assinada a partir do id, depois baixa os bytes de fato dessa URL (as duas
+// chamadas usam a MESMA API key do 360dialog, diferente da Meta direto que usa Bearer). Base64 pra
+// caber no mesmo formato que Evolution já usa (getMediaBase64) — assim runAgentTurn/transcribeAudio
+// funcionam igual pros 2 canais.
+export async function getDialog360Media(apiKey: string, mediaId: string): Promise<{ base64: string; mimetype: string } | null> {
+  try {
+    const metaRes = await fetch(`${BASE_URL}/${mediaId}`, { headers: { "D360-API-KEY": apiKey } });
+    if (!metaRes.ok) return null;
+    const meta = (await metaRes.json()) as { url?: string; mime_type?: string };
+    if (!meta.url) return null;
+
+    const fileRes = await fetch(meta.url, { headers: { "D360-API-KEY": apiKey } });
+    if (!fileRes.ok) return null;
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+    return { base64: buffer.toString("base64"), mimetype: meta.mime_type || fileRes.headers.get("content-type") || "application/octet-stream" };
+  } catch {
+    return null; // best-effort — sem mídia não pode travar o resto do webhook
+  }
+}
+
 // Lista os Message Templates aprovados da conta (WABA) ligada a essa API key — usado pra popular o
 // seletor de template na criação de campanha, em vez do cliente digitar o nome de cabeça (e errar).
 // Endpoint confirmado contra conta real (2026-08-18): GET /v1/configs/templates. Templates criados
@@ -139,6 +160,8 @@ export type Dialog360WebhookBody = {
           timestamp?: string;
           type?: string;
           text?: { body?: string };
+          audio?: { id?: string; mime_type?: string };
+          image?: { id?: string; mime_type?: string; caption?: string };
         }>;
         statuses?: Array<{ id?: string; status?: string; recipient_id?: string; timestamp?: string }>;
       };
@@ -146,10 +169,21 @@ export type Dialog360WebhookBody = {
   }>;
 };
 
-export type Dialog360IncomingMessage = { phoneNumberId: string; from: string; text: string; contactName: string | null };
+// "other" cobre vídeo/documento/figurinha/localização etc — tipos que o agente ainda não processa,
+// mas que precisam chegar até runAgentTurn pra virar handoff pra humano (em vez de só sumir sem
+// deixar rastro nenhum, como acontecia antes de "text"/"audio"/"image" serem os únicos reconhecidos).
+export type Dialog360IncomingMessage = {
+  phoneNumberId: string;
+  from: string;
+  contactName: string | null;
+  type: "text" | "audio" | "image" | "other";
+  text: string | null; // corpo (texto) ou legenda (imagem) — null pra áudio/outros
+  mediaId: string | null;
+  mimeType: string | null;
+};
 
-// Extrai só as mensagens de texto recebidas (ignora status de entrega/leitura e outros tipos de
-// mídia por ora — mesmo escopo do MVP de disparo avulso, sem IA, só texto).
+// Extrai as mensagens recebidas — texto, áudio e imagem viram entrada pro agente (runAgentTurn
+// resolve a mídia de fato); outros tipos passam como "other" só pra sinalizar handoff, sem mídia.
 export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dialog360IncomingMessage[] {
   const out: Dialog360IncomingMessage[] = [];
   for (const entry of body.entry || []) {
@@ -160,8 +194,18 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
       if (!phoneNumberId) continue;
       const nameByWaId = new Map((value.contacts || []).map((c) => [c.wa_id, c.profile?.name || null]));
       for (const m of value.messages || []) {
-        if (m.type !== "text" || !m.from || !m.text?.body) continue;
-        out.push({ phoneNumberId, from: m.from, text: m.text.body, contactName: nameByWaId.get(m.from) ?? null });
+        if (!m.from) continue;
+        const contactName = nameByWaId.get(m.from) ?? null;
+        const base = { phoneNumberId, from: m.from, contactName };
+        if (m.type === "text" && m.text?.body) {
+          out.push({ ...base, type: "text", text: m.text.body, mediaId: null, mimeType: null });
+        } else if (m.type === "audio" && m.audio?.id) {
+          out.push({ ...base, type: "audio", text: null, mediaId: m.audio.id, mimeType: m.audio.mime_type || null });
+        } else if (m.type === "image" && m.image?.id) {
+          out.push({ ...base, type: "image", text: m.image.caption || null, mediaId: m.image.id, mimeType: m.image.mime_type || null });
+        } else if (m.type) {
+          out.push({ ...base, type: "other", text: null, mediaId: null, mimeType: null });
+        }
       }
     }
   }

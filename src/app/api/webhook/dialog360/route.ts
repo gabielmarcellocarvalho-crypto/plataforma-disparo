@@ -1,9 +1,53 @@
 import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { parseDialog360IncomingMessages, type Dialog360WebhookBody } from "@/lib/dialog360";
-import { runAgentTurn, type Agent } from "@/lib/agent-turn";
+import { parseDialog360IncomingMessages, getDialog360Media, type Dialog360WebhookBody, type Dialog360IncomingMessage } from "@/lib/dialog360";
+import { getMetaCloudMedia } from "@/lib/metacloud";
+import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
+import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
 import { brPhoneVariant } from "@/lib/import-contacts";
+import type { AgentImage } from "@/lib/agent-reply";
+
+function toSupportedImageType(mimetype: string): AgentImage["mediaType"] {
+  if (mimetype.includes("png")) return "image/png";
+  if (mimetype.includes("gif")) return "image/gif";
+  if (mimetype.includes("webp")) return "image/webp";
+  return "image/jpeg"; // WhatsApp manda jpeg na esmagadora maioria dos casos
+}
+
+// Mesmo papel do resolveIncoming do Evolution (src/app/api/webhook/whatsapp/route.ts), só que buscando
+// a mídia pelo canal certo (360dialog usa D360-API-KEY, metacloud usa Bearer do System User) — o
+// resultado (texto/transcrição/visão/handoff) é o mesmo `ResolvedIncoming` que runAgentTurn já espera,
+// então o núcleo da conversa nem sabe de qual canal oficial a mensagem veio.
+async function resolveOfficialIncoming(
+  instance: { channel: string; dialog360_api_key: string | null },
+  msg: Dialog360IncomingMessage
+): Promise<ResolvedIncoming> {
+  if (msg.type === "text") return { text: msg.text, images: [], unsupported: null, media: null };
+
+  if (msg.type === "audio" || msg.type === "image") {
+    if (!msg.mediaId) return { text: null, images: [], unsupported: msg.type === "audio" ? "áudio" : "imagem", media: null };
+    const media =
+      instance.channel === "360dialog" ? await getDialog360Media(instance.dialog360_api_key || "", msg.mediaId) : await getMetaCloudMedia(msg.mediaId);
+
+    if (msg.type === "image") {
+      if (!media) return { text: null, images: [], unsupported: "imagem", media: null };
+      return {
+        text: msg.text || "",
+        images: [{ base64: media.base64, mediaType: toSupportedImageType(media.mimetype) }],
+        unsupported: null,
+        media: { ...media, kind: "image" },
+      };
+    }
+
+    const transcription = media && transcriptionAvailable() ? await transcribeAudio(media.base64, media.mimetype) : null;
+    const rawMedia: RawIncomingMedia | null = media ? { ...media, kind: "audio" } : null;
+    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia };
+    return { text: null, images: [], unsupported: "áudio", media: rawMedia };
+  }
+
+  return { text: null, images: [], unsupported: "arquivo", media: null };
+}
 
 // Webhook da API oficial (Cloud API da Meta) — rota separada da do Evolution porque o formato do
 // payload é completamente diferente (não é o formato da Evolution/Baileys). Serve os DOIS canais
@@ -79,12 +123,8 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
           ? { kind: "360dialog", apiKey: instance.dialog360_api_key || "" }
           : { kind: "metacloud", phoneNumberId: msg.phoneNumberId };
       if (channel.kind === "360dialog" && !channel.apiKey) continue; // instância mal configurada — não dá pra responder
-      await runAgentTurn(supabase, agentRow as Agent, channel, msg.from, msg.contactName, {
-        text: msg.text,
-        images: [],
-        unsupported: null,
-        media: null,
-      });
+      const resolved = await resolveOfficialIncoming(instance, msg);
+      await runAgentTurn(supabase, agentRow as Agent, channel, msg.from, msg.contactName, resolved);
       continue;
     }
 
@@ -99,6 +139,7 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       }
     }
     if (!contact) continue; // número fora da base — sem agente aqui, não há o que fazer
+    if (!msg.text) continue; // sem agente, esse caminho só registra texto passivo — áudio/imagem não são baixados aqui
 
     await supabase.from("messages").insert({
       workspace_id: instance.workspace_id,

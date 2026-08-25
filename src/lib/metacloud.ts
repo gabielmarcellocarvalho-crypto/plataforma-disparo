@@ -194,6 +194,26 @@ export async function getMetaCloudProfilePhotoUrl(phoneNumberId: string): Promis
   return data?.data?.[0]?.profile_picture_url ?? null;
 }
 
+// Baixa uma mídia recebida (áudio/imagem) — 2 passos: pega a URL temporária a partir do id, depois
+// baixa os bytes dessa URL (as duas chamadas usam o Bearer do System User). Mesmo formato de retorno
+// que getDialog360Media, pra runAgentTurn/transcribeAudio tratarem os 2 canais oficiais igual.
+export async function getMetaCloudMedia(mediaId: string): Promise<{ base64: string; mimetype: string } | null> {
+  try {
+    const token = systemUserToken();
+    const metaRes = await fetch(`${BASE_URL}/${mediaId}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!metaRes.ok) return null;
+    const meta = (await metaRes.json()) as { url?: string; mime_type?: string };
+    if (!meta.url) return null;
+
+    const fileRes = await fetch(meta.url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!fileRes.ok) return null;
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+    return { base64: buffer.toString("base64"), mimetype: meta.mime_type || fileRes.headers.get("content-type") || "application/octet-stream" };
+  } catch {
+    return null; // best-effort — sem mídia não pode travar o resto do webhook
+  }
+}
+
 // Lista os Message Templates aprovados desse WABA — mesmo papel do listDialog360Templates, usado pro
 // seletor de template na criação de campanha.
 export type MetaCloudTemplate = {
