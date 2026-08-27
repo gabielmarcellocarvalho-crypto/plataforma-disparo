@@ -44,20 +44,32 @@ export default async function CampanhasPage() {
 
   const counts: Record<string, { pendente: number; enviado: number; falhou: number }> = {};
   if (rows.length > 0) {
-    // Sem .limit() explícito, o Supabase corta em 1000 linhas por padrão — com a base de um cliente
-    // somando mais que isso entre as campanhas (ex.: TB Rio passou de 2500 destinatários no total),
-    // a contagem virava uma fatia arbitrária, fazendo parecer que destinatários "sumiam" de uma
-    // campanha e apareciam errado em outra, quando na verdade só uma pá dessas linhas conta.
-    const { data: recipients } = await supabase
-      .from("campaign_recipients")
-      .select("campaign_id, status")
-      .in("campaign_id", rows.map((c) => c.id))
-      .limit(50000);
-    for (const r of recipients ?? []) {
-      counts[r.campaign_id] ??= { pendente: 0, enviado: 0, falhou: 0 };
-      if (r.status === "pendente") counts[r.campaign_id].pendente++;
-      else if (r.status === "enviado") counts[r.campaign_id].enviado++;
-      else if (r.status === "falhou" || r.status === "invalido") counts[r.campaign_id].falhou++;
+    // O projeto tem "Max Rows" travado em 1000 nas configurações de API do Supabase — isso é um teto
+    // do SERVIDOR, aplicado por cima de qualquer .limit() que o client peça (mesmo pedindo 50000, a
+    // resposta ainda vem cortada em 1000). Trazer as linhas pra contar no código nunca ia funcionar
+    // direito pra uma base grande (ex.: TB Rio passa de 3600 destinatários somando as campanhas).
+    // Contagem agregada (count exact, head: sem baixar linha nenhuma) não é afetada por esse teto —
+    // por isso 1 query de count por campanha×status, em paralelo, em vez de somar no código.
+    const statusGroups = [
+      { key: "pendente" as const, statuses: ["pendente"] },
+      { key: "enviado" as const, statuses: ["enviado"] },
+      { key: "falhou" as const, statuses: ["falhou", "invalido"] },
+    ];
+    const results = await Promise.all(
+      rows.flatMap((c) =>
+        statusGroups.map(async (g) => {
+          const { count } = await supabase
+            .from("campaign_recipients")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", c.id)
+            .in("status", g.statuses);
+          return { campaignId: c.id, key: g.key, count: count ?? 0 };
+        })
+      )
+    );
+    for (const r of results) {
+      counts[r.campaignId] ??= { pendente: 0, enviado: 0, falhou: 0 };
+      counts[r.campaignId][r.key] = r.count;
     }
   }
 

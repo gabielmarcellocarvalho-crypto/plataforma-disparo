@@ -3,25 +3,56 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages } from "@/lib/crm-stages";
 import { CrmBoard } from "@/components/crm-board";
 
-const CONTACT_LIMIT = 500;
+// O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
+// qualquer .limit() pedido pelo client. Um cliente com base grande (ex.: TB Rio, 2100+ contatos)
+// batia nesse teto e o Kanban só mostrava os 500/1000 contatos mais recentes, sem indicar que tinha
+// mais escondido. Só dá pra pegar tudo paginando de verdade, em blocos de até 1000.
+const CONTACT_LIMIT = 10000;
+const PAGE_SIZE = 1000;
+
+type ContactRow = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  photo_url: string | null;
+  stage: string;
+  stage_changed_at: string;
+  custom_fields: Record<string, unknown> | null;
+  needs_attention: boolean;
+  flagged_reason: string | null;
+  created_at: string;
+};
+
+async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
+  const all: ContactRow[] = [];
+  let offset = 0;
+  while (all.length < CONTACT_LIMIT) {
+    const { data } = await supabase
+      .from("contacts")
+      .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (!data || data.length === 0) break;
+    all.push(...(data as ContactRow[]));
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
 
 export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: contacts }, { data: workspaceRow }] = workspace
+  const [rows, { data: workspaceRow }] = workspace
     ? await Promise.all([
-        supabase
-          .from("contacts")
-          .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at")
-          .eq("workspace_id", workspace.id)
-          .order("created_at", { ascending: false })
-          .limit(CONTACT_LIMIT),
+        fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
       ])
-    : [{ data: [] }, { data: null }];
+    : [[] as ContactRow[], { data: null }];
 
-  const rows = contacts ?? [];
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
 

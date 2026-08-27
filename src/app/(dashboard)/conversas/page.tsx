@@ -8,7 +8,39 @@ import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
-const MESSAGE_LIMIT = 500;
+// Teto de mensagens recentes carregadas (não de conversas — várias mensagens podem ser da mesma
+// conversa). O projeto tem "Max Rows" travado em 1000 na API do Supabase (teto do servidor, ignora
+// qualquer .limit() do client) — por isso busca em páginas de até 1000 até bater esse teto, em vez de
+// um único .limit() que nunca traria mais que 1000 de qualquer forma.
+const MESSAGE_LIMIT = 5000;
+const PAGE_SIZE = 1000;
+
+async function fetchRecentMessages(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string) {
+  const all: {
+    id: string;
+    contact_id: string;
+    agent_id: string | null;
+    role: string;
+    content: string;
+    media_url: string | null;
+    media_type: "image" | "audio" | "document" | null;
+    created_at: string;
+  }[] = [];
+  let offset = 0;
+  while (all.length < MESSAGE_LIMIT) {
+    const { data } = await supabase
+      .from("messages")
+      .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
 
 export default async function ConversasPage() {
   const { workspace } = await getCurrentWorkspace();
@@ -22,7 +54,7 @@ export default async function ConversasPage() {
     );
   }
 
-  const [{ data: agents }, { data: instances }, { data: messages }, { data: workspaceRow }] = await Promise.all([
+  const [{ data: agents }, { data: instances }, messages, { data: workspaceRow }] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
@@ -31,12 +63,7 @@ export default async function ConversasPage() {
       .from("whatsapp_instances")
       .select("id, department, channel")
       .eq("workspace_id", workspace.id),
-    supabase
-      .from("messages")
-      .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
-      .eq("workspace_id", workspace.id)
-      .order("created_at", { ascending: false })
-      .limit(MESSAGE_LIMIT),
+    fetchRecentMessages(supabase, workspace.id),
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
   ]);
 
@@ -117,7 +144,14 @@ export default async function ConversasPage() {
     conv.messages.push(m); // vem em ordem desc; a UI inverte pra exibir
   }
 
-  const conversations = Array.from(conversationsByKey.values()).sort((a, b) => {
+  // Disparo em massa sem agente (conv.instance preenchido, sem agent) só vira conversa de verdade se
+  // o lead respondeu alguma vez — sem isso, a lista fica lotada de contatos que só receberam a
+  // mensagem de saída e nunca disseram nada, escondendo quem de fato está numa conversa.
+  const conversationsRaw = Array.from(conversationsByKey.values()).filter(
+    (conv) => Boolean(conv.agent) || conv.messages.some((m) => m.role === "user")
+  );
+
+  const conversations = conversationsRaw.sort((a, b) => {
     if (a.contact.needs_attention !== b.contact.needs_attention) return a.contact.needs_attention ? -1 : 1;
     const aFlag = Boolean(a.contact.flagged_reason);
     const bFlag = Boolean(b.contact.flagged_reason);

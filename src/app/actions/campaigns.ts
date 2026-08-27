@@ -250,34 +250,42 @@ export async function activateCampaign(
     if (!data) return { error: `Contato não encontrado, com opt-out, ou sem ${contactColumn === "phone" ? "telefone" : "e-mail"} válido.` };
     contacts = [data];
   } else {
-    let query = supabase
-      .from("contacts")
-      .select("id")
-      .eq("workspace_id", workspace.id)
-      .eq(optOutColumn, false)
-      .not(contactColumn, "is", null);
-
+    let validStages: string[] = [];
     if (filters.stages.length > 0) {
-      const validStages = filters.stages.filter(isContactStage);
+      validStages = filters.stages.filter(isContactStage);
       if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
-      query = query.in("stage", validStages);
     }
-    if (filters.sinceDays && filters.sinceDays > 0) {
-      const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();
-      query = query.gte("stage_changed_at", since);
-    }
-    // Sem filters.limit (caso normal, "disparar pra base toda"), o Supabase corta em 1000 linhas por
-    // padrão se não houver .limit() nenhum — silenciosamente deixaria de fora quem passasse dessa
-    // marca (foi o que aconteceu com a TB Rio: base de 1517 contatos, campanha só pegou 1000). Um
-    // teto alto explícito garante que "toda a base" realmente significa toda a base.
-    if (filters.limit && filters.limit > 0) {
-      query = query.order("created_at", { ascending: false }).limit(filters.limit);
-    } else {
-      query = query.limit(50000);
+    const since = filters.sinceDays && filters.sinceDays > 0 ? new Date(Date.now() - filters.sinceDays * 86400000).toISOString() : null;
+
+    const workspaceId = workspace.id;
+    function baseQuery() {
+      let q = supabase.from("contacts").select("id").eq("workspace_id", workspaceId).eq(optOutColumn, false).not(contactColumn, "is", null);
+      if (validStages.length > 0) q = q.in("stage", validStages);
+      if (since) q = q.gte("stage_changed_at", since);
+      return q;
     }
 
-    const { data } = await query;
-    contacts = data;
+    if (filters.limit && filters.limit > 0) {
+      const { data } = await baseQuery().order("created_at", { ascending: false }).limit(filters.limit);
+      contacts = data;
+    } else {
+      // Disparo pra base toda (sem filters.limit): o projeto tem "Max Rows" travado em 1000 nas
+      // configurações de API do Supabase — um teto do SERVIDOR que ignora qualquer .limit() pedido
+      // pelo client (foi exatamente esse teto que fez a campanha da TB Rio pegar só 1000 de 2132
+      // contatos elegíveis, mesmo com um .limit() alto no código). Só dá pra pegar tudo paginando de
+      // verdade, em blocos de até 1000, concatenando até a página vir menor que o pedido.
+      const PAGE_SIZE = 1000;
+      const all: { id: string }[] = [];
+      let offset = 0;
+      while (true) {
+        const { data: page } = await baseQuery().range(offset, offset + PAGE_SIZE - 1);
+        if (!page || page.length === 0) break;
+        all.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+      }
+      contacts = all;
+    }
   }
 
   if (!contacts || contacts.length === 0) {
