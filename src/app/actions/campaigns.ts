@@ -266,8 +266,14 @@ export async function activateCampaign(
       const since = new Date(Date.now() - filters.sinceDays * 86400000).toISOString();
       query = query.gte("stage_changed_at", since);
     }
+    // Sem filters.limit (caso normal, "disparar pra base toda"), o Supabase corta em 1000 linhas por
+    // padrão se não houver .limit() nenhum — silenciosamente deixaria de fora quem passasse dessa
+    // marca (foi o que aconteceu com a TB Rio: base de 1517 contatos, campanha só pegou 1000). Um
+    // teto alto explícito garante que "toda a base" realmente significa toda a base.
     if (filters.limit && filters.limit > 0) {
       query = query.order("created_at", { ascending: false }).limit(filters.limit);
+    } else {
+      query = query.limit(50000);
     }
 
     const { data } = await query;
