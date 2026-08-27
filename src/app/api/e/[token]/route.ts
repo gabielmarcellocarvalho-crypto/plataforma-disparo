@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 
 // Link de CTA dos e-mails de sequência — registra o clique (1ª vez só), marca o contato como lead
 // quente e para a sequência dele (não manda mais os próximos passos, já converteu), e redireciona
@@ -31,10 +32,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       .eq("campaign_id", click.campaign_id)
       .eq("contact_id", click.contact_id)
       .is("stopped_reason", null);
-    await supabase
-      .from("contacts")
-      .update({ flagged_reason: "Clicou no CTA de uma campanha de e-mail — lead de maior interesse pra contato comercial." })
-      .eq("id", click.contact_id);
+
+    // Clicar no CTA é o sinal mais forte que um lead de campanha (sem agente de IA lendo a resposta)
+    // consegue dar — sem isso, o funil ficava dependendo só do humano mudar a fase manualmente depois
+    // de ver o flag. Avança pra "interessado" (nunca regride, respeitando a ordem normal do funil).
+    const { data: contact } = await supabase.from("contacts").select("stage").eq("id", click.contact_id).maybeSingle();
+    const updates: Record<string, unknown> = {
+      flagged_reason: "Clicou no CTA de uma campanha de e-mail — lead de maior interesse pra contato comercial.",
+    };
+    if (contact && canAdvanceStage(contact.stage as ContactStage, "interessado")) {
+      updates.stage = "interessado";
+      updates.stage_changed_at = new Date().toISOString();
+    }
+    await supabase.from("contacts").update(updates).eq("id", click.contact_id);
   }
 
   const message = campaign.cta_message || "Olá! Vim pelo e-mail e gostaria de saber mais.";

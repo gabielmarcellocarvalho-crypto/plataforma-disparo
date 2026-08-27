@@ -5,6 +5,7 @@ import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
 import type { AgentImage } from "@/lib/agent-reply";
+import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -148,7 +149,7 @@ async function processWebhook(body: {
 
   const { data: contact } = await supabase
     .from("contacts")
-    .select("id, photo_url")
+    .select("id, photo_url, stage")
     .eq("workspace_id", instance.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -168,5 +169,10 @@ async function processWebhook(body: {
 
   if (OPT_OUT.test(text)) {
     await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
+  } else if (canAdvanceStage(contact.stage as ContactStage, "interessado")) {
+    // Sem agente de IA lendo a resposta, não tem como classificar o que o lead disse — mas responder
+    // já é o sinal mais forte que dá pra captar automaticamente num disparo em massa puro. Avança pra
+    // "interessado" (nunca regride, respeitando a ordem normal do funil).
+    await supabase.from("contacts").update({ stage: "interessado", stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
   }
 }

@@ -7,6 +7,9 @@ import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia 
 import { type AgentChannel } from "@/lib/agent-channel";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import type { AgentImage } from "@/lib/agent-reply";
+import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+
+const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
 function toSupportedImageType(mimetype: string): AgentImage["mediaType"] {
   if (mimetype.includes("png")) return "image/png";
@@ -128,13 +131,13 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       continue;
     }
 
-    let { data: contact } = await supabase.from("contacts").select("id").eq("workspace_id", instance.workspace_id).eq("phone", msg.from).maybeSingle();
+    let { data: contact } = await supabase.from("contacts").select("id, stage").eq("workspace_id", instance.workspace_id).eq("phone", msg.from).maybeSingle();
     if (!contact) {
       // Mesmo fallback do 9º dígito usado em runAgentTurn — sem isso, a resposta de um lead de
       // campanha (número salvo num formato, Meta reportando no outro) fica órfã silenciosamente aqui.
       const variant = brPhoneVariant(msg.from);
       if (variant) {
-        const { data: byVariant } = await supabase.from("contacts").select("id").eq("workspace_id", instance.workspace_id).eq("phone", variant).maybeSingle();
+        const { data: byVariant } = await supabase.from("contacts").select("id, stage").eq("workspace_id", instance.workspace_id).eq("phone", variant).maybeSingle();
         contact = byVariant;
       }
     }
@@ -147,5 +150,14 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       role: "user",
       content: msg.text,
     });
+
+    if (OPT_OUT.test(msg.text)) {
+      await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
+    } else if (canAdvanceStage(contact.stage as ContactStage, "interessado")) {
+      // Sem agente de IA lendo a resposta, não tem como classificar o que o lead disse — mas
+      // responder já é o sinal mais forte que dá pra captar automaticamente num disparo em massa
+      // puro. Avança pra "interessado" (nunca regride, respeitando a ordem normal do funil).
+      await supabase.from("contacts").update({ stage: "interessado", stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
+    }
   }
 }

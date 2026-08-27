@@ -75,7 +75,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: recipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .lte("next_step_at", now.toISOString()) // NULL não passa aqui — ver query separada abaixo pro 1º envio
@@ -83,7 +83,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: freshRecipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .is("next_step_at", null) // ainda não recebeu nenhum passo — 1º envio (Dia 1)
@@ -96,7 +96,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
         skipped++;
         continue;
       }
-      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean } | null;
+      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean; stage: string } | null;
       const stepIndex = r.sequence_step;
       if (!contact || stepIndex >= steps.length) continue;
 
@@ -141,6 +141,14 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
             stopped_reason: nextStepAt === null ? "concluido" : null,
           })
           .eq("id", r.id);
+
+        // Mesmo avanço que o disparo em massa de WhatsApp já faz: 1º contato de verdade tira o lead
+        // de "não abordado" — sem isso, quem só recebe e-mail nunca sai do começo do funil, mesmo
+        // depois de vários e-mails enviados de verdade.
+        if (contact.stage === "nao_abordado") {
+          await supabase.from("contacts").update({ stage: "abordado", stage_changed_at: now.toISOString() }).eq("id", contact.id);
+        }
+
         sent++;
         sentThisCampaign++;
       } catch (err) {
