@@ -289,8 +289,17 @@ export async function GET(req: Request) {
         role: "assistant",
         content: loggedContent,
       });
+      const contactUpdates: Record<string, unknown> = {};
       if (contact.stage === "nao_abordado") {
-        await supabase.from("contacts").update({ stage: "abordado", stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
+        contactUpdates.stage = "abordado";
+        contactUpdates.stage_changed_at = new Date().toISOString();
+      }
+      // Sem isso, Conversas não tem como saber a qual número atribuir a resposta desse contato (o
+      // agrupamento sem agente depende de contact.whatsapp_instance_id) — a conversa existia no banco,
+      // mas nunca aparecia na tela porque não tinha instância pra resolver.
+      if (blastInstance && campaign.mode !== "agent") contactUpdates.whatsapp_instance_id = blastInstance.id;
+      if (Object.keys(contactUpdates).length > 0) {
+        await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
       }
       sent++;
     } catch (err) {
