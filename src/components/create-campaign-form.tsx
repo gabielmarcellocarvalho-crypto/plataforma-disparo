@@ -514,6 +514,24 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
                   ))}
                 </div>
               </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="ramp" className="text-xs font-semibold text-text-muted">
+                  Rampa diária (disparos novos por dia, separados por vírgula)
+                </label>
+                <input
+                  id="ramp"
+                  name="ramp"
+                  type="text"
+                  defaultValue="50,80,120,170,230,300"
+                  placeholder="50,80,120,170,230,300"
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                />
+                <p className="text-[11px] text-text-muted">
+                  1º valor = cota do dia 1 da campanha, 2º = dia 2, e assim por diante — o último valor se repete depois. Cada
+                  número tem que ser igual ou maior que o anterior (protege a nota de qualidade do número, evita subir volume
+                  rápido demais). O padrão já é a faixa validada no piloto — só mude se souber o que está fazendo.
+                </p>
+              </div>
             </div>
           )}
 

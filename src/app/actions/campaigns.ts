@@ -32,6 +32,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const sequenceDaysRaw = String(formData.get("sequence_days") || "[]");
   const sequenceStepsRaw = String(formData.get("sequence_steps") || "[]");
   const blastDaysRaw = String(formData.get("blast_days") || "[]");
+  const rampRaw = String(formData.get("ramp") || "").trim();
 
   if (!name) return { error: "Informe um nome pra campanha." };
   if (channel !== "whatsapp" && channel !== "email") return { error: "Canal inválido." };
@@ -94,6 +95,28 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     .split("\n")
     .map((t) => t.trim())
     .filter(Boolean);
+
+  // Rampa diária crescente (anti-spam/anti-ban): quantos disparos NOVOS o cron libera por dia de
+  // campanha (dia 1 = ramp[0], dia 2 = ramp[1]...), até estabilizar no último valor. Não se aplica a
+  // sequência (não tem cota diária de novos disparos, só janela de dia/hora). Campo opcional — vazio
+  // cai no padrão já validado no piloto.
+  const DEFAULT_RAMP = [50, 80, 120, 170, 230, 300];
+  let ramp: number[] = DEFAULT_RAMP;
+  if (mode !== "sequence" && rampRaw) {
+    const parsed = rampRaw
+      .split(",")
+      .map((v) => parseInt(v.trim(), 10))
+      .filter((v) => Number.isFinite(v));
+    if (parsed.length === 0 || parsed.some((v) => v <= 0)) {
+      return { error: "Rampa inválida — use números positivos separados por vírgula (ex.: 50,80,120,170,230,300)." };
+    }
+    for (let i = 1; i < parsed.length; i++) {
+      if (parsed[i] < parsed[i - 1]) {
+        return { error: "A rampa não pode diminuir de um dia pro outro — cada valor deve ser igual ou maior que o anterior." };
+      }
+    }
+    ramp = parsed;
+  }
 
   const supabase = await createClient();
 
@@ -161,8 +184,8 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       sequence_steps: mode === "sequence" ? sequenceSteps : [],
       cta_phone: mode === "sequence" ? ctaPhone : null,
       cta_message: mode === "sequence" ? ctaMessage : null,
-      // ramp = cota diária crescente (anti-ban), mesma faixa já validada no piloto: 50 disparos no
-      // dia 1 da campanha, 80 no dia 2, até estabilizar em 300/dia a partir do 6º dia.
+      // ramp = cota diária crescente (anti-ban) — configurável na tela agora; padrão é a mesma faixa
+      // já validada no piloto (50 no dia 1, 80 no dia 2... estabiliza em 300/dia a partir do 6º dia).
       // Em modo sequência não há ramp (é 1 e-mail por contato por passo, sem cota diária de novos
       // disparos) — só os dias da semana e a janela de horário importam.
       ramp_config: {
@@ -170,7 +193,7 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
         hourStart,
         hourEnd,
         days: mode === "sequence" ? sequenceDays : blastDays,
-        ramp: [50, 80, 120, 170, 230, 300],
+        ramp,
       },
       status: "rascunho",
     })
