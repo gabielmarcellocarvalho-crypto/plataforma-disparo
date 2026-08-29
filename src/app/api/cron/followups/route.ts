@@ -5,6 +5,7 @@ import { generateReply, capBubbles, type ConversationMessage } from "@/lib/agent
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
+import { secureEqual } from "@/lib/secure-compare";
 
 // Roda periodicamente (Vercel Cron, ver vercel.json) checando contatos que pararam de responder
 // depois de uma resposta do agente. Cada agente configura, em AgentConfig.followUp: de quanto em
@@ -26,7 +27,7 @@ function sleep(ms: number) {
 
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization") || "";
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secureEqual(auth, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

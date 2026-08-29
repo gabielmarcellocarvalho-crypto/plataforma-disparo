@@ -8,6 +8,7 @@ import { sendCampaignEmail, ResendError } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
 import { runEmailSequences } from "@/lib/email-sequence";
+import { secureEqual } from "@/lib/secure-compare";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -64,7 +65,7 @@ function pickMessage(templates: unknown, name: string | null): string | null {
 
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization") || "";
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secureEqual(auth, `Bearer ${process.env.CRON_SECRET}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
