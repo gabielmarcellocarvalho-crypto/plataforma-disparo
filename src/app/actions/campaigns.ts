@@ -217,18 +217,28 @@ export type ContactSearchResult = { id: string; name: string | null; phone: stri
 
 // Busca rápida de contato por nome/telefone/e-mail — usada no seletor de "contato específico" ao
 // ativar uma campanha em modo de teste (mandar só pra 1 lead conhecido antes de liberar geral).
+// `,`/`(`/`)` têm significado sintático no DSL de filtro do PostgREST (separador de condição em
+// `.or()`, agrupamento) — sem escapar, um termo de busca com vírgula ou parêntese injeta cláusulas
+// extras dentro do `.or()` (contido pelo `.eq("workspace_id", ...)` em cláusula separada, mas é o
+// padrão errado — SECURITY_AUDIT.md #7). Envolver o valor em aspas duplas faz o PostgREST tratar
+// esses caracteres como literais, sem perder a capacidade de buscar por eles (ex.: e-mail com ponto).
+function escapePostgrestValue(v: string): string {
+  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 export async function searchWorkspaceContacts(query: string): Promise<ContactSearchResult[]> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return [];
   const q = query.trim();
   if (q.length < 2) return [];
+  const escaped = escapePostgrestValue(q);
 
   const supabase = await createClient();
   const { data } = await supabase
     .from("contacts")
     .select("id, name, phone, email")
     .eq("workspace_id", workspace.id)
-    .or(`name.ilike.%${q}%,phone.ilike.%${q}%,email.ilike.%${q}%`)
+    .or(`name.ilike."%${escaped}%",phone.ilike."%${escaped}%",email.ilike."%${escaped}%"`)
     .limit(8);
   return data || [];
 }
