@@ -13,6 +13,7 @@ import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 import { brPhoneVariant } from "@/lib/import-contacts";
+import { getMonthToDateAgentCostUsd, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -29,7 +30,15 @@ export type Agent = {
 };
 
 export type RawIncomingMedia = { base64: string; mimetype: string; kind: "image" | "audio" };
-export type ResolvedIncoming = { text: string | null; images: AgentImage[]; unsupported: string | null; media: RawIncomingMedia | null };
+export type ResolvedIncoming = {
+  text: string | null;
+  images: AgentImage[];
+  unsupported: string | null;
+  media: RawIncomingMedia | null;
+  // Id da mensagem no provedor (Evolution key.id / wamid da Meta) — usado só pra dedup de retry/replay
+  // de webhook (messages.external_id); null quando o canal não fornece isso.
+  externalId?: string | null;
+};
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 const HISTORY_LIMIT = 20;
@@ -38,6 +47,12 @@ const HISTORY_LIMIT = 20;
 // próprio contador independente, escala junto com o número de clientes na plataforma.
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_MESSAGES = 5; // 5-6 mensagens/min já é padrão de abuso; ainda dá folga pro humano real digitando rápido
+// Rate limit agregado por WORKSPACE (todos os contatos somados) — o de cima protege 1 número
+// específico, mas o número de WhatsApp de um agente é público por natureza (é o objetivo do produto);
+// alguém mal-intencionado pode mandar mensagem de vários números de origem diferentes, cada um com seu
+// próprio contador zerado. Teto bem mais alto (cobre atendimento real de pico de um cliente grande),
+// só existe pra impedir a exploração óbvia de "trocar de número reinicia o limite".
+const WORKSPACE_RATE_LIMIT_MAX_MESSAGES = 60;
 // Intervalo entre bolhas de uma mesma resposta (quando o agente quebra em várias mensagens) —
 // bem mais curto que o delay de "pensar" antes da primeira, só pra não parecer instantâneo/colado.
 const BUBBLE_GAP_MS = 1100;
@@ -194,7 +209,20 @@ export async function runAgentTurn(
     }
   }
 
-  const { text, images, unsupported, media } = resolved;
+  const { text, images, unsupported, media, externalId } = resolved;
+
+  // Idempotência: retry/replay do provedor (reconexão da Evolution, retry da Meta) reenviando o MESMO
+  // messageId/wamid não deve gerar 2ª resposta do agente nem cobrar a API 2x pela mesma mensagem —
+  // checa ANTES de qualquer insert/trabalho pago. Sem externalId (canal não informou), segue normal.
+  if (externalId) {
+    const { data: dup } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("workspace_id", agent.workspace_id)
+      .eq("external_id", externalId)
+      .maybeSingle();
+    if (dup) return;
+  }
 
   if (!text && images.length === 0) {
     if (unsupported) {
@@ -210,6 +238,7 @@ export async function runAgentTurn(
         content: `[${unsupported} recebido — não processado automaticamente]`,
         media_url: mediaUrl,
         media_type: mediaUrl ? media!.kind : null,
+        external_id: externalId || null,
       });
       await supabase
         .from("contacts")
@@ -255,6 +284,7 @@ export async function runAgentTurn(
       content: userContent,
       media_url: mediaUrl,
       media_type: mediaType,
+      external_id: externalId || null,
     })
     .select("id")
     .single();
@@ -312,6 +342,38 @@ export async function runAgentTurn(
       })
       .eq("id", contact.id);
     return;
+  }
+
+  // Rate limit agregado por workspace — cobre o caso de abuso vindo de vários números de origem
+  // diferentes ao mesmo tempo (cada um passaria no limite por-contato acima sozinho). Não marca
+  // needs_attention no contato (seria falso-positivo pra um cliente legítimo pego no meio de um pico
+  // real de outro número) — só recusa essa resposta específica; o contato tenta de novo no próximo tick.
+  const { count: recentWorkspaceMessages } = await supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", agent.workspace_id)
+    .eq("role", "user")
+    .gte("created_at", rateLimitSince);
+  if ((recentWorkspaceMessages || 0) > WORKSPACE_RATE_LIMIT_MAX_MESSAGES) return;
+
+  // Teto de orçamento mensal de IA (workspaces.monthly_cost_budget_brl) — antes só alimentava um
+  // banner de alerta na tela, nunca bloqueava de verdade; sem isso, qualquer um que descubra o número
+  // de WhatsApp de um agente pode gerar custo de API ilimitado contra o cliente. Checa aqui, o ponto
+  // único por onde toda mensagem de todo canal passa antes de chamar o LLM.
+  const { data: budgetRow } = await supabase.from("workspaces").select("monthly_cost_budget_brl").eq("id", agent.workspace_id).maybeSingle();
+  if (budgetRow?.monthly_cost_budget_brl) {
+    const costUsd = await getMonthToDateAgentCostUsd(supabase, agent.workspace_id);
+    const costBrl = costUsd * COST_USD_TO_BRL;
+    if (costBrl >= budgetRow.monthly_cost_budget_brl) {
+      await supabase
+        .from("contacts")
+        .update({
+          needs_attention: true,
+          attention_reason: "Orçamento mensal de IA desse workspace foi atingido — agente pausado até revisão.",
+        })
+        .eq("id", contact.id);
+      return;
+    }
   }
 
   // Espera antes de responder (delay humanizado configurado no agente) e, ao acordar, confere se o

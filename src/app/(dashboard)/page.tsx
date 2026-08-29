@@ -103,7 +103,7 @@ export default async function OverviewPage({
       .eq("id", workspace.id)
       .maybeSingle();
     if (budgetRow?.monthly_cost_budget_brl) {
-      const costUsd = await getMonthToDateAgentCostUsd(workspace.id);
+      const costUsd = await getMonthToDateAgentCostUsd(supabase, workspace.id);
       const status = evalCostBudget(costUsd, budgetRow.monthly_cost_budget_brl, budgetRow.cost_alert_pct ?? 80);
       if (status.isOver && status.ratioPct !== null && status.budgetBrl !== null) {
         costAlert = { ratioPct: status.ratioPct, costBrl: status.costBrl, budgetBrl: status.budgetBrl };

@@ -8,6 +8,7 @@ import { type AgentChannel } from "@/lib/agent-channel";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+import { secureEqual } from "@/lib/secure-compare";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -26,30 +27,34 @@ async function resolveOfficialIncoming(
   instance: { channel: string; dialog360_api_key: string | null },
   msg: Dialog360IncomingMessage
 ): Promise<ResolvedIncoming> {
-  if (msg.type === "text") return { text: msg.text, images: [], unsupported: null, media: null };
+  // Dedup de retry/replay do webhook (ver messages.external_id, migration 0045).
+  const externalId = msg.messageId;
+
+  if (msg.type === "text") return { text: msg.text, images: [], unsupported: null, media: null, externalId };
 
   if (msg.type === "audio" || msg.type === "image") {
-    if (!msg.mediaId) return { text: null, images: [], unsupported: msg.type === "audio" ? "áudio" : "imagem", media: null };
+    if (!msg.mediaId) return { text: null, images: [], unsupported: msg.type === "audio" ? "áudio" : "imagem", media: null, externalId };
     const media =
       instance.channel === "360dialog" ? await getDialog360Media(instance.dialog360_api_key || "", msg.mediaId) : await getMetaCloudMedia(msg.mediaId);
 
     if (msg.type === "image") {
-      if (!media) return { text: null, images: [], unsupported: "imagem", media: null };
+      if (!media) return { text: null, images: [], unsupported: "imagem", media: null, externalId };
       return {
         text: msg.text || "",
         images: [{ base64: media.base64, mediaType: toSupportedImageType(media.mimetype) }],
         unsupported: null,
         media: { ...media, kind: "image" },
+        externalId,
       };
     }
 
     const transcription = media && transcriptionAvailable() ? await transcribeAudio(media.base64, media.mimetype) : null;
     const rawMedia: RawIncomingMedia | null = media ? { ...media, kind: "audio" } : null;
-    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia };
-    return { text: null, images: [], unsupported: "áudio", media: rawMedia };
+    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia, externalId };
+    return { text: null, images: [], unsupported: "áudio", media: rawMedia, externalId };
   }
 
-  return { text: null, images: [], unsupported: "arquivo", media: null };
+  return { text: null, images: [], unsupported: "arquivo", media: null, externalId };
 }
 
 // Webhook da API oficial (Cloud API da Meta) — rota separada da do Evolution porque o formato do
@@ -69,7 +74,7 @@ export async function GET(req: Request) {
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
-  if (mode === "subscribe" && token && token === process.env.WHATSAPP_WEBHOOK_SECRET && challenge) {
+  if (mode === "subscribe" && token && challenge && process.env.WHATSAPP_WEBHOOK_SECRET && secureEqual(token, process.env.WHATSAPP_WEBHOOK_SECRET)) {
     return new Response(challenge, { status: 200 });
   }
   return new Response("Forbidden", { status: 403 });
@@ -77,7 +82,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const secret = new URL(req.url).searchParams.get("secret");
-  if (!process.env.WHATSAPP_WEBHOOK_SECRET || secret !== process.env.WHATSAPP_WEBHOOK_SECRET) {
+  if (!process.env.WHATSAPP_WEBHOOK_SECRET || !secret || !secureEqual(secret, process.env.WHATSAPP_WEBHOOK_SECRET)) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
@@ -144,11 +149,24 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
     if (!contact) continue; // número fora da base — sem agente aqui, não há o que fazer
     if (!msg.text) continue; // sem agente, esse caminho só registra texto passivo — áudio/imagem não são baixados aqui
 
+    // Mesma dedup de messages.external_id do caminho com agente (migration 0045) — retry/replay do
+    // webhook não deveria duplicar a mensagem na conversa nem reprocessar o avanço de fase abaixo.
+    if (msg.messageId) {
+      const { data: dup } = await supabase
+        .from("messages")
+        .select("id")
+        .eq("workspace_id", instance.workspace_id)
+        .eq("external_id", msg.messageId)
+        .maybeSingle();
+      if (dup) continue;
+    }
+
     await supabase.from("messages").insert({
       workspace_id: instance.workspace_id,
       contact_id: contact.id,
       role: "user",
       content: msg.text,
+      external_id: msg.messageId,
     });
 
     if (OPT_OUT.test(msg.text)) {

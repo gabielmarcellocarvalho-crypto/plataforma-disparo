@@ -6,6 +6,7 @@ import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia 
 import { type AgentChannel } from "@/lib/agent-channel";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+import { secureEqual } from "@/lib/secure-compare";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -48,25 +49,28 @@ function toSupportedImageType(mimetype: string): AgentImage["mediaType"] {
 async function resolveIncoming(instanceName: string, data: EvolutionMessage): Promise<ResolvedIncoming> {
   const msg = data.message;
   const messageId = data.key?.id;
+  // Dedup de retry/replay do webhook (ver messages.external_id, migration 0045) — passado pro
+  // runAgentTurn junto com o resto do conteúdo resolvido, não é um campo separado por acidente.
+  const externalId = messageId ?? null;
 
   const directText = msg?.conversation || msg?.extendedTextMessage?.text || null;
-  if (directText) return { text: directText, images: [], unsupported: null, media: null };
+  if (directText) return { text: directText, images: [], unsupported: null, media: null, externalId };
 
   // Áudio → transcrição. Busca a mídia SEMPRE que houver messageId, mesmo sem transcrição
   // disponível (Whisper indisponível/falhou) — sem isso, o áudio nem aparecia salvo na conversa,
   // só marcava atenção humana sem deixar rastro nenhum pra quem for revisar.
   if (msg?.audioMessage) {
-    if (!messageId) return { text: null, images: [], unsupported: "áudio", media: null };
+    if (!messageId) return { text: null, images: [], unsupported: "áudio", media: null, externalId };
     const media = await getMediaBase64(instanceName, messageId);
     const transcription = media && transcriptionAvailable() ? await transcribeAudio(media.base64, media.mimetype) : null;
     const rawMedia: RawIncomingMedia | null = media ? { ...media, kind: "audio" } : null;
-    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia };
-    return { text: null, images: [], unsupported: "áudio", media: rawMedia };
+    if (transcription) return { text: transcription, images: [], unsupported: null, media: rawMedia, externalId };
+    return { text: null, images: [], unsupported: "áudio", media: rawMedia, externalId };
   }
 
   // Imagem → visão
   if (msg?.imageMessage) {
-    if (!messageId) return { text: null, images: [], unsupported: "imagem", media: null };
+    if (!messageId) return { text: null, images: [], unsupported: "imagem", media: null, externalId };
     const media = await getMediaBase64(instanceName, messageId);
     if (media) {
       const caption = msg.imageMessage.caption || "";
@@ -75,14 +79,15 @@ async function resolveIncoming(instanceName: string, data: EvolutionMessage): Pr
         images: [{ base64: media.base64, mediaType: toSupportedImageType(media.mimetype) }],
         unsupported: null,
         media: { ...media, kind: "image" },
+        externalId,
       };
     }
-    return { text: null, images: [], unsupported: "imagem", media: null };
+    return { text: null, images: [], unsupported: "imagem", media: null, externalId };
   }
 
-  if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo", media: null };
-  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null };
-  return { text: null, images: [], unsupported: null, media: null };
+  if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo", media: null, externalId };
+  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null, externalId };
+  return { text: null, images: [], unsupported: null, media: null, externalId };
 }
 
 export async function POST(req: Request) {
@@ -90,7 +95,7 @@ export async function POST(req: Request) {
   // autenticar quem chama é um segredo na própria URL do webhook (?secret=...), configurado
   // junto com EVOLUTION_WEBHOOK_URL. Sem isso, qualquer um na internet poderia forjar eventos.
   const secret = new URL(req.url).searchParams.get("secret");
-  if (!process.env.WHATSAPP_WEBHOOK_SECRET || secret !== process.env.WHATSAPP_WEBHOOK_SECRET) {
+  if (!process.env.WHATSAPP_WEBHOOK_SECRET || !secret || !secureEqual(secret, process.env.WHATSAPP_WEBHOOK_SECRET)) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
@@ -160,11 +165,20 @@ async function processWebhook(body: {
     if (photoUrl) await supabase.from("contacts").update({ photo_url: photoUrl }).eq("id", contact.id);
   }
 
+  const externalId = data.key?.id ?? null;
+  // Mesma dedup de messages.external_id do caminho com agente (migration 0045) — retry/replay não
+  // deveria duplicar a mensagem na conversa.
+  if (externalId) {
+    const { data: dup } = await supabase.from("messages").select("id").eq("workspace_id", instance.workspace_id).eq("external_id", externalId).maybeSingle();
+    if (dup) return;
+  }
+
   await supabase.from("messages").insert({
     workspace_id: instance.workspace_id,
     contact_id: contact.id,
     role: "user",
     content: text,
+    external_id: externalId,
   });
 
   if (OPT_OUT.test(text)) {

@@ -180,6 +180,9 @@ export type Dialog360IncomingMessage = {
   text: string | null; // corpo (texto) ou legenda (imagem) — null pra áudio/outros
   mediaId: string | null;
   mimeType: string | null;
+  // wamid da Meta — único por mensagem, usado pra dedup (retry/replay do webhook não deveria gerar 2ª
+  // resposta do agente nem cobrar o LLM 2x pela mesma mensagem, ver messages.external_id).
+  messageId: string | null;
 };
 
 // Extrai as mensagens recebidas — texto, áudio e imagem viram entrada pro agente (runAgentTurn
@@ -196,7 +199,7 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
       for (const m of value.messages || []) {
         if (!m.from) continue;
         const contactName = nameByWaId.get(m.from) ?? null;
-        const base = { phoneNumberId, from: m.from, contactName };
+        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null };
         if (m.type === "text" && m.text?.body) {
           out.push({ ...base, type: "text", text: m.text.body, mediaId: null, mimeType: null });
         } else if (m.type === "audio" && m.audio?.id) {

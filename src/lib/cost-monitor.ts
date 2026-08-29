@@ -2,9 +2,15 @@
 // orçamento definido. Usado na Visão geral (banner de alerta) e nas Métricas (card de orçamento,
 // custo por agente). Colaborador-only.
 import { createClient } from "@/lib/supabase/server";
+import type { createAdminClient } from "@/lib/supabase/admin";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { COST_USD_TO_BRL } from "@/lib/cost-constants";
 import { eachDayBrt, dayKeyBrt } from "@/lib/period";
+
+// Aceita o client já criado (RLS, das telas — Métricas/Visão geral) ou admin (webhook, sem sessão de
+// usuário — runAgentTurn precisa checar o orçamento ANTES de chamar o LLM) — mesmo shape, os dois
+// vêm do supabase-js por baixo.
+type AnySupabaseClient = ReturnType<typeof createAdminClient>;
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
@@ -20,8 +26,7 @@ function startOfMonthIso(): string {
 // Mapa agent_id -> provider desse workspace — cada mensagem precisa saber QUAL agente a gerou pra
 // precificar certo (Gemini é ~10-12x mais barato por token que o Sonnet; usar o preço errado infla
 // ou reduz o custo mostrado sem relação com o gasto real).
-async function getProviderByAgent(workspaceId: string): Promise<Map<string, "claude" | "gemini">> {
-  const supabase = await createClient();
+async function getProviderByAgent(supabase: AnySupabaseClient, workspaceId: string): Promise<Map<string, "claude" | "gemini">> {
   const { data } = await supabase.from("agents").select("id, llm_provider").eq("workspace_id", workspaceId);
   return new Map((data || []).map((a) => [a.id as string, (a.llm_provider as "claude" | "gemini") || "claude"]));
 }
@@ -50,9 +55,9 @@ function costRowUsd(
   });
 }
 
-// Soma o custo de IA (respostas de agente) do mês corrente pra um workspace, em USD.
-export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<number> {
-  const supabase = await createClient();
+// Soma o custo de IA (respostas de agente) do mês corrente pra um workspace, em USD. Recebe o client
+// já criado (RLS ou admin) — quem chama de dentro de um webhook (sem sessão de usuário) passa o admin.
+export async function getMonthToDateAgentCostUsd(supabase: AnySupabaseClient, workspaceId: string): Promise<number> {
   const [{ data }, providerByAgent] = await Promise.all([
     supabase
       .from("messages")
@@ -61,7 +66,7 @@ export async function getMonthToDateAgentCostUsd(workspaceId: string): Promise<n
       .eq("role", "assistant")
       .not("agent_id", "is", null)
       .gte("created_at", startOfMonthIso()),
-    getProviderByAgent(workspaceId),
+    getProviderByAgent(supabase, workspaceId),
   ]);
 
   return (data || []).reduce((sum, row) => sum + costRowUsd(row, providerByAgent.get(row.agent_id as string)), 0);
@@ -118,7 +123,7 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
       .gte("created_at", range.from.toISOString())
       .lte("created_at", range.to.toISOString())
       .limit(20000),
-    getProviderByAgent(workspaceId),
+    getProviderByAgent(supabase, workspaceId),
   ]);
 
   const days = eachDayBrt(range.from, range.to);
