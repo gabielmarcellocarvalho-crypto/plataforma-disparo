@@ -22,7 +22,7 @@ export async function createAccess(_prev: CreateAccessState, formData: FormData)
   const accessType = String(formData.get("access_type") || "");
 
   if (!email || !password) return { error: "E-mail e senha são obrigatórios." };
-  if (password.length < 6) return { error: "A senha precisa de pelo menos 6 caracteres." };
+  if (password.length < 10) return { error: "A senha precisa de pelo menos 10 caracteres." };
   if (role !== "cliente" && role !== "colaborador") return { error: "Tipo de acesso inválido." };
   if (role === "cliente" && !workspaceId) return { error: "Escolha o cliente (workspace) desse acesso." };
   if (role === "cliente" && !isAccessType(accessType)) return { error: "Escolha o plano/tipo de acesso desse cliente." };

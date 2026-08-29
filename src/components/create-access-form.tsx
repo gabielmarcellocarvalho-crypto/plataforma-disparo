@@ -58,7 +58,7 @@ export function CreateAccessForm({ workspaces }: { workspaces: { id: string; nam
 
       <div className="flex flex-col gap-1.5">
         <label className="text-sm font-semibold">Senha</label>
-        <input name="password" type="text" required minLength={6} placeholder="mínimo 6 caracteres" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
+        <input name="password" type="text" required minLength={10} placeholder="mínimo 10 caracteres" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
         <span className="text-xs text-text-muted">Você repassa essa senha pra pessoa. Ela pode trocar depois.</span>
       </div>
 

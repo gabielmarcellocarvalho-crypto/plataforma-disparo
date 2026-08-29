@@ -44,7 +44,7 @@ export async function updatePassword(_prev: UpdatePasswordState, formData: FormD
   const password = String(formData.get("password") || "");
   const confirm = String(formData.get("confirm") || "");
 
-  if (password.length < 6) return { error: "A senha precisa de pelo menos 6 caracteres." };
+  if (password.length < 10) return { error: "A senha precisa de pelo menos 10 caracteres." };
   if (password !== confirm) return { error: "As senhas não são iguais." };
 
   const supabase = await createClient();

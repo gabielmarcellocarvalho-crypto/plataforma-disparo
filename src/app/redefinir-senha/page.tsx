@@ -21,9 +21,9 @@ export default function RedefinirSenhaPage() {
             name="password"
             type="password"
             required
-            minLength={6}
+            minLength={10}
             autoComplete="new-password"
-            placeholder="mínimo 6 caracteres"
+            placeholder="mínimo 10 caracteres"
             className="w-full border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-soft"
           />
         </div>
@@ -37,7 +37,7 @@ export default function RedefinirSenhaPage() {
             name="confirm"
             type="password"
             required
-            minLength={6}
+            minLength={10}
             autoComplete="new-password"
             placeholder="digite de novo"
             className="w-full border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-soft"
