@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentWorkspace, isCurrentUserColaborador } from "@/lib/workspace";
+import { getCurrentWorkspace, requireColaborador } from "@/lib/workspace";
 import { createInstance, setWebhook, fetchQrCode, fetchInstanceInfo, agentInstanceNameFor } from "@/lib/evolution";
 import { buildSystemPrompt, normalizeAgentConfig, type AgentConfig } from "@/lib/agent-prompt";
 import { extractKnowledgeText } from "@/lib/agent-knowledge";
@@ -12,6 +12,7 @@ import { MAX_TOTAL_CHARS } from "@/lib/agent-knowledge-limits";
 export type CreateAgentState = { error: string | null; ok?: boolean };
 
 export async function createAgent(_prevState: CreateAgentState, formData: FormData): Promise<CreateAgentState> {
+  await requireColaborador();
   const name = String(formData.get("name") || "").trim();
   if (!name) return { error: "Informe o nome do agente." };
 
@@ -79,6 +80,7 @@ export async function createAgent(_prevState: CreateAgentState, formData: FormDa
 export type ConnectResult = { error: string | null; qrcodeBase64?: string | null };
 
 export async function connectAgent(agentId: string): Promise<ConnectResult> {
+  await requireColaborador();
   const supabase = await createClient();
   const { data: agent } = await supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle();
   if (!agent) return { error: "Agente não encontrado." };
@@ -101,6 +103,7 @@ export async function connectAgent(agentId: string): Promise<ConnectResult> {
 }
 
 export async function refreshAgentStatus(agentId: string) {
+  await requireColaborador();
   const supabase = await createClient();
   const { data: agent } = await supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle();
   if (!agent || !agent.evolution_instance_name) return; // sem instância Evolution — status vem de Configurações, não daqui
@@ -128,7 +131,7 @@ export type DeleteAgentResult = { error: string | null; ok?: boolean };
 // com agent_id nulo (ON DELETE SET NULL) — para de funcionar até apontar pra outro agente.
 // Não desconecta a instância Evolution no lado da Evolution API (fica órfã lá, sem efeito prático).
 export async function deleteAgent(agentId: string): Promise<DeleteAgentResult> {
-  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode remover um agente." };
+  await requireColaborador();
 
   const supabase = await createClient();
   const { error } = await supabase.from("agents").delete().eq("id", agentId);
@@ -148,6 +151,7 @@ export async function updateAgentConfig(
   systemPrompt: string,
   llmProvider: LlmProvider
 ): Promise<{ error: string | null }> {
+  await requireColaborador();
   const config = normalizeAgentConfig(rawConfig);
   const prompt = systemPrompt.trim();
   if (!prompt) return { error: "O prompt final não pode ficar vazio." };
@@ -161,6 +165,7 @@ export async function updateAgentConfig(
 }
 
 export async function toggleAgentStatus(agentId: string, status: "ativo" | "pausado") {
+  await requireColaborador();
   const supabase = await createClient();
   await supabase.from("agents").update({ status }).eq("id", agentId);
   revalidatePath("/agentes");
@@ -172,6 +177,7 @@ export async function addAgentMedia(
   url: string,
   caption: string
 ): Promise<{ error: string | null }> {
+  await requireColaborador();
   const cat = category.trim();
   const link = url.trim();
   if (!cat || !link) return { error: "Categoria e URL são obrigatórias." };
@@ -195,6 +201,7 @@ export async function addAgentMedia(
 }
 
 export async function deleteAgentMedia(mediaId: string): Promise<{ error: string | null }> {
+  await requireColaborador();
   const supabase = await createClient();
   const { error } = await supabase.from("agent_media").delete().eq("id", mediaId);
   if (error) return { error: "Não foi possível remover a foto." };
@@ -207,6 +214,7 @@ export type UploadMediaResult = { error: string | null; count?: number };
 // Upload em massa: joga várias fotos de uma vez numa "pasta" (categoria). Sobe cada arquivo pro
 // Supabase Storage (bucket público agent-media) e grava a URL na biblioteca do agente.
 export async function uploadAgentMedia(agentId: string, category: string, formData: FormData): Promise<UploadMediaResult> {
+  await requireColaborador();
   const cat = category.trim();
   if (!cat) return { error: "Dê um nome pra pasta (categoria)." };
 
@@ -256,6 +264,7 @@ export type UploadKnowledgeResult = { error: string | null; count?: number };
 // Material de estudo (PDF/planilha/texto) — extrai o texto e guarda como contexto do agente.
 // Nunca é enviado ao cliente; só entra num bloco extra do prompt (ver src/lib/agent-reply.ts).
 export async function uploadAgentKnowledge(agentId: string, formData: FormData): Promise<UploadKnowledgeResult> {
+  await requireColaborador();
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) return { error: "Selecione pelo menos um arquivo." };
 
@@ -301,6 +310,7 @@ export async function uploadAgentKnowledge(agentId: string, formData: FormData):
 }
 
 export async function deleteAgentKnowledge(id: string): Promise<{ error: string | null }> {
+  await requireColaborador();
   const supabase = await createClient();
   const { error } = await supabase.from("agent_knowledge").delete().eq("id", id);
   if (error) return { error: "Não foi possível remover." };
@@ -308,8 +318,16 @@ export async function deleteAgentKnowledge(id: string): Promise<{ error: string 
   return { error: null };
 }
 
+// Teto coerente com maxDuration=30 dos webhooks (src/app/api/webhook/whatsapp/route.ts,
+// .../dialog360/route.ts) — o delay roda ANTES da chamada ao LLM e do envio, dentro da mesma
+// invocação; um delay perto de 30s não deixaria folga nenhuma pro resto do fluxo, e a Vercel encerra a
+// function no meio, deixando a mensagem do cliente sem resposta silenciosamente.
+const MAX_REPLY_DELAY_SECONDS = 20;
+
 export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {
+  await requireColaborador();
   if (minSeconds < 0 || maxSeconds < minSeconds) return { error: "Intervalo de delay inválido." };
+  if (maxSeconds > MAX_REPLY_DELAY_SECONDS) return { error: `Delay máximo não pode passar de ${MAX_REPLY_DELAY_SECONDS}s (a função de resposta tem um teto de tempo total).` };
   const supabase = await createClient();
   const { error } = await supabase
     .from("agents")

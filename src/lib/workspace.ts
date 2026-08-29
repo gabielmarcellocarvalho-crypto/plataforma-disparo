@@ -78,6 +78,15 @@ export async function isCurrentUserColaborador(): Promise<boolean> {
   return profile?.role === "colaborador";
 }
 
+// Wrapper único pra Server Actions colaborador-only (ex.: tudo em src/app/actions/agents.ts — nenhum
+// tipo de acesso de cliente inclui "/agentes" em access-types.ts). `assertPageAccess` já bloqueia a
+// PÁGINA, mas Server Actions são chamáveis diretamente (fetch pro endpoint da action, reproduzindo o
+// payload) sem passar pela página — cada mutação sensível precisa checar de novo. Lança em vez de
+// devolver boolean pra não ser esquecido por engano num `if` que não existe.
+export async function requireColaborador(): Promise<void> {
+  if (!(await isCurrentUserColaborador())) throw new Error("Sem permissão.");
+}
+
 // Nome de quem está logado agora — usado pra assinar observações deixadas num lead do CRM.
 export async function getCurrentUserName(): Promise<string> {
   const supabase = await createClient();
