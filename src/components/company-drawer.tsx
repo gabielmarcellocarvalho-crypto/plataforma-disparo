@@ -12,6 +12,8 @@ import {
   type CompanyDealRef,
 } from "@/app/actions/companies";
 import { formatDealAmount } from "@/lib/deal-stages";
+import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
+import { isTaskOverdue } from "@/lib/tasks";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -35,12 +37,16 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [taskTitleDraft, setTaskTitleDraft] = useState("");
 
   useEffect(() => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     setSaved(false);
+    setTaskTitleDraft("");
+    getTasksForRecord("company", companyId).then(setTasks);
     getCompanyDetail(companyId).then((result) => {
       if (!result) {
         setError("Empresa não encontrada.");
@@ -96,6 +102,27 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
         const refreshed = await getCompanyDetail(companyId);
         if (refreshed) setNotes(refreshed.notes);
       }
+    });
+  }
+
+  function handleQuickCreateTask() {
+    if (!companyId || !taskTitleDraft.trim()) return;
+    const title = taskTitleDraft.trim();
+    setTaskTitleDraft("");
+    startTransition(async () => {
+      const result = await quickCreateTask(title, { companyId });
+      if (result.error) setError(result.error);
+      else {
+        const refreshed = await getTasksForRecord("company", companyId);
+        setTasks(refreshed);
+      }
+    });
+  }
+
+  function handleToggleTask(taskId: string, completed: boolean) {
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, completed_at: completed ? new Date().toISOString() : null } : t)));
+    startTransition(async () => {
+      await toggleTaskCompleted(taskId, completed);
     });
   }
 
@@ -233,6 +260,38 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <h3 className="text-sm font-bold">Tarefas ({tasks.filter((t) => !t.completed_at).length})</h3>
+                {tasks.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    {tasks.map((t) => (
+                      <label key={t.id} className="flex items-center gap-2 bg-surface-2 border border-border rounded-md px-3 py-2 cursor-pointer">
+                        <input type="checkbox" checked={Boolean(t.completed_at)} onChange={(e) => handleToggleTask(t.id, e.target.checked)} />
+                        <span className={`text-sm flex-1 ${t.completed_at ? "line-through text-text-muted" : ""} ${!t.completed_at && isTaskOverdue(t.due_at, t.completed_at) ? "text-danger" : ""}`}>
+                          {t.title}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input
+                    value={taskTitleDraft}
+                    onChange={(e) => setTaskTitleDraft(e.target.value)}
+                    placeholder="título da nova tarefa…"
+                    className="flex-1 border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleQuickCreateTask}
+                    disabled={pending || !taskTitleDraft.trim()}
+                    className="border border-border text-xs font-bold px-3 py-2 rounded-md cursor-pointer disabled:opacity-60 shrink-0"
+                  >
+                    + Tarefa
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-col gap-3 border-t border-border pt-4">

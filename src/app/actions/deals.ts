@@ -44,6 +44,25 @@ export async function getDefaultPipeline(workspaceId: string): Promise<{ pipelin
   return { pipelineId: pipeline.id, stages: stages || [] };
 }
 
+export type DealSearchResult = { id: string; name: string };
+
+// Autocomplete de negócio por nome — usado no formulário de tarefa (vínculo opcional a um negócio).
+export async function searchDeals(workspaceId: string, query: string): Promise<DealSearchResult[]> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace || workspace.id !== workspaceId) return [];
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("deals")
+    .select("id, name")
+    .eq("workspace_id", workspaceId)
+    .ilike("name", `%${trimmed}%`)
+    .limit(8);
+  return data || [];
+}
+
 export async function addDeal(_prevState: ActionResult, formData: FormData): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
