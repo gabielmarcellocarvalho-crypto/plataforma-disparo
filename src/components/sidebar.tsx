@@ -39,6 +39,28 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/empresas",
+    label: "Empresas",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="7" width="18" height="14" rx="1" />
+        <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+        <line x1="9" y1="12" x2="9" y2="12" />
+        <line x1="15" y1="12" x2="15" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    href: "/negocios",
+    label: "Negócios",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    ),
+  },
+  {
     href: "/agentes",
     label: "Agentes",
     icon: (

@@ -4,6 +4,9 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { getContactDetail, updateContactInfo, updateContactStage, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
+import { getDealsForContact, quickCreateDealForContact, type ContactDealRef } from "@/app/actions/deals";
+import { formatDealAmount } from "@/lib/deal-stages";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -18,10 +21,12 @@ export function CrmLeadDrawer({
   contactId,
   onClose,
   stageLabels,
+  workspaceId,
 }: {
   contactId: string | null;
   onClose: () => void;
   stageLabels: Record<ContactStage, string>;
+  workspaceId?: string;
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -35,11 +40,20 @@ export function CrmLeadDrawer({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const [deals, setDeals] = useState<ContactDealRef[]>([]);
+  const [companyQuery, setCompanyQuery] = useState("");
+  const [companyOptions, setCompanyOptions] = useState<CompanyRow[]>([]);
+  const [dealNameDraft, setDealNameDraft] = useState("");
+
   useEffect(() => {
     if (!contactId) return;
     setLoading(true);
     setError(null);
     setSaved(false);
+    setCompanyQuery("");
+    setCompanyOptions([]);
+    setDealNameDraft("");
+    getDealsForContact(contactId).then(setDeals);
     getContactDetail(contactId).then((result) => {
       if (!result) {
         setError("Contato não encontrado.");
@@ -99,6 +113,63 @@ export function CrmLeadDrawer({
       else {
         const refreshed = await getContactDetail(contactId);
         if (refreshed) setNotes(refreshed.notes);
+      }
+    });
+  }
+
+  useEffect(() => {
+    if (!workspaceId || companyQuery.trim().length < 2) {
+      setCompanyOptions([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      searchCompanies(workspaceId, companyQuery).then(setCompanyOptions);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [companyQuery, workspaceId]);
+
+  function handleLinkCompany(companyId: string, companyName: string) {
+    if (!contactId || !contact) return;
+    setContact({ ...contact, company_id: companyId, company_name: companyName });
+    setCompanyQuery("");
+    setCompanyOptions([]);
+    startTransition(async () => {
+      const result = await linkContactToCompany(contactId, companyId);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleUnlinkCompany() {
+    if (!contactId || !contact) return;
+    setContact({ ...contact, company_id: null, company_name: null });
+    startTransition(async () => {
+      const result = await linkContactToCompany(contactId, null);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleCreateCompany() {
+    if (!contactId || !companyQuery.trim()) return;
+    const companyName = companyQuery.trim();
+    setCompanyQuery("");
+    setCompanyOptions([]);
+    startTransition(async () => {
+      const result = await createCompanyAndLinkContact(contactId, companyName);
+      if (result.error) setError(result.error);
+      else setContact((c) => (c ? { ...c, company_id: result.companyId || null, company_name: companyName } : c));
+    });
+  }
+
+  function handleQuickCreateDeal() {
+    if (!contactId || !dealNameDraft.trim()) return;
+    const dealName = dealNameDraft.trim();
+    setDealNameDraft("");
+    startTransition(async () => {
+      const result = await quickCreateDealForContact(contactId, dealName);
+      if (result.error) setError(result.error);
+      else {
+        const refreshed = await getDealsForContact(contactId);
+        setDeals(refreshed);
       }
     });
   }
@@ -245,6 +316,86 @@ export function CrmLeadDrawer({
                   </button>
                   {saved && <span className="text-xs font-semibold text-success">Salvo.</span>}
                   {error && <span className="text-xs text-danger font-medium">{error}</span>}
+                </div>
+              </div>
+
+              {workspaceId && (
+                <div className="flex flex-col gap-2 border-t border-border pt-4">
+                  <h3 className="text-sm font-bold">Empresa</h3>
+                  {contact.company_id ? (
+                    <div className="flex items-center justify-between gap-2 bg-surface-2 border border-border rounded-md px-3 py-2">
+                      <Link href="/empresas" className="text-sm font-semibold hover:text-primary-strong hover:underline">
+                        {contact.company_name || "empresa vinculada"}
+                      </Link>
+                      <button type="button" onClick={handleUnlinkCompany} className="text-xs text-danger font-bold cursor-pointer">
+                        desvincular
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      <input
+                        value={companyQuery}
+                        onChange={(e) => setCompanyQuery(e.target.value)}
+                        placeholder="buscar empresa ou digitar nome nova…"
+                        className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary"
+                      />
+                      {companyOptions.length > 0 && (
+                        <div className="flex flex-col border border-border rounded-md overflow-hidden">
+                          {companyOptions.map((c) => (
+                            <button
+                              type="button"
+                              key={c.id}
+                              onClick={() => handleLinkCompany(c.id, c.name)}
+                              className="text-left text-xs px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer"
+                            >
+                              {c.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {companyQuery.trim() && companyOptions.length === 0 && (
+                        <button type="button" onClick={handleCreateCompany} className="text-xs font-bold text-primary-strong hover:underline cursor-pointer self-start">
+                          + criar empresa &quot;{companyQuery.trim()}&quot;
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold">Negócios ({deals.length})</h3>
+                </div>
+                {deals.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    {deals.map((d) => (
+                      <Link
+                        key={d.id}
+                        href="/negocios"
+                        className="text-sm bg-surface-2 border border-border rounded-md px-3 py-2 flex items-center justify-between hover:border-primary-soft"
+                      >
+                        <span>{d.name}</span>
+                        <span className="text-xs font-mono text-text-muted">{formatDealAmount(d.amount)}</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input
+                    value={dealNameDraft}
+                    onChange={(e) => setDealNameDraft(e.target.value)}
+                    placeholder="nome do novo negócio…"
+                    className="flex-1 border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleQuickCreateDeal}
+                    disabled={pending || !dealNameDraft.trim()}
+                    className="border border-border text-xs font-bold px-3 py-2 rounded-md cursor-pointer disabled:opacity-60 shrink-0"
+                  >
+                    + Negócio
+                  </button>
                 </div>
               </div>
 

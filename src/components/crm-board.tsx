@@ -501,7 +501,7 @@ export function CrmBoard({
         </div>
       </div>
 
-      <CrmLeadDrawer contactId={openId} onClose={() => setOpenId(null)} stageLabels={stageLabels} />
+      <CrmLeadDrawer contactId={openId} onClose={() => setOpenId(null)} stageLabels={stageLabels} workspaceId={workspaceId} />
     </div>
   );
 }

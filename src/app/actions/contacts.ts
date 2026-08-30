@@ -217,6 +217,8 @@ export type ContactDetail = {
   flagged_reason: string | null;
   created_at: string;
   message_count: number;
+  company_id: string | null;
+  company_name: string | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -229,7 +231,9 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   const [{ data: contact }, { data: notes }, { count: messageCount }] = await Promise.all([
     supabase
       .from("contacts")
-      .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at")
+      .select(
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, companies(name)"
+      )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
       .maybeSingle(),
@@ -246,7 +250,11 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   ]);
   if (!contact) return null;
 
-  return { contact: { ...contact, message_count: messageCount ?? 0 }, notes: notes || [] };
+  const { companies, ...contactFields } = contact as typeof contact & { companies: { name: string } | null };
+  return {
+    contact: { ...contactFields, company_name: companies?.name ?? null, message_count: messageCount ?? 0 },
+    notes: notes || [],
+  };
 }
 
 // Edição manual de "infos pessoais" — nome/telefone/e-mail e os campos customizados (chave/valor

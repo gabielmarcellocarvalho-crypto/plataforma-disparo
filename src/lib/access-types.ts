@@ -6,12 +6,14 @@ export type AccessType = "disparo_avulso" | "sdr" | "closer" | "sdr_light" | "ul
 // "/configuracoes" entra em todo tipo de acesso — o cliente pode reconectar o próprio número (QR
 // expirado, troca de aparelho) sem depender da agência. A página em si já esconde as seções de
 // agência (plano, API keys) do cliente, mesmo com a rota liberada aqui.
+// "/empresas" e "/negocios" entram em todo tipo de acesso, ao lado de "/crm" — fazem parte do CRM que
+// o cliente já paga (Fase 1 de Empresas + Negócios), não é feature nova a monetizar separadamente.
 export const ACCESS_TYPES: { key: AccessType; label: string; pages: string[] }[] = [
-  { key: "disparo_avulso", label: "Disparo Avulso", pages: ["/", "/conversas", "/crm", "/contatos", "/campanhas", "/configuracoes"] },
-  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
-  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
+  { key: "disparo_avulso", label: "Disparo Avulso", pages: ["/", "/conversas", "/crm", "/empresas", "/negocios", "/contatos", "/campanhas", "/configuracoes"] },
+  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/empresas", "/negocios", "/contatos", "/metricas", "/configuracoes"] },
+  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/empresas", "/negocios", "/contatos", "/metricas", "/configuracoes"] },
+  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/empresas", "/negocios", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
+  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/empresas", "/negocios", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
 ];
 
 const PAGES_BY_TYPE = new Map(ACCESS_TYPES.map((t) => [t.key, new Set(t.pages)]));
