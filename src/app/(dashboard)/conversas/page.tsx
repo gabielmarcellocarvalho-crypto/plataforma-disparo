@@ -5,6 +5,8 @@ import { resolveStageLabels, getVisibleStages, resolveHiddenStages } from "@/lib
 import { resolveWorkspacePlan, planHasSdr } from "@/lib/workspace-plan";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+import { getConversationTickets } from "@/app/actions/conversation-tickets";
+import { conversationKey } from "@/lib/conversation-tickets";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
@@ -54,7 +56,7 @@ export default async function ConversasPage() {
     );
   }
 
-  const [{ data: agents }, { data: instances }, messages, { data: workspaceRow }] = await Promise.all([
+  const [{ data: agents }, { data: instances }, messages, { data: workspaceRow }, tickets] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
@@ -65,7 +67,10 @@ export default async function ConversasPage() {
       .eq("workspace_id", workspace.id),
     fetchRecentMessages(supabase, workspace.id),
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
+    getConversationTickets(workspace.id),
   ]);
+
+  const ticketByKey = new Map(tickets.map((t) => [t.conversation_key, t]));
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const visibleStages = getVisibleStages(resolveHiddenStages(workspaceRow?.crm_hidden_stages));
@@ -91,14 +96,14 @@ export default async function ConversasPage() {
       : Promise.resolve({ data: [] }),
     // Vendedores atribuíveis = pessoas com login de cliente vinculado a esse workspace (não é um
     // cargo separado). RLS de profiles só deixa ver o próprio perfil, então usa o client admin —
-    // mesma técnica já usada em /acessos.
-    showResponsavel
-      ? createAdminClient()
-          .from("workspace_members")
-          .select("user_id, profiles(full_name)")
-          .eq("workspace_id", workspace.id)
-          .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" })))
-      : Promise.resolve([]),
+    // mesma técnica já usada em /acessos. Buscado sempre agora (não só quando showResponsavel):
+    // a atribuição de responsável do TICKET de atendimento é liberada pra todo plano, diferente do
+    // responsável do CONTATO/CRM (esse sim continua só em planos com SDR).
+    createAdminClient()
+      .from("workspace_members")
+      .select("user_id, profiles(full_name)")
+      .eq("workspace_id", workspace.id)
+      .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" }))),
   ]);
 
   // Primeira campanha (mais antiga) que efetivamente mandou mensagem pra esse contato — "origem".
@@ -119,7 +124,7 @@ export default async function ConversasPage() {
   for (const m of messages || []) {
     // Com agente de IA: uma conversa por agente (um contato pode, em tese, falar com mais de um).
     // Sem agente (disparo avulso): uma conversa só por contato, ligada ao número/instância dele.
-    const key = m.agent_id ? `${m.contact_id}:agent:${m.agent_id}` : `${m.contact_id}:instance`;
+    const key = conversationKey(m.contact_id, m.agent_id);
     let conv = conversationsByKey.get(key);
     if (!conv) {
       const contact = contactsById.get(m.contact_id);
@@ -133,11 +138,14 @@ export default async function ConversasPage() {
         instance = contact.whatsapp_instance_id ? instancesById.get(contact.whatsapp_instance_id) ?? null : null;
         if (!instance) continue; // mensagem sem contexto de número (edge case raro) — sem como responder, ignora
       }
+      const ticket = ticketByKey.get(key);
       conv = {
         contact: { ...contact, origin_campaign: originByContact.get(contact.id) ?? null },
         agent,
         instance,
         messages: [],
+        ticket_status: ticket?.status ?? "aberto",
+        ticket_responsible_user_id: ticket?.responsible_user_id ?? null,
       };
       conversationsByKey.set(key, conv);
     }

@@ -14,9 +14,18 @@ import {
   clearInstanceConversationHistory,
 } from "@/app/actions/conversations";
 import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
+import { setConversationStatus, setConversationResponsible } from "@/app/actions/conversation-tickets";
+import type { TicketStatus } from "@/lib/conversation-tickets";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { STAGE_ORDER } from "@/lib/crm-stages";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+
+const TICKET_STATUS_LABELS: Record<TicketStatus, string> = { aberto: "Aberto", pendente: "Pendente", resolvido: "Resolvido" };
+const TICKET_STATUS_BADGE: Record<TicketStatus, string> = {
+  aberto: "bg-bg text-text-muted",
+  pendente: "bg-warning-soft text-warning-text",
+  resolvido: "bg-success-soft text-success",
+};
 
 // Mesma leitura de cor por etapa do Kanban — só exibe aqui, quem move o card é o CRM (arrastar) ou
 // o agente de IA sozinho ([[STATUS: ...]]), nunca essa tela.
@@ -66,7 +75,14 @@ export type Vendor = { id: string; name: string };
 
 // Sempre exatamente um dos dois presente: agent (conversa com IA) OU instance (disparo avulso, humano
 // sempre responde manualmente).
-export type Conversation = { contact: Contact; agent: Agent | null; instance: Instance | null; messages: Message[] };
+export type Conversation = {
+  contact: Contact;
+  agent: Agent | null;
+  instance: Instance | null;
+  messages: Message[];
+  ticket_status: TicketStatus;
+  ticket_responsible_user_id: string | null;
+};
 
 function initials(name: string | null, phone: string | null) {
   const source = (name || phone || "?").trim();
@@ -151,6 +167,7 @@ export function ConversationsPanel({
   const [waitFilter, setWaitFilter] = useState("");
   const [campaignFilter, setCampaignFilter] = useState("");
   const [responsavelFilter, setResponsavelFilter] = useState("");
+  const [ticketFilter, setTicketFilter] = useState<TicketStatus | "">("");
 
   // Vindo do CRM (?contact=<id>), abre direto a conversa dessa pessoa; senão, a mais recente.
   const [selectedKey, setSelectedKey] = useState<string | null>(() => {
@@ -193,12 +210,19 @@ export function ConversationsPanel({
       if (responsavelFilter) {
         if (responsavelFilter === "__nenhum__" ? c.contact.responsible_user_id : c.contact.responsible_user_id !== responsavelFilter) return false;
       }
+      if (ticketFilter && c.ticket_status !== ticketFilter) return false;
       return true;
     });
-  }, [conversations, query, stageFilter, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter]);
+  }, [conversations, query, stageFilter, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
 
   const activeFilterCount =
-    (stageFilter ? 1 : 0) + (aguardandoHumano ? 1 : 0) + (semResposta ? 1 : 0) + (waitFilter ? 1 : 0) + (campaignFilter ? 1 : 0) + (responsavelFilter ? 1 : 0);
+    (stageFilter ? 1 : 0) +
+    (aguardandoHumano ? 1 : 0) +
+    (semResposta ? 1 : 0) +
+    (waitFilter ? 1 : 0) +
+    (campaignFilter ? 1 : 0) +
+    (responsavelFilter ? 1 : 0) +
+    (ticketFilter ? 1 : 0);
 
   const selected = conversations.find((c) => keyOf(c) === selectedKey) || null;
   const orderedMessages = selected ? [...selected.messages].reverse() : [];
@@ -233,6 +257,18 @@ export function ConversationsPanel({
   function handleResponsavel(contactId: string, userId: string) {
     startTransition(async () => {
       await updateContactResponsible(contactId, userId);
+    });
+  }
+
+  function handleTicketStatus(contactId: string, agentId: string | null, status: TicketStatus) {
+    startTransition(async () => {
+      await setConversationStatus(contactId, agentId, status);
+    });
+  }
+
+  function handleTicketResponsible(contactId: string, agentId: string | null, userId: string) {
+    startTransition(async () => {
+      await setConversationResponsible(contactId, agentId, userId || null);
     });
   }
 
@@ -410,6 +446,13 @@ export function ConversationsPanel({
                 </select>
               )}
 
+              <select value={ticketFilter} onChange={(e) => setTicketFilter(e.target.value as TicketStatus | "")} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
+                <option value="">Status do atendimento: todos</option>
+                {(Object.keys(TICKET_STATUS_LABELS) as TicketStatus[]).map((s) => (
+                  <option key={s} value={s}>{TICKET_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
@@ -439,6 +482,7 @@ export function ConversationsPanel({
                       setWaitFilter("");
                       setCampaignFilter("");
                       setResponsavelFilter("");
+                      setTicketFilter("");
                     }}
                     className="text-[11px] font-semibold text-text-muted hover:text-danger cursor-pointer ml-auto"
                   >
@@ -494,6 +538,12 @@ export function ConversationsPanel({
                         className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
                       >
                         {stageLabels[c.contact.stage] || c.contact.stage}
+                      </span>
+                      <span
+                        title="Status do atendimento"
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${TICKET_STATUS_BADGE[c.ticket_status]}`}
+                      >
+                        {TICKET_STATUS_LABELS[c.ticket_status]}
                       </span>
                       {last && <time className="text-xs text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
                     </div>
@@ -569,6 +619,33 @@ export function ConversationsPanel({
                   className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
                 >
                   <option value="">Sem responsável</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              )}
+
+              <select
+                value={selected.ticket_status}
+                onChange={(e) => handleTicketStatus(selected.contact.id, selected.agent?.id ?? null, e.target.value as TicketStatus)}
+                disabled={pending}
+                title="Status do atendimento"
+                className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${TICKET_STATUS_BADGE[selected.ticket_status]}`}
+              >
+                {(Object.keys(TICKET_STATUS_LABELS) as TicketStatus[]).map((s) => (
+                  <option key={s} value={s}>{TICKET_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+
+              {vendors.length > 0 && (
+                <select
+                  value={selected.ticket_responsible_user_id || ""}
+                  onChange={(e) => handleTicketResponsible(selected.contact.id, selected.agent?.id ?? null, e.target.value)}
+                  disabled={pending}
+                  title="Responsável por esse atendimento"
+                  className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
+                >
+                  <option value="">Atendimento sem responsável</option>
                   {vendors.map((v) => (
                     <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
