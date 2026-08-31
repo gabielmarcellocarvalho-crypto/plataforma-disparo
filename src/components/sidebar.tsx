@@ -51,16 +51,6 @@ const NAV_ITEMS = [
     ),
   },
   {
-    href: "/negocios",
-    label: "Negócios",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="12" y1="1" x2="12" y2="23" />
-        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-      </svg>
-    ),
-  },
-  {
     href: "/agenda",
     label: "Agenda",
     icon: (
@@ -207,24 +197,26 @@ function NavLink({
   );
 }
 
-// Agentes nunca aparece pra cliente, em nenhum tipo de acesso — só a agência mexe nisso.
-// Configurações agora É liberada pro cliente (só a parte de conectar número — a própria página
-// esconde plano/API keys de quem não é colaborador). Os demais itens seguem o tipo de acesso do
+// Agentes nunca aparece pra cliente, em nenhum tipo de acesso — só staff (colaborador+developer)
+// mexe nisso. Configurações agora É liberada pro cliente (só a parte de conectar número — a própria
+// página esconde plano/API keys de quem não é staff). Os demais itens seguem o tipo de acesso do
 // cliente (accessType null = ainda não classificado, mantém o comportamento antigo de ver tudo até
 // a agência definir o plano dele).
-const COLABORADOR_ONLY_PATHS = new Set(["/agentes"]);
+const STAFF_ONLY_PATHS = new Set(["/agentes"]);
 
 export function Sidebar({
   workspaceSlot,
   userSlot,
-  isColaborador,
+  isStaff,
+  isDeveloper,
   accessType,
   attentionCount = 0,
   open = false,
 }: {
   workspaceSlot: React.ReactNode;
   userSlot: React.ReactNode;
-  isColaborador: boolean;
+  isStaff: boolean;
+  isDeveloper: boolean;
   accessType: AccessType | null;
   attentionCount?: number;
   // Só controla visibilidade em telas < lg (drawer que desliza) — em telas >= lg a sidebar
@@ -233,9 +225,9 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
 
-  const visibleNavItems = isColaborador
+  const visibleNavItems = isStaff
     ? NAV_ITEMS
-    : NAV_ITEMS.filter((item) => !COLABORADOR_ONLY_PATHS.has(item.href) && canAccessPage(accessType, item.href));
+    : NAV_ITEMS.filter((item) => !STAFF_ONLY_PATHS.has(item.href) && canAccessPage(accessType, item.href));
 
   return (
     <aside
@@ -258,7 +250,7 @@ export function Sidebar({
         ))}
       </nav>
 
-      {isColaborador && (
+      {isDeveloper && (
         <>
           <div className="mt-5 mb-1.5 px-3 text-[10px] font-bold uppercase tracking-wider text-sidebar-muted">Agência</div>
           <nav className="flex flex-col gap-1">

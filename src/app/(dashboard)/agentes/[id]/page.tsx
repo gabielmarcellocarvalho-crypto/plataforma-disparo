@@ -9,9 +9,9 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
 export default async function AgentEditPage({ params }: { params: Promise<{ id: string }> }) {
-  await assertPageAccess("/agentes", { colaboradorOnly: true });
+  await assertPageAccess("/agentes", { staffOnly: true });
   const { id } = await params;
-  const { isColaborador } = await getCurrentWorkspace();
+  const { isStaff } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const { data: agentRow, error: agentError } = await supabase
@@ -84,7 +84,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
         totalCostUsd={totalCostUsd}
         media={mediaRows || []}
         knowledge={knowledgeRows || []}
-        canManage={isColaborador}
+        canManage={isStaff}
       />
     </div>
   );

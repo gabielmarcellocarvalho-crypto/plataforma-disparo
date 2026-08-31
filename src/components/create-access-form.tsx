@@ -6,9 +6,15 @@ import { ACCESS_TYPES, type AccessType } from "@/lib/access-types";
 
 const INITIAL: CreateAccessState = { error: null };
 
+const ROLE_OPTIONS = [
+  { key: "cliente" as const, label: "Cliente", description: "Vê só o workspace dele, sem custo/margem, páginas limitadas pelo plano." },
+  { key: "colaborador" as const, label: "Colaborador", description: "Acesso completo (agentes, custo, config), mas só nos workspace(s) que você escolher abaixo." },
+  { key: "developer" as const, label: "Developer", description: "Acesso total — enxerga e opera todos os workspaces, cria/remove cliente, mexe em Acessos/Calculadora." },
+];
+
 export function CreateAccessForm({ workspaces }: { workspaces: { id: string; name: string }[] }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const [role, setRole] = useState<"cliente" | "colaborador">("cliente");
+  const [role, setRole] = useState<"cliente" | "colaborador" | "developer">("cliente");
   const [accessType, setAccessType] = useState<AccessType | "">("");
   const [state, formAction, pending] = useActionState(createAccess, INITIAL);
 
@@ -19,30 +25,26 @@ export function CreateAccessForm({ workspaces }: { workspaces: { id: string; nam
     }
   }, [state.ok]);
 
+  const needsWorkspace = role === "cliente" || role === "colaborador";
+
   return (
     <form ref={formRef} action={formAction} className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-4 max-w-xl">
       <div>
         <h3 className="font-bold text-[15px]">Criar acesso</h3>
-        <p className="text-xs text-text-muted mt-0.5">
-          Cliente vê só o próprio workspace (sem custo, sem editar prompt). Colaborador é a equipe da agência e vê tudo.
-        </p>
+        <p className="text-xs text-text-muted mt-0.5">{ROLE_OPTIONS.find((o) => o.key === role)?.description}</p>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setRole("cliente")}
-          className={`flex-1 text-sm font-bold rounded-md px-3 py-2 border ${role === "cliente" ? "border-primary bg-primary-faint text-primary-strong" : "border-border text-text-muted"}`}
-        >
-          Cliente
-        </button>
-        <button
-          type="button"
-          onClick={() => setRole("colaborador")}
-          className={`flex-1 text-sm font-bold rounded-md px-3 py-2 border ${role === "colaborador" ? "border-primary bg-primary-faint text-primary-strong" : "border-border text-text-muted"}`}
-        >
-          Colaborador
-        </button>
+      <div className="grid grid-cols-3 gap-2">
+        {ROLE_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => setRole(opt.key)}
+            className={`text-sm font-bold rounded-md px-3 py-2 border ${role === opt.key ? "border-primary bg-primary-faint text-primary-strong" : "border-border text-text-muted"}`}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
       <input type="hidden" name="role" value={role} />
 
@@ -62,9 +64,12 @@ export function CreateAccessForm({ workspaces }: { workspaces: { id: string; nam
         <span className="text-xs text-text-muted">Você repassa essa senha pra pessoa. Ela pode trocar depois.</span>
       </div>
 
-      {role === "cliente" && (
+      {needsWorkspace && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-semibold">Cliente (workspace)</label>
+          <label className="text-sm font-semibold">Workspace</label>
+          {role === "colaborador" && (
+            <p className="text-xs text-text-muted -mt-0.5">Colaborador só vai enxergar esse workspace — pra dar acesso a mais de um, crie um acesso por vez.</p>
+          )}
           <select name="workspace_id" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary bg-surface">
             <option value="">Selecione…</option>
             {workspaces.map((w) => (

@@ -1,15 +1,15 @@
-import { getCurrentWorkspace, isCurrentUserColaborador } from "@/lib/workspace";
+import { getCurrentWorkspace, isCurrentUserDeveloper } from "@/lib/workspace";
 import { getDispatchStats } from "@/lib/dispatch-stats";
 import { CalculadoraForm } from "@/components/calculadora-form";
 
 export default async function CalculadoraPage() {
-  const isColaborador = await isCurrentUserColaborador();
+  const isDeveloper = await isCurrentUserDeveloper();
 
-  if (!isColaborador) {
+  if (!isDeveloper) {
     return (
       <div className="bg-surface border border-border rounded-lg shadow-sm p-10 text-center text-text-muted">
         <p className="font-semibold text-text">Acesso restrito</p>
-        <p className="text-sm mt-1">Essa área é só pra colaboradores da agência.</p>
+        <p className="text-sm mt-1">Essa área é só pra quem tem acesso total da agência.</p>
       </div>
     );
   }

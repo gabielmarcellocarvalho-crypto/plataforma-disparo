@@ -12,15 +12,15 @@ import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
 export default async function ConfiguracoesPage() {
   await assertPageAccess("/configuracoes");
-  const { workspace, isColaborador } = await getCurrentWorkspace();
+  const { workspace, isStaff } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const [{ data: instances }, apiKeys, { data: workspaceRow }] = await Promise.all([
     workspace
       ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
       : Promise.resolve({ data: [] }),
-    isColaborador ? listApiKeys() : Promise.resolve([]),
-    isColaborador && workspace
+    isStaff ? listApiKeys() : Promise.resolve([]),
+    isStaff && workspace
       ? supabase.from("workspaces").select("plan, email_from, logo_url, brand_color").eq("id", workspace.id).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
@@ -34,11 +34,11 @@ export default async function ConfiguracoesPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Configurações</h1>
         <p className="text-text-muted text-sm mt-1">
-          {isColaborador ? `Conexões do workspace ${workspace?.name}.` : "Conecte ou reconecte seu número de WhatsApp aqui."}
+          {isStaff ? `Conexões do workspace ${workspace?.name}.` : "Conecte ou reconecte seu número de WhatsApp aqui."}
         </p>
       </div>
 
-      {isColaborador && (
+      {isStaff && (
         <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
           <h3 className="font-bold text-[15px] mb-1">Plano do workspace</h3>
           <p className="text-xs text-text-muted mb-4">Define até onde vai o funil de conversão mostrado na Visão geral desse cliente.</p>
@@ -49,7 +49,7 @@ export default async function ConfiguracoesPage() {
       <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
         <h3 className="font-bold text-[15px] mb-1">WhatsApp — disparo em massa</h3>
         <p className="text-xs text-text-muted mb-4">
-          {isColaborador
+          {isStaff
             ? "Número de disparo em massa (sem IA). Pra número com IA respondendo, use a tela de Agentes."
             : "Se o número desconectar (QR expirado, troca de aparelho), reconecte por aqui."}
         </p>
@@ -63,7 +63,7 @@ export default async function ConfiguracoesPage() {
         />
       </div>
 
-      {isColaborador && (
+      {isStaff && (
         <>
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">
             <h3 className="font-bold text-[15px] mb-1">E-mail</h3>

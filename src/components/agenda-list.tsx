@@ -15,8 +15,6 @@ type Task = {
   contact_name: string | null;
   company_id: string | null;
   company_name: string | null;
-  deal_id: string | null;
-  deal_name: string | null;
   responsible_user_id: string | null;
 };
 
@@ -28,13 +26,23 @@ function formatDateShort(iso: string) {
 
 const GROUP_ORDER: TaskGroup[] = ["atrasadas", "hoje", "proximos", "sem_data", "concluidas"];
 
-function TaskRow({ task, onToggle }: { task: Task; onToggle: (id: string, completed: boolean) => void }) {
+// Cor de destaque por grupo — mesmo padrão visual de "prioridade" já usado nos badges de data
+// (bg-danger-soft pra atrasada); dá pra escanear a lista sem ler o rótulo do grupo.
+const GROUP_ACCENT: Record<TaskGroup, string> = {
+  atrasadas: "border-l-danger",
+  hoje: "border-l-primary",
+  proximos: "border-l-border",
+  sem_data: "border-l-border",
+  concluidas: "border-l-success",
+};
+
+function TaskRow({ task, onToggle, accent }: { task: Task; onToggle: (id: string, completed: boolean) => void; accent: string }) {
   const overdue = isTaskOverdue(task.due_at, task.completed_at);
-  const link = task.deal_name ? "/negocios" : task.company_name ? "/empresas" : task.contact_name ? "/crm" : null;
-  const linkLabel = task.deal_name || task.company_name || task.contact_name;
+  const link = task.company_name ? "/empresas" : task.contact_name ? "/crm" : null;
+  const linkLabel = task.company_name || task.contact_name;
 
   return (
-    <div className="flex items-start gap-3 bg-surface border border-border rounded-lg px-3 py-2.5">
+    <div className={`flex items-start gap-3 bg-surface border border-l-[3px] border-border ${accent} rounded-lg px-3 py-2.5`}>
       <input
         type="checkbox"
         checked={Boolean(task.completed_at)}
@@ -104,14 +112,30 @@ export function AgendaList({ tasks: initialTasks, responsibles }: { tasks: Task[
             </h3>
             <div className="flex flex-col gap-1.5">
               {items.map((t) => (
-                <TaskRow key={t.id} task={t} onToggle={handleToggle} />
+                <TaskRow key={t.id} task={t} onToggle={handleToggle} accent={GROUP_ACCENT[key]} />
               ))}
             </div>
           </div>
         );
       })}
 
-      {filtered.length === 0 && <p className="text-sm text-text-muted">Nenhuma tarefa por aqui.</p>}
+      {filtered.length === 0 && (
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-10 flex flex-col items-center text-center gap-2">
+          <span className="grid place-items-center w-12 h-12 rounded-full bg-primary-faint text-primary-strong" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+              <path d="m9 16 2 2 4-4" />
+            </svg>
+          </span>
+          <p className="font-semibold text-text">Nenhuma tarefa por aqui</p>
+          <p className="text-sm text-text-muted max-w-xs">
+            Crie uma tarefa com o botão &quot;+ Tarefa&quot; acima, ou direto pelo drawer de um contato/empresa.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

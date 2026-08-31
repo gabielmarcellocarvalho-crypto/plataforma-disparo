@@ -1,5 +1,5 @@
-// Helpers de Tarefas/Atividades — conceito paralelo a deal-stages.ts/crm-stages.ts, sem estágio
-// nenhum (só pendente/concluída + data de vencimento).
+// Helpers de Tarefas/Atividades — conceito paralelo a crm-stages.ts, sem estágio nenhum (só
+// pendente/concluída + data de vencimento).
 export type TaskGroup = "atrasadas" | "hoje" | "proximos" | "sem_data" | "concluidas";
 
 export function isTaskOverdue(dueAt: string | null, completedAt: string | null): boolean {

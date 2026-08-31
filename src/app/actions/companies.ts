@@ -61,7 +61,7 @@ export async function addCompany(_prevState: ActionResult, formData: FormData): 
   return { error: null, ok: true };
 }
 
-// Autocomplete usado no form de contato/negócio pra vincular a uma empresa existente.
+// Autocomplete usado no form de contato/tarefa pra vincular a uma empresa existente.
 export async function searchCompanies(workspaceId: string, query: string): Promise<CompanyRow[]> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace || workspace.id !== workspaceId) return [];
@@ -84,19 +84,17 @@ export async function searchCompanies(workspaceId: string, query: string): Promi
 export type CompanyNote = { id: string; author_name: string | null; content: string; created_at: string };
 export type CompanyDetail = CompanyRow & { updated_at: string };
 export type CompanyContactRef = { id: string; name: string | null; phone: string | null; email: string | null };
-export type CompanyDealRef = { id: string; name: string; amount: number | null; status: string; stage_id: string };
 
 export async function getCompanyDetail(companyId: string): Promise<{
   company: CompanyDetail;
   notes: CompanyNote[];
   contacts: CompanyContactRef[];
-  deals: CompanyDealRef[];
 } | null> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return null;
 
   const supabase = await createClient();
-  const [{ data: company }, { data: notes }, { data: contacts }, { data: deals }] = await Promise.all([
+  const [{ data: company }, { data: notes }, { data: contacts }] = await Promise.all([
     supabase
       .from("companies")
       .select("id, name, domain, website, phone, industry, custom_fields, created_at, updated_at")
@@ -113,15 +111,10 @@ export async function getCompanyDetail(companyId: string): Promise<{
       .select("id, name, phone, email")
       .eq("company_id", companyId)
       .eq("workspace_id", workspace.id),
-    supabase
-      .from("deals")
-      .select("id, name, amount, status, stage_id")
-      .eq("company_id", companyId)
-      .eq("workspace_id", workspace.id),
   ]);
   if (!company) return null;
 
-  return { company, notes: notes || [], contacts: contacts || [], deals: deals || [] };
+  return { company, notes: notes || [], contacts: contacts || [] };
 }
 
 export async function updateCompanyInfo(
@@ -195,7 +188,6 @@ export async function deleteCompany(id: string): Promise<ActionResult> {
 
   revalidatePath("/empresas");
   revalidatePath("/crm");
-  revalidatePath("/negocios");
   return { error: null, ok: true };
 }
 

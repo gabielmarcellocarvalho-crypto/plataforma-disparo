@@ -4,13 +4,13 @@ import { secureEqual } from "@/lib/secure-compare";
 
 // Roda periodicamente (disparo externo configurado pelo usuário, mesmo esquema já usado pro
 // dispatch-campaigns — não está no vercel.json de propósito). Avalia as automações V1 (regras fixas,
-// sem builder visual): negócio parado / contato parado, cada uma criando uma tarefa de follow-up se
-// ainda não existir uma aberta pra aquele registro+regra (evita duplicar a cada execução).
+// sem builder visual): contato parado, criando uma tarefa de follow-up se ainda não existir uma
+// aberta pra aquele registro+regra (evita duplicar a cada execução).
 export const maxDuration = 60;
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
-async function hasOpenAutomationTask(supabase: AdminClient, ruleId: string, column: "deal_id" | "contact_id", recordId: string): Promise<boolean> {
+async function hasOpenAutomationTask(supabase: AdminClient, ruleId: string, column: "contact_id", recordId: string): Promise<boolean> {
   const { count } = await supabase
     .from("tasks")
     .select("id", { count: "exact", head: true })
@@ -36,29 +36,6 @@ export async function GET(req: Request) {
 
   for (const rule of rules || []) {
     const cutoffIso = new Date(Date.now() - rule.days_threshold * 86400_000).toISOString();
-
-    if (rule.type === "deal_stale") {
-      const { data: deals } = await supabase
-        .from("deals")
-        .select("id, name, contact_id, company_id, responsible_user_id")
-        .eq("workspace_id", rule.workspace_id)
-        .eq("status", "open")
-        .lt("stage_changed_at", cutoffIso);
-
-      for (const deal of deals || []) {
-        if (await hasOpenAutomationTask(supabase, rule.id, "deal_id", deal.id)) continue;
-        const { error } = await supabase.from("tasks").insert({
-          workspace_id: rule.workspace_id,
-          title: `Negócio parado: ${deal.name}`,
-          deal_id: deal.id,
-          contact_id: deal.contact_id,
-          company_id: deal.company_id,
-          responsible_user_id: deal.responsible_user_id,
-          automation_rule_id: rule.id,
-        });
-        if (!error) tasksCreated++;
-      }
-    }
 
     if (rule.type === "contact_stale") {
       const { data: contacts } = await supabase

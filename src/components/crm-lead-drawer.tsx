@@ -5,8 +5,6 @@ import Link from "next/link";
 import { getContactDetail, updateContactInfo, updateContactStage, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
-import { getDealsForContact, quickCreateDealForContact, type ContactDealRef } from "@/app/actions/deals";
-import { formatDealAmount } from "@/lib/deal-stages";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
 import { isTaskOverdue } from "@/lib/tasks";
 
@@ -42,10 +40,8 @@ export function CrmLeadDrawer({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const [deals, setDeals] = useState<ContactDealRef[]>([]);
   const [companyQuery, setCompanyQuery] = useState("");
   const [companyOptions, setCompanyOptions] = useState<CompanyRow[]>([]);
-  const [dealNameDraft, setDealNameDraft] = useState("");
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [taskTitleDraft, setTaskTitleDraft] = useState("");
 
@@ -56,9 +52,7 @@ export function CrmLeadDrawer({
     setSaved(false);
     setCompanyQuery("");
     setCompanyOptions([]);
-    setDealNameDraft("");
     setTaskTitleDraft("");
-    getDealsForContact(contactId).then(setDeals);
     getTasksForRecord("contact", contactId).then(setTasks);
     getContactDetail(contactId).then((result) => {
       if (!result) {
@@ -163,20 +157,6 @@ export function CrmLeadDrawer({
       const result = await createCompanyAndLinkContact(contactId, companyName);
       if (result.error) setError(result.error);
       else setContact((c) => (c ? { ...c, company_id: result.companyId || null, company_name: companyName } : c));
-    });
-  }
-
-  function handleQuickCreateDeal() {
-    if (!contactId || !dealNameDraft.trim()) return;
-    const dealName = dealNameDraft.trim();
-    setDealNameDraft("");
-    startTransition(async () => {
-      const result = await quickCreateDealForContact(contactId, dealName);
-      if (result.error) setError(result.error);
-      else {
-        const refreshed = await getDealsForContact(contactId);
-        setDeals(refreshed);
-      }
     });
   }
 
@@ -389,42 +369,6 @@ export function CrmLeadDrawer({
                   )}
                 </div>
               )}
-
-              <div className="flex flex-col gap-2 border-t border-border pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold">Negócios ({deals.length})</h3>
-                </div>
-                {deals.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    {deals.map((d) => (
-                      <Link
-                        key={d.id}
-                        href="/negocios"
-                        className="text-sm bg-surface-2 border border-border rounded-md px-3 py-2 flex items-center justify-between hover:border-primary-soft"
-                      >
-                        <span>{d.name}</span>
-                        <span className="text-xs font-mono text-text-muted">{formatDealAmount(d.amount)}</span>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <input
-                    value={dealNameDraft}
-                    onChange={(e) => setDealNameDraft(e.target.value)}
-                    placeholder="nome do novo negócio…"
-                    className="flex-1 border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleQuickCreateDeal}
-                    disabled={pending || !dealNameDraft.trim()}
-                    className="border border-border text-xs font-bold px-3 py-2 rounded-md cursor-pointer disabled:opacity-60 shrink-0"
-                  >
-                    + Negócio
-                  </button>
-                </div>
-              </div>
 
               <div className="flex flex-col gap-2 border-t border-border pt-4">
                 <h3 className="text-sm font-bold">Tarefas ({tasks.filter((t) => !t.completed_at).length})</h3>

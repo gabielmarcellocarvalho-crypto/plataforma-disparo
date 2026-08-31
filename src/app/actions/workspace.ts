@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserColaborador } from "@/lib/workspace";
+import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserStaff, isCurrentUserDeveloper } from "@/lib/workspace";
 import { isWorkspacePlan } from "@/lib/workspace-plan";
 import { extractDominantColor } from "@/lib/logo-color";
 
@@ -40,7 +40,7 @@ export async function setActiveWorkspace(workspaceId: string) {
 // Muda o plano de um workspace já existente (ex.: cliente fez upgrade de SDR pra SDR + Closer) —
 // ajusta o funil e as taxas mostradas na Visão geral pra esse workspace a partir de agora.
 export async function updateWorkspacePlan(workspaceId: string, plan: string): Promise<CreateWorkspaceState> {
-  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode mudar o plano." };
+  if (!(await isCurrentUserStaff())) return { error: "Só a agência pode mudar o plano." };
   if (!isWorkspacePlan(plan)) return { error: "Plano inválido." };
 
   const supabase = await createClient();
@@ -55,7 +55,7 @@ export async function updateWorkspacePlan(workspaceId: string, plan: string): Pr
 // Remetente das campanhas de e-mail desse workspace ("Nome <email@dominio.com.br>") — cada cliente
 // pode ter seu próprio domínio verificado no Resend, não é 1 remetente global pra todo mundo.
 export async function updateEmailFrom(workspaceId: string, emailFrom: string): Promise<CreateWorkspaceState> {
-  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode mudar o remetente." };
+  if (!(await isCurrentUserStaff())) return { error: "Só a agência pode mudar o remetente." };
 
   const trimmed = emailFrom.trim();
   const emailMatch = trimmed.match(/<([^>]+)>/) ?? [null, trimmed];
@@ -76,7 +76,7 @@ export type UploadLogoResult = { error: string | null; logoUrl?: string; brandCo
 // automaticamente a partir da cor dominante da própria imagem — não existe seletor de cor manual:
 // trocar a logo é a forma de trocar a cor.
 export async function uploadWorkspaceLogo(workspaceId: string, formData: FormData): Promise<UploadLogoResult> {
-  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode trocar a logo." };
+  if (!(await isCurrentUserStaff())) return { error: "Só a agência pode trocar a logo." };
 
   const file = formData.get("logo");
   if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo de imagem." };
@@ -111,10 +111,11 @@ export async function uploadWorkspaceLogo(workspaceId: string, formData: FormDat
 }
 
 // Remove um workspace inteiro — apaga em cascata TODOS os dados dele (contatos, agentes, conversas,
-// campanhas). Só colaborador (equipe da agência). Usa o admin client porque não há policy de DELETE
-// em workspaces (RLS bloquearia o client do usuário); a autorização é feita aqui, no servidor.
+// campanhas). Só developer (destrutivo e cross-workspace, não faz sentido liberar pra colaborador
+// escopado a 1 cliente). Usa o admin client porque não há policy de DELETE em workspaces (RLS
+// bloquearia o client do usuário); a autorização é feita aqui, no servidor.
 export async function deleteWorkspace(workspaceId: string): Promise<{ error: string | null }> {
-  if (!(await isCurrentUserColaborador())) return { error: "Só a agência pode remover um workspace." };
+  if (!(await isCurrentUserDeveloper())) return { error: "Só developer pode remover um workspace." };
 
   const admin = createAdminClient();
   const { error } = await admin.from("workspaces").delete().eq("id", workspaceId);

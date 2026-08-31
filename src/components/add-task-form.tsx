@@ -4,7 +4,6 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { addTask, type ActionResult } from "@/app/actions/tasks";
 import { searchCompanies, type CompanyRow } from "@/app/actions/companies";
 import { searchWorkspaceContacts, type ContactSearchResult } from "@/app/actions/campaigns";
-import { searchDeals, type DealSearchResult } from "@/app/actions/deals";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
@@ -23,11 +22,6 @@ export function AddTaskForm({ workspaceId, responsibles }: { workspaceId: string
   const [companyOptions, setCompanyOptions] = useState<CompanyRow[]>([]);
   const [companyId, setCompanyId] = useState("");
   const [companyLabel, setCompanyLabel] = useState("");
-
-  const [dealQuery, setDealQuery] = useState("");
-  const [dealOptions, setDealOptions] = useState<DealSearchResult[]>([]);
-  const [dealId, setDealId] = useState("");
-  const [dealLabel, setDealLabel] = useState("");
 
   useEffect(() => {
     if (state.ok) dialogRef.current?.close();
@@ -51,15 +45,6 @@ export function AddTaskForm({ workspaceId, responsibles }: { workspaceId: string
     return () => clearTimeout(t);
   }, [companyQuery, workspaceId]);
 
-  useEffect(() => {
-    if (dealQuery.trim().length < 2) {
-      setDealOptions([]);
-      return;
-    }
-    const t = setTimeout(() => searchDeals(workspaceId, dealQuery).then(setDealOptions), 250);
-    return () => clearTimeout(t);
-  }, [dealQuery, workspaceId]);
-
   return (
     <>
       <button
@@ -75,7 +60,6 @@ export function AddTaskForm({ workspaceId, responsibles }: { workspaceId: string
 
           <input type="hidden" name="contactId" value={contactId} />
           <input type="hidden" name="companyId" value={companyId} />
-          <input type="hidden" name="dealId" value={dealId} />
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor="title" className="text-sm font-semibold">Título</label>
@@ -131,25 +115,6 @@ export function AddTaskForm({ workspaceId, responsibles }: { workspaceId: string
                 {companyOptions.map((c) => (
                   <button type="button" key={c.id} onClick={() => { setCompanyId(c.id); setCompanyLabel(c.name); setCompanyQuery(""); setCompanyOptions([]); }} className="text-left text-xs px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer">
                     {c.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-semibold">Negócio (opcional)</label>
-            <input
-              value={dealQuery || dealLabel}
-              onChange={(e) => { setDealQuery(e.target.value); setDealLabel(""); setDealId(""); }}
-              placeholder="buscar negócio…"
-              className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
-            />
-            {dealOptions.length > 0 && (
-              <div className="flex flex-col border border-border rounded-md overflow-hidden">
-                {dealOptions.map((d) => (
-                  <button type="button" key={d.id} onClick={() => { setDealId(d.id); setDealLabel(d.name); setDealQuery(""); setDealOptions([]); }} className="text-left text-xs px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer">
-                    {d.name}
                   </button>
                 ))}
               </div>

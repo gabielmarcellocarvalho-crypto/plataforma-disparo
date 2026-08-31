@@ -5,10 +5,6 @@ import { updateAutomationRule, type AutomationRule } from "@/app/actions/automat
 import type { AutomationRuleType } from "@/lib/automation-rules";
 
 const RULE_COPY: Record<AutomationRuleType, { title: string; description: (days: number) => string }> = {
-  deal_stale: {
-    title: "Negócio parado",
-    description: (days) => `Quando um negócio aberto ficar ${days} dia(s) sem mudar de estágio, cria uma tarefa de follow-up automaticamente.`,
-  },
   contact_stale: {
     title: "Contato parado",
     description: (days) => `Quando um contato (fora concluído/descartado) ficar ${days} dia(s) sem mudar de fase, cria uma tarefa de follow-up automaticamente.`,
@@ -35,10 +31,15 @@ function RuleCard({ workspaceId, rule }: { workspaceId: string; rule: Automation
   const copy = RULE_COPY[rule.type];
 
   return (
-    <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-bold">{copy.title}</h3>
-        <label className="relative inline-flex items-center cursor-pointer">
+    <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-3 max-w-xl">
+      <div className="flex items-center gap-3">
+        <span className="grid place-items-center w-10 h-10 rounded-lg bg-primary-soft text-primary-strong shrink-0" aria-hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          </svg>
+        </span>
+        <h3 className="text-base font-bold flex-1">{copy.title}</h3>
+        <label className="relative inline-flex items-center cursor-pointer shrink-0">
           <input
             type="checkbox"
             checked={enabled}
@@ -55,7 +56,7 @@ function RuleCard({ workspaceId, rule }: { workspaceId: string; rule: Automation
 
       <p className="text-sm text-text-muted">{copy.description(days)}</p>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 border-t border-border pt-3">
         <label className="text-xs font-semibold text-text-muted">Dias parado:</label>
         <input
           type="number"
@@ -66,17 +67,16 @@ function RuleCard({ workspaceId, rule }: { workspaceId: string; rule: Automation
           disabled={pending}
           className="w-20 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-60"
         />
+        {saved && <span className="text-xs font-semibold text-success ml-1">Salvo.</span>}
+        {error && <span className="text-xs text-danger font-medium ml-1">{error}</span>}
       </div>
-
-      {saved && <span className="text-xs font-semibold text-success">Salvo.</span>}
-      {error && <span className="text-xs text-danger font-medium">{error}</span>}
     </div>
   );
 }
 
 export function AutomationRulesForm({ workspaceId, rules }: { workspaceId: string; rules: AutomationRule[] }) {
   return (
-    <div className="grid sm:grid-cols-2 gap-4">
+    <div className="flex flex-col gap-4">
       {rules.map((rule) => (
         <RuleCard key={rule.type} workspaceId={workspaceId} rule={rule} />
       ))}

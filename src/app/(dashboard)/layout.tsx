@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { workspace, isColaborador, allWorkspaces, accessType } = await getCurrentWorkspace();
+  const { workspace, isStaff, isDeveloper, allWorkspaces, accessType } = await getCurrentWorkspace();
 
   // Pontos de atenção (agente travado ou só sinalizando) desse workspace — vira o badge da aba Conversas.
   const { count: attentionCount } = workspace
@@ -23,11 +23,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
         .or("needs_attention.eq.true,flagged_reason.not.is.null")
     : { count: 0 };
 
-  // Nenhum workspace existe ainda: só um colaborador consegue criar o primeiro.
+  // Nenhum workspace existe ainda: só developer consegue criar o primeiro (RLS de "workspaces"
+  // exige is_agency_admin() — colaborador escopado não consegue mesmo se tentasse).
   if (!workspace) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-bg px-4 gap-4">
-        {isColaborador ? (
+        {isDeveloper ? (
           <CreateWorkspaceForm />
         ) : (
           <p className="text-text-muted text-sm">
@@ -38,12 +39,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
-  const workspaceSlot = isColaborador ? (
+  // Switcher aparece pra qualquer staff com mais de 1 workspace vinculado (colaborador pode ter mais
+  // de um, developer sempre vê todos) — "+ novo cliente" só developer (mesma trava do RLS acima).
+  const workspaceSlot = isStaff ? (
     <div className="flex flex-col gap-2">
-      <WorkspaceSwitcher workspaces={allWorkspaces} currentId={workspace.id} />
-      <Link href="/novo-cliente" className="text-xs font-bold text-sidebar-text hover:text-white transition-colors">
-        + novo cliente
-      </Link>
+      <WorkspaceSwitcher workspaces={allWorkspaces} currentId={workspace.id} canDelete={isDeveloper} />
+      {isDeveloper && (
+        <Link href="/novo-cliente" className="text-xs font-bold text-sidebar-text hover:text-white transition-colors">
+          + novo cliente
+        </Link>
+      )}
     </div>
   ) : (
     <div className="text-sm font-extrabold text-white truncate">{workspace.name}</div>
@@ -80,7 +85,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <DashboardShell
       workspaceSlot={workspaceSlot}
       userSlot={userSlot}
-      isColaborador={isColaborador}
+      isStaff={isStaff}
+      isDeveloper={isDeveloper}
       accessType={accessType}
       attentionCount={attentionCount ?? 0}
     >

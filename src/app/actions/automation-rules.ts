@@ -9,7 +9,7 @@ export type ActionResult = { error: string | null; ok?: boolean };
 export type AutomationRule = { type: AutomationRuleType; enabled: boolean; days_threshold: number };
 
 const DEFAULT_DAYS_THRESHOLD = 3;
-const RULE_TYPES: AutomationRuleType[] = ["deal_stale", "contact_stale"];
+const RULE_TYPES: AutomationRuleType[] = ["contact_stale"];
 
 // Sempre retorna as 2 regras, com default (desligada, 3 dias) pros tipos sem linha ainda no banco —
 // a UI não precisa tratar "regra inexistente" como caso especial.

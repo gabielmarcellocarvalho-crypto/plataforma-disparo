@@ -38,7 +38,7 @@ export default async function OverviewPage({
 }) {
   const sp = await searchParams;
   const period = resolvePeriod(sp);
-  const { workspace, isColaborador } = await getCurrentWorkspace();
+  const { workspace, isStaff } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   // Precisa do plano ANTES de montar o funil (ele decide onde o funil termina) — por isso essa
@@ -96,7 +96,7 @@ export default async function OverviewPage({
   // Continua sempre "mês corrente", independente do período escolhido no filtro: orçamento é mensal por natureza.
   let costAlert: { ratioPct: number; costBrl: number; budgetBrl: number } | null = null;
   let attentionAlerts: Awaited<ReturnType<typeof getAttentionAlerts>> = [];
-  if (workspace && isColaborador) {
+  if (workspace && isStaff) {
     const { data: budgetRow } = await supabase
       .from("workspaces")
       .select("monthly_cost_budget_brl, cost_alert_pct")
@@ -118,7 +118,7 @@ export default async function OverviewPage({
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
-        {isColaborador && <AttentionCenterCard alerts={attentionAlerts} />}
+        {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
       </div>
 
       {costAlert && (

@@ -9,8 +9,8 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
 export default async function AgentesPage() {
-  await assertPageAccess("/agentes", { colaboradorOnly: true });
-  const { workspace, isColaborador } = await getCurrentWorkspace();
+  await assertPageAccess("/agentes", { staffOnly: true });
+  const { workspace, isStaff } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const [{ data: agents, error: agentsError }, { data: attentionContacts }, { data: usageRows }, { data: officialInstances }] = workspace
@@ -89,7 +89,7 @@ export default async function AgentesPage() {
             Diferente de um número de disparo em massa (sem IA) — esse você conecta em Configurações.
           </p>
         </div>
-        {isColaborador && (
+        {isStaff && (
           <AddAgentForm
             availableInstances={availableInstances.map((i) => ({
               id: i.id,
@@ -116,7 +116,7 @@ export default async function AgentesPage() {
                 key={agent.id}
                 agent={{ ...agent, whatsapp_instance_channel: (linkedInstance?.channel as "360dialog" | "metacloud" | undefined) ?? null }}
                 totalCostUsd={costByAgent.get(agent.id) || 0}
-                canManage={isColaborador}
+                canManage={isStaff}
               />
             );
           })}

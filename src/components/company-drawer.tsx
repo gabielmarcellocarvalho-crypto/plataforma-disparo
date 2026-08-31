@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import Link from "next/link";
 import {
   getCompanyDetail,
   updateCompanyInfo,
@@ -9,9 +8,7 @@ import {
   type CompanyDetail,
   type CompanyNote,
   type CompanyContactRef,
-  type CompanyDealRef,
 } from "@/app/actions/companies";
-import { formatDealAmount } from "@/lib/deal-stages";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
 import { isTaskOverdue } from "@/lib/tasks";
 
@@ -25,7 +22,6 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
   const [company, setCompany] = useState<CompanyDetail | null>(null);
   const [notes, setNotes] = useState<CompanyNote[]>([]);
   const [contacts, setContacts] = useState<CompanyContactRef[]>([]);
-  const [deals, setDeals] = useState<CompanyDealRef[]>([]);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
@@ -56,7 +52,6 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
       setCompany(result.company);
       setNotes(result.notes);
       setContacts(result.contacts);
-      setDeals(result.deals);
       setName(result.company.name || "");
       setDomain(result.company.domain || "");
       setWebsite(result.company.website || "");
@@ -147,9 +142,14 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
         ) : (
           <>
             <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border shrink-0">
-              <div className="min-w-0">
-                <h2 className="text-lg font-extrabold truncate">{company.name}</h2>
-                {company.domain && <span className="text-xs text-text-muted">{company.domain}</span>}
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="grid place-items-center w-12 h-12 rounded-full bg-primary-soft text-primary-strong text-sm font-bold shrink-0" aria-hidden>
+                  {company.name.trim().slice(0, 2).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-extrabold truncate">{company.name}</h2>
+                  {company.domain && <span className="text-xs text-text-muted">{company.domain}</span>}
+                </div>
               </div>
               <button type="button" onClick={onClose} aria-label="Fechar" className="text-text-muted hover:text-text cursor-pointer p-1 shrink-0">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -237,26 +237,6 @@ export function CompanyDrawer({ companyId, onClose }: { companyId: string | null
                       <div key={c.id} className="text-sm bg-surface-2 border border-border rounded-md px-3 py-2">
                         {c.name || c.phone || c.email || "sem nome"}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2.5 border-t border-border pt-4">
-                <h3 className="text-sm font-bold">Negócios ({deals.length})</h3>
-                {deals.length === 0 ? (
-                  <p className="text-xs text-text-muted">Nenhum negócio vinculado ainda.</p>
-                ) : (
-                  <div className="flex flex-col gap-1.5">
-                    {deals.map((d) => (
-                      <Link
-                        key={d.id}
-                        href="/negocios"
-                        className="text-sm bg-surface-2 border border-border rounded-md px-3 py-2 flex items-center justify-between hover:border-primary-soft"
-                      >
-                        <span>{d.name}</span>
-                        <span className="text-xs font-mono text-text-muted">{formatDealAmount(d.amount)}</span>
-                      </Link>
                     ))}
                   </div>
                 )}

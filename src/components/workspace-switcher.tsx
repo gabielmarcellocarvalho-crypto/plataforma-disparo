@@ -30,7 +30,17 @@ function TrashIcon() {
   );
 }
 
-export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: WorkspaceSummary[]; currentId: string }) {
+export function WorkspaceSwitcher({
+  workspaces,
+  currentId,
+  canDelete = false,
+}: {
+  workspaces: WorkspaceSummary[];
+  currentId: string;
+  // Só developer pode apagar workspace (destrutivo, cross-workspace) — colaborador escopado nem
+  // deveria ver o botão, já que a Server Action rejeitaria mesmo se ele tentasse.
+  canDelete?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +125,7 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
                 key={w.id}
                 className={`group flex items-center gap-1 px-1.5 ${active ? "" : "hover:bg-primary-faint"} ${confirming ? "bg-danger-soft" : ""}`}
               >
-                {confirming ? (
+                {confirming && canDelete ? (
                   <div className="flex items-center justify-between gap-2 w-full px-1.5 py-2">
                     <span className="text-xs font-semibold text-danger truncate">Apagar tudo de &quot;{w.name}&quot;?</span>
                     <div className="flex items-center gap-1 shrink-0">
@@ -151,14 +161,16 @@ export function WorkspaceSwitcher({ workspaces, currentId }: { workspaces: Works
                       </span>
                       <span className={`truncate ${active ? "font-bold text-primary-strong" : "font-semibold"}`}>{w.name}</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmingId(w.id)}
-                      aria-label={`Remover workspace ${w.name}`}
-                      className="shrink-0 p-1.5 rounded text-text-muted opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger-soft transition-all cursor-pointer"
-                    >
-                      <TrashIcon />
-                    </button>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingId(w.id)}
+                        aria-label={`Remover workspace ${w.name}`}
+                        className="shrink-0 p-1.5 rounded text-text-muted opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger-soft transition-all cursor-pointer"
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
                   </>
                 )}
               </div>

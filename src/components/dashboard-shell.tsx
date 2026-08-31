@@ -11,14 +11,16 @@ import type { AccessType } from "@/lib/access-types";
 export function DashboardShell({
   workspaceSlot,
   userSlot,
-  isColaborador,
+  isStaff,
+  isDeveloper,
   accessType,
   attentionCount,
   children,
 }: {
   workspaceSlot: React.ReactNode;
   userSlot: React.ReactNode;
-  isColaborador: boolean;
+  isStaff: boolean;
+  isDeveloper: boolean;
   accessType: AccessType | null;
   attentionCount: number;
   children: React.ReactNode;
@@ -35,7 +37,8 @@ export function DashboardShell({
       <Sidebar
         workspaceSlot={workspaceSlot}
         userSlot={userSlot}
-        isColaborador={isColaborador}
+        isStaff={isStaff}
+        isDeveloper={isDeveloper}
         accessType={accessType}
         attentionCount={attentionCount}
         open={open}

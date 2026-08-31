@@ -20,7 +20,7 @@ export default async function AutomacoesPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Automações</h1>
         <p className="text-text-muted text-sm mt-1">
-          Regras prontas que criam tarefas automaticamente quando negócios ou contatos ficam parados.
+          Regras prontas que criam tarefas automaticamente quando um contato fica parado.
         </p>
       </div>
 
