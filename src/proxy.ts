@@ -11,6 +11,8 @@ const RATE_LIMIT_RULES: { prefix: string; limit: number; windowMs: number }[] = 
   { prefix: "/api/webhook", limit: 120, windowMs: 60_000 },
   // Captura pública de lead — pode ser embarcado em site de cliente, tráfego real de visitante.
   { prefix: "/api/v1/leads", limit: 30, windowMs: 60_000 },
+  // Gatilho de workflow por webhook externo — mesma lógica: token na URL é a autenticação, não sessão.
+  { prefix: "/api/workflows/webhook", limit: 30, windowMs: 60_000 },
   // Cron externo (VPS) bate a cada minuto — folga pra retry sem abrir demais.
   { prefix: "/api/cron", limit: 10, windowMs: 60_000 },
 ];

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { secureEqual } from "@/lib/secure-compare";
+import { runWorkflowsTick } from "@/lib/workflow-engine";
 
 // Roda periodicamente (disparo externo configurado pelo usuário, mesmo esquema já usado pro
-// dispatch-campaigns — não está no vercel.json de propósito). Avalia as automações V1 (regras fixas,
-// sem builder visual): contato parado, criando uma tarefa de follow-up se ainda não existir uma
-// aberta pra aquele registro+regra (evita duplicar a cada execução).
+// dispatch-campaigns — não está no vercel.json de propósito). Avalia dois motores de automação:
+//   1. Regras V1 (fixas, sem builder visual): contato parado, criando uma tarefa de follow-up.
+//   2. Workflows (Fase 1, builder visual): matricula leads que batem no gatilho/público e avança
+//      execuções pendentes (workflow-engine.ts). Delay de horas/minutos precisa de execução
+//      frequente — igual ao dispatch-campaigns, o ideal é o cron externo bater aqui a cada minuto.
 export const maxDuration = 60;
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -60,5 +63,7 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, tasksCreated });
+  const { enrolled, processed } = await runWorkflowsTick();
+
+  return NextResponse.json({ ok: true, tasksCreated, workflowsEnrolled: enrolled, workflowRunsProcessed: processed });
 }

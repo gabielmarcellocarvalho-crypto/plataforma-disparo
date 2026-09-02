@@ -10,6 +10,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // /api/unsubscribe: link clicado pelo destinatário do e-mail de campanha, sem sessão nenhuma —
 // autenticado por token assinado na própria URL (ver src/lib/unsubscribe.ts).
 // /api/e: link de CTA da sequência de e-mail (redireciona pro WhatsApp), mesma lógica de token.
+// /api/workflows/webhook: gatilho de workflow chamado por sistema externo, sem sessão — o próprio
+// token opaco na URL é a autenticação (ver src/app/api/workflows/webhook/[token]/route.ts).
 const PUBLIC_PATHS = [
   "/login",
   "/esqueci-senha",
@@ -19,6 +21,7 @@ const PUBLIC_PATHS = [
   "/api/cron",
   "/api/unsubscribe",
   "/api/e",
+  "/api/workflows/webhook",
   "/politica-privacidade",
   "/termos-de-uso",
   "/exclusao-de-dados",
