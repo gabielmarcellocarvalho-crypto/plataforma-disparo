@@ -77,6 +77,31 @@ export async function getWorkflows(): Promise<WorkflowListRow[]> {
   }));
 }
 
+// Busca 1 workflow só (pra tela dedicada de edição, /automacoes/[workflowId]) — RLS já garante que só
+// vem se for do workspace certo, mas o eq() explícito documenta a intenção.
+export async function getWorkflow(workflowId: string): Promise<WorkflowListRow | null> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return null;
+
+  const supabase = await createClient();
+  const { data: w } = await supabase
+    .from("workflows")
+    .select("id, name, description, enabled, trigger_type, trigger_config, audience_config, stop_on_reply, stop_on_stage_change, respect_business_hours, allow_reentry, reentry_cooldown_hours, webhook_token")
+    .eq("id", workflowId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!w) return null;
+
+  const [{ count: stepCount }, { data: runs }] = await Promise.all([
+    supabase.from("workflow_steps").select("id", { count: "exact", head: true }).eq("workflow_id", workflowId),
+    supabase.from("workflow_runs").select("status").eq("workflow_id", workflowId),
+  ]);
+  const runningCount = (runs || []).filter((r) => r.status === "running" || r.status === "waiting").length;
+  const completedCount = (runs || []).filter((r) => r.status === "completed").length;
+
+  return { ...w, audience_config: (w.audience_config || {}) as AudienceConfig, step_count: stepCount || 0, running_count: runningCount, completed_count: completedCount };
+}
+
 type StepRow = { id: string; parent_step_id: string | null; branch: "yes" | "no" | null; position: number; step_type: WorkflowStepInput["step_type"]; config: unknown };
 
 // Reconstrói a árvore (passos de topo, com filhos SIM/NÃO embutidos nos de tipo 'condition') a

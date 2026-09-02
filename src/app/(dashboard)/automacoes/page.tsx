@@ -35,7 +35,7 @@ export default async function AutomacoesPage() {
         </p>
       </div>
 
-      <WorkflowList workspaceId={workspace.id} workflows={workflows} members={members} />
+      <WorkflowList workflows={workflows} members={members} />
 
       <div className="flex flex-col gap-2 border-t border-border pt-6">
         <div>

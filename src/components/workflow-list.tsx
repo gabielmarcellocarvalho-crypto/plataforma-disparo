@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { deleteWorkflow, toggleWorkflow, type WorkflowListRow } from "@/app/actions/workflows";
-import { WorkflowBuilder } from "@/components/workflow-builder";
 import { WorkflowRunHistory } from "@/components/workflow-run-history";
 import { STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
 import { TRIGGER_LABELS } from "@/lib/workflow-types";
-import { WORKFLOW_TEMPLATES, type WorkflowTemplateSeed } from "@/lib/workflow-templates";
+import { WORKFLOW_TEMPLATES } from "@/lib/workflow-templates";
 import { History, Pencil, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
 
 type Member = { id: string; name: string };
@@ -26,17 +26,14 @@ function audienceSummary(w: WorkflowListRow, members: Member[]): string {
   return `${stage} · ${resp}`;
 }
 
-export function WorkflowList({ workspaceId, workflows, members }: { workspaceId: string; workflows: WorkflowListRow[]; members: Member[] }) {
-  const [editing, setEditing] = useState<WorkflowListRow | null | "new">(null);
+export function WorkflowList({ workflows, members }: { workflows: WorkflowListRow[]; members: Member[] }) {
+  const router = useRouter();
   const [viewingRuns, setViewingRuns] = useState<WorkflowListRow | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
-  const [templateSeed, setTemplateSeed] = useState<WorkflowTemplateSeed | undefined>(undefined);
   const [pending, startTransition] = useTransition();
 
-  function startFromTemplate(seed?: WorkflowTemplateSeed) {
-    setTemplateSeed(seed);
-    setPickingTemplate(false);
-    setEditing("new");
+  function startFromTemplate(templateId?: string) {
+    router.push(templateId ? `/automacoes/novo?template=${templateId}` : "/automacoes/novo");
   }
 
   function handleToggle(w: WorkflowListRow) {
@@ -96,7 +93,7 @@ export function WorkflowList({ workspaceId, workflows, members }: { workspaceId:
                   <button type="button" onClick={() => setViewingRuns(w)} className="text-text-muted hover:text-text cursor-pointer p-1.5 rounded-md hover:bg-surface-2" aria-label="Ver execuções">
                     <History size={14} />
                   </button>
-                  <button type="button" onClick={() => setEditing(w)} className="text-text-muted hover:text-text cursor-pointer p-1.5 rounded-md hover:bg-surface-2" aria-label="Editar">
+                  <button type="button" onClick={() => router.push(`/automacoes/${w.id}`)} className="text-text-muted hover:text-text cursor-pointer p-1.5 rounded-md hover:bg-surface-2" aria-label="Editar">
                     <Pencil size={14} />
                   </button>
                   <button type="button" onClick={() => handleDelete(w)} disabled={pending} className="text-danger hover:brightness-90 cursor-pointer p-1.5 rounded-md hover:bg-surface-2" aria-label="Excluir">
@@ -148,7 +145,7 @@ export function WorkflowList({ workspaceId, workflows, members }: { workspaceId:
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => startFromTemplate(t.seed)}
+                    onClick={() => startFromTemplate(t.id)}
                     className="text-left border border-border rounded-lg p-3 hover:border-primary-soft hover:bg-surface-2 cursor-pointer flex items-start gap-2.5"
                   >
                     <span className="grid place-items-center w-8 h-8 rounded-lg bg-primary-soft text-primary-strong shrink-0" aria-hidden>
@@ -164,17 +161,6 @@ export function WorkflowList({ workspaceId, workflows, members }: { workspaceId:
             </div>
           </div>
         </>
-      )}
-
-      {editing !== null && (
-        <WorkflowBuilder
-          workspaceId={workspaceId}
-          members={members}
-          existing={editing === "new" ? null : editing}
-          template={editing === "new" ? templateSeed : undefined}
-          onClose={() => setEditing(null)}
-          onSaved={() => setEditing(null)}
-        />
       )}
 
       {viewingRuns && <WorkflowRunHistory workflowId={viewingRuns.id} workflowName={viewingRuns.name} onClose={() => setViewingRuns(null)} />}

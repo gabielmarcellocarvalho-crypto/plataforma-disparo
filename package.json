@@ -21,6 +21,7 @@
     "@visx/shape": "^4.0.0",
     "clsx": "^2.1.1",
     "d3-array": "^3.2.4",
+    "framer-motion": "^13.1.1",
     "jpeg-js": "^0.4.4",
     "lucide-react": "^1.38.0",
     "motion": "^12.42.2",
