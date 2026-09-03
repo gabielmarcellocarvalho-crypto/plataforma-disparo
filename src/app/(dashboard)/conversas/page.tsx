@@ -44,6 +44,38 @@ async function fetchRecentMessages(supabase: Awaited<ReturnType<typeof createCli
   return all;
 }
 
+type ContactRow = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  photo_url: string | null;
+  stage: string;
+  needs_attention: boolean;
+  attention_reason: string | null;
+  flagged_reason: string | null;
+  responsible_user_id: string | null;
+  whatsapp_instance_id: string | null;
+};
+
+// Mesma paginação de 1000 em 1000 de fetchRecentMessages — filtrar por workspace_id direto em vez de
+// `.in("id", contactIds)` evita depender do tamanho da lista de ids (ver comentário mais abaixo).
+async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
+  const all: ContactRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data } = await supabase
+      .from("contacts")
+      .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
+      .eq("workspace_id", workspaceId)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
 export default async function ConversasPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
@@ -79,18 +111,19 @@ export default async function ConversasPage() {
 
   const contactIds = Array.from(new Set((messages || []).map((m) => m.contact_id)));
 
-  const [{ data: contacts }, { data: originRows }, vendors] = await Promise.all([
-    contactIds.length > 0
-      ? supabase
-          .from("contacts")
-          .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
-          .in("id", contactIds)
-      : Promise.resolve({ data: [] }),
+  // Antes filtrava por `.in("id", contactIds)`/`.in("contact_id", contactIds)` — com centenas de ids
+  // (ex.: workspace com disparo em massa recente) isso vira uma URL gigante (cada uuid tem 36
+  // caracteres) que estoura o limite de tamanho de URL do servidor e falha calada (o erro nunca era
+  // checado), fazendo a lista de Conversas parecer vazia mesmo com mensagens reais no banco. Filtrar
+  // direto por workspace_id evita esse teto por completo, com a mesma paginação de 1000 já usada pras
+  // mensagens (Max Rows do Supabase).
+  const [contacts, { data: originRows }, vendors] = await Promise.all([
+    fetchAllContacts(supabase, workspace.id),
     contactIds.length > 0
       ? supabase
           .from("campaign_recipients")
-          .select("contact_id, sent_at, campaigns(name)")
-          .in("contact_id", contactIds)
+          .select("contact_id, sent_at, campaigns!inner(name, workspace_id)")
+          .eq("campaigns.workspace_id", workspace.id)
           .eq("status", "enviado")
           .order("sent_at", { ascending: true })
       : Promise.resolve({ data: [] }),
@@ -169,26 +202,6 @@ export default async function ConversasPage() {
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
-      {conversations.length === 0 && (messages || []).length > 0 && (
-        <pre className="text-[10px] bg-warning-soft text-warning-text p-2 rounded-md overflow-auto shrink-0">
-          {JSON.stringify(
-            {
-              debug: "conversas vazias com mensagens presentes — remover depois de achar a causa",
-              workspaceId: workspace.id,
-              mensagensBuscadas: (messages || []).length,
-              contactIdsUnicos: contactIds.length,
-              contatosEncontrados: (contacts || []).length,
-              instanciasEncontradas: (instances || []).length,
-              instanciaIds: (instances || []).map((i) => i.id),
-              agentesEncontrados: (agents || []).length,
-              conversasAntesDoFiltro: conversationsByKey.size,
-              conversasDepoisDoFiltro: conversationsRaw.length,
-            },
-            null,
-            2
-          )}
-        </pre>
-      )}
       <ConversationsPanel
         conversations={conversations}
         stageLabels={stageLabels}
