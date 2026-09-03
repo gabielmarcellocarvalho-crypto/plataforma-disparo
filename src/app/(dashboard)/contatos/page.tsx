@@ -3,6 +3,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { AddContactForm } from "@/components/add-contact-form";
 import { ImportContactsForm } from "@/components/import-contacts-form";
 import { PageSizeSelect, ContactsPageNav } from "@/components/contacts-pagination";
+import { ContactsTable } from "@/components/contacts-table";
 import { PAGE_SIZES } from "@/lib/contacts-pagination";
 
 // Server Actions herdam o maxDuration da página que os chama. Sem isso, importContacts (que faz
@@ -64,34 +65,7 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
           )}
         </div>
       ) : (
-        <div className="bg-surface border border-border rounded-lg shadow-sm overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-muted text-xs font-bold uppercase">
-                <th className="px-4 py-3">Nome</th>
-                <th className="px-4 py-3">Telefone</th>
-                <th className="px-4 py-3">E-mail</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3 font-semibold">{c.name || "—"}</td>
-                  <td className="px-4 py-3">{c.phone || "—"}</td>
-                  <td className="px-4 py-3">{c.email || "—"}</td>
-                  <td className="px-4 py-3">
-                    {c.opt_out_whatsapp || c.opt_out_email ? (
-                      <span className="text-danger font-semibold text-xs">opt-out</span>
-                    ) : (
-                      <span className="text-success font-semibold text-xs">ativo</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ContactsTable rows={rows} />
       )}
 
       <ContactsPageNav page={page} totalPages={totalPages} />

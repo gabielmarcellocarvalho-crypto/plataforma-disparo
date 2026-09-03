@@ -318,10 +318,52 @@ export async function addContactNote(contactId: string, content: string): Promis
   return { error: null, ok: true };
 }
 
-export async function deleteContact(id: string) {
+// Exclusão de leads em massa (Contatos → selecionar → excluir). Apaga a LINHA de `contacts`, e o
+// resto some junto pelas FKs `on delete cascade` que já existem no banco: mensagens, fila de
+// campanha (campaign_recipients), observações, mídia já enviada, matrícula em sequência de e-mail,
+// ticket de atendimento e matrícula em workflow. O card do Pipeline não é um registro separado — o
+// estágio é coluna do próprio contato — então sumir do /crm é consequência direta, sem passo extra.
+//
+// Tarefa é a única exceção: a FK é `on delete set null`, então tarefa que era SÓ desse contato
+// viraria item órfão na Agenda ("ligar pro João" sem João). Essas a gente apaga explicitamente
+// antes; a que também aponta pra uma empresa fica de pé, perdendo só o vínculo com o contato.
+export async function deleteContacts(ids: string[]): Promise<ActionResult & { deleted?: number }> {
   const { workspace } = await getCurrentWorkspace();
-  if (!workspace) return;
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) return { error: "Nenhum contato selecionado." };
+
   const supabase = await createClient();
-  await supabase.from("contacts").delete().eq("id", id).eq("workspace_id", workspace.id);
-  revalidatePath("/contatos");
+
+  // Nunca mandar a seleção inteira num `.in()` só: com algumas centenas de ids a URL do PostgREST
+  // estoura o limite do servidor e a chamada falha (mesma armadilha que deixava /conversas vazia).
+  const CHUNK = 100;
+  let deleted = 0;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+
+    await supabase
+      .from("tasks")
+      .delete()
+      .eq("workspace_id", workspace.id)
+      .is("company_id", null)
+      .in("contact_id", chunk);
+
+    // `workspace_id` no filtro não é redundância: garante que um id de outro workspace passado na
+    // mão pela request não apaga nada, mesmo antes da RLS.
+    const { data, error } = await supabase
+      .from("contacts")
+      .delete()
+      .eq("workspace_id", workspace.id)
+      .in("id", chunk)
+      .select("id");
+    if (error) return { error: "Não foi possível excluir os contatos selecionados." };
+    deleted += data?.length ?? 0;
+  }
+
+  for (const path of ["/contatos", "/crm", "/conversas", "/empresas", "/agenda", "/metricas", "/"]) {
+    revalidatePath(path);
+  }
+  return { error: null, ok: true, deleted };
 }
