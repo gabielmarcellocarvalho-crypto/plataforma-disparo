@@ -41,15 +41,28 @@ export async function createAccess(_prev: CreateAccessState, formData: FormData)
 
   const userId = created.user.id;
   // O trigger handle_new_user já criou o profile (role padrão 'cliente'); aqui ajusta o papel/nome.
-  await admin
+  // Sem checar o erro aqui, uma falha nesse update passava batido: o auth.user já tinha sido criado,
+  // a tela mostrava "Acesso criado." e a pessoa ficava com role 'cliente' (default do trigger) mesmo
+  // tendo sido criada como developer/colaborador — o motivo real do "não salva com acesso".
+  const { error: roleErr } = await admin
     .from("profiles")
     .update({ role, full_name: fullName || null, access_type: role === "cliente" ? accessType : null })
     .eq("id", userId);
+  if (roleErr) {
+    console.error("createAccess: falha ao setar role do profile", roleErr);
+    await admin.auth.admin.deleteUser(userId).catch(() => {});
+    return { error: "O acesso foi criado no login, mas não foi possível definir o papel dele. Tenta de novo." };
+  }
 
   // Cliente e colaborador são vinculados a um workspace específico (developer enxerga todos, não
   // precisa de vínculo).
   if (role === "cliente" || role === "colaborador") {
-    await admin.from("workspace_members").insert({ workspace_id: workspaceId, user_id: userId, role: "member" });
+    const { error: memberErr } = await admin.from("workspace_members").insert({ workspace_id: workspaceId, user_id: userId, role: "member" });
+    if (memberErr) {
+      console.error("createAccess: falha ao vincular workspace_members", memberErr);
+      await admin.auth.admin.deleteUser(userId).catch(() => {});
+      return { error: "O acesso foi criado, mas não foi possível vincular ao workspace. Tenta de novo." };
+    }
   }
 
   revalidatePath("/acessos");
