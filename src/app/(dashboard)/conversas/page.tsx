@@ -169,6 +169,26 @@ export default async function ConversasPage() {
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
+      {conversations.length === 0 && (messages || []).length > 0 && (
+        <pre className="text-[10px] bg-warning-soft text-warning-text p-2 rounded-md overflow-auto shrink-0">
+          {JSON.stringify(
+            {
+              debug: "conversas vazias com mensagens presentes — remover depois de achar a causa",
+              workspaceId: workspace.id,
+              mensagensBuscadas: (messages || []).length,
+              contactIdsUnicos: contactIds.length,
+              contatosEncontrados: (contacts || []).length,
+              instanciasEncontradas: (instances || []).length,
+              instanciaIds: (instances || []).map((i) => i.id),
+              agentesEncontrados: (agents || []).length,
+              conversasAntesDoFiltro: conversationsByKey.size,
+              conversasDepoisDoFiltro: conversationsRaw.length,
+            },
+            null,
+            2
+          )}
+        </pre>
+      )}
       <ConversationsPanel
         conversations={conversations}
         stageLabels={stageLabels}
