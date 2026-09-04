@@ -8,7 +8,9 @@
 import { motion, useSpring, useTransform } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type FunnelStage = { label: string; value: number; displayValue?: string };
+// `value` desenha o funil (cumulativo). `currentLabel`, quando vem, aparece como uma linha extra
+// abaixo do rótulo — é o "quantos estão nessa fase agora", que reconcilia o funil com o Kanban.
+export type FunnelStage = { label: string; value: number; displayValue?: string; currentLabel?: string };
 
 const growSpring = { stiffness: 120, damping: 20, mass: 1 };
 const hoverSpring = { stiffness: 300, damping: 24 };
@@ -168,6 +170,9 @@ export function FunnelChart({
                   {Math.round(pctOfFirst)}%
                 </span>
                 <span className="text-[11px] font-semibold text-text-muted text-center px-1 leading-tight">{stage.label}</span>
+                {stage.currentLabel && (
+                  <span className="text-[10px] font-medium text-text-muted/75 text-center px-1 leading-tight tabular-nums">{stage.currentLabel}</span>
+                )}
               </motion.div>
             );
           })}

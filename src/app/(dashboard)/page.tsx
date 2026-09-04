@@ -201,7 +201,9 @@ export default async function OverviewPage({
             <div>
               <h3 className="font-bold text-[15px]">Funil {planLabel(plan)}</h3>
               <p className="text-xs text-text-muted mt-0.5">
-                Leads recebidos {period.label}, pela fase mais avançada já alcançada.
+                Leads recebidos {period.label}. O número grande é cumulativo (quantos já chegaram
+                nessa fase ou passaram dela); abaixo do nome da fase, quantos estão nela agora — esse
+                é o que bate com o Pipeline.
                 {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}
               </p>
             </div>
@@ -209,7 +211,13 @@ export default async function OverviewPage({
           {funnel.points.length === 0 || funnel.points[0]?.value === 0 ? (
             <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido nesse período ainda.</p>
           ) : (
-            <FunnelChart data={funnel.points.map((p) => ({ label: p.label, value: p.value }))} />
+            <FunnelChart
+              data={funnel.points.map((p) => ({
+                label: p.label,
+                value: p.value,
+                currentLabel: `${p.current.toLocaleString("pt-BR")} aqui agora`,
+              }))}
+            />
           )}
         </div>
       )}

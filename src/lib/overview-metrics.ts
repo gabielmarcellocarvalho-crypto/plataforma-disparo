@@ -3,11 +3,47 @@
 // onde entram: (1) taxa de interesse/qualificação e o funil usam o ESTÁGIO ATUAL do contato, não um
 // histórico de quando cada transição aconteceu (a tabela não guarda histórico, só a última
 // mudança) — é uma leitura "onde ele está hoje", não "quando ele passou por ali"; (2) consultas que
-// precisam de "primeira mensagem por contato" (conversas iniciadas) usam o mesmo limite de 20000
-// linhas já usado em outras consultas do projeto — segue o padrão existente, não é ilimitado.
+// precisam varrer linha a linha (ex.: "primeira mensagem por contato", pra contar conversas
+// iniciadas) param em MAX_ROWS — é um teto alto, mas não é ilimitado.
 import { createClient } from "@/lib/supabase/server";
 import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
 import type { Range } from "@/lib/cost-monitor";
+
+// O Supabase tem "Max Rows" travado em 1000 na API: um `.limit(20000)` do client é silenciosamente
+// IGNORADO e a resposta volta cortada em 1000 linhas, sem erro nenhum — a métrica sai errada pra
+// baixo e ninguém percebe (era o caso de TB Rio e Hanoi, que já passam de 1000 contatos). Toda
+// consulta "traz tudo e agrega em memória" aqui passa por fetchAllPaged, que pagina de 1000 em 1000
+// até o teto real. Mesma abordagem já usada em /conversas.
+const PAGE_SIZE = 1000;
+const MAX_ROWS = 20000;
+
+// A query precisa ter `.order()` estável — sem ordem definida o Postgrest não garante que a página 2
+// venha depois da 1, e linhas repetem/somem entre páginas.
+async function fetchAllPaged<T>(query: (from: number, to: number) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+  const all: T[] = [];
+  let offset = 0;
+  while (all.length < MAX_ROWS) {
+    const { data } = await query(offset, offset + PAGE_SIZE - 1);
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
+// Estágio atual de todo contato do workspace, em um mapa. Substitui os `.in("id", [...centenas de
+// ids])` que existiam aqui: além de estourarem o tamanho da URL com base grande (mesmo bug que
+// esvaziou /conversas), eles vinham cortados em 1000 de qualquer forma.
+async function fetchStageByContact(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  workspaceId: string
+): Promise<Map<string, ContactStage>> {
+  const rows = await fetchAllPaged<{ id: string; stage: string }>((from, to) =>
+    supabase.from("contacts").select("id, stage").eq("workspace_id", workspaceId).order("id", { ascending: true }).range(from, to)
+  );
+  return new Map(rows.map((c) => [c.id, c.stage as ContactStage]));
+}
 
 export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: number | null; failedNow: number };
 
@@ -17,14 +53,17 @@ export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: n
 // pro WhatsApp).
 export async function getEmailClickMetrics(workspaceId: string, range: Range): Promise<EmailClickMetrics> {
   const supabase = await createClient();
-  const [{ data }, { count: failedNow }] = await Promise.all([
-    supabase
-      .from("email_clicks")
-      .select("clicked_at")
-      .eq("workspace_id", workspaceId)
-      .gte("sent_at", range.from.toISOString())
-      .lte("sent_at", range.to.toISOString())
-      .limit(20000),
+  const [rows, { count: failedNow }] = await Promise.all([
+    fetchAllPaged<{ clicked_at: string | null }>((from, to) =>
+      supabase
+        .from("email_clicks")
+        .select("clicked_at")
+        .eq("workspace_id", workspaceId)
+        .gte("sent_at", range.from.toISOString())
+        .lte("sent_at", range.to.toISOString())
+        .order("sent_at", { ascending: true })
+        .range(from, to)
+    ),
     // Sem período aqui de propósito: campaign_recipients não guarda quando a falha aconteceu (só
     // sent_at, que fica nulo em falha), então "falhando agora" é o estado atual, não um recorte do
     // período selecionado — é um alerta de "tem algo travado", não uma métrica histórica.
@@ -36,8 +75,8 @@ export async function getEmailClickMetrics(workspaceId: string, range: Range): P
       .eq("status", "falhou"),
   ]);
 
-  const sent = data?.length ?? 0;
-  const clicked = (data || []).filter((r) => r.clicked_at).length;
+  const sent = rows.length;
+  const clicked = rows.filter((r) => r.clicked_at).length;
   return { sent, clicked, clickRatePct: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null, failedNow: failedNow ?? 0 };
 }
 
@@ -67,7 +106,13 @@ export type ConversionMetrics = {
   taxaFechamento: number | null;
 };
 
-export type FunnelPoint = { stage: ContactStage; label: string; value: number };
+// value  = leitura cumulativa (quantos JÁ CHEGARAM nessa fase ou além) — é o que faz o desenho do
+//           funil estreitar e o que dá sentido ao % de conversão entre fases.
+// current = foto do momento (quantos estão NESSA fase agora) — é o número que bate 1:1 com a coluna
+//           correspondente do Pipeline. Os dois convivem no gráfico de propósito: sem o cumulativo o
+//           funil deixa de ser funil, sem o "agora" ninguém reconcilia com o Kanban (um contato em
+//           Encaminhamento aparecia como "1 Abordado" mesmo com a coluna Abordado zerada no Pipeline).
+export type FunnelPoint = { stage: ContactStage; label: string; value: number; current: number };
 
 // Estágios que compõem o funil "linha reta" de conversão — "descartado" fica de fora de propósito:
 // é uma saída lateral (pode acontecer a partir de qualquer fase), não um degrau que se soma aos
@@ -87,20 +132,22 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
-  const [{ count: leadsRecebidos }, { count: mensagensEnviadas }, { count: mensagensRecebidas }, { data: allMsgsAsc }] = await Promise.all([
+  const [{ count: leadsRecebidos }, { count: mensagensEnviadas }, { count: mensagensRecebidas }, allMsgsAsc] = await Promise.all([
     supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).gte("created_at", fromIso).lte("created_at", toIso),
     supabase.from("messages").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).eq("role", "assistant").gte("created_at", fromIso).lte("created_at", toIso),
     supabase.from("messages").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).eq("role", "user").gte("created_at", fromIso).lte("created_at", toIso),
     // Precisa de TODA a mensagem até o fim do período (não só as do período) pra achar corretamente
     // a primeira mensagem de cada par contato+agente — uma conversa "iniciada" antes do período não
     // deveria contar como iniciada de novo só porque teve mensagem nova dentro dele.
-    supabase
-      .from("messages")
-      .select("contact_id, agent_id, role, created_at")
-      .eq("workspace_id", workspaceId)
-      .lte("created_at", toIso)
-      .order("created_at", { ascending: true })
-      .limit(20000),
+    fetchAllPaged<{ contact_id: string; agent_id: string | null; role: string; created_at: string }>((from, to) =>
+      supabase
+        .from("messages")
+        .select("contact_id, agent_id, role, created_at")
+        .eq("workspace_id", workspaceId)
+        .lte("created_at", toIso)
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
   ]);
 
   // "Conversa iniciada" = primeira mensagem (de qualquer papel) de um par contato+agente cai dentro
@@ -108,11 +155,11 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
   const firstSeen = new Map<string, string>();
   const contactIdByPair = new Map<string, string>();
   const activeInPeriod = new Set<string>();
-  for (const m of allMsgsAsc || []) {
+  for (const m of allMsgsAsc) {
     const key = `${m.contact_id}:${m.agent_id ?? "blast"}`;
-    if (!firstSeen.has(key)) firstSeen.set(key, m.created_at as string);
-    contactIdByPair.set(key, m.contact_id as string);
-    if ((m.created_at as string) >= fromIso) activeInPeriod.add(key);
+    if (!firstSeen.has(key)) firstSeen.set(key, m.created_at);
+    contactIdByPair.set(key, m.contact_id);
+    if (m.created_at >= fromIso) activeInPeriod.add(key);
   }
   let conversasIniciadas = 0;
   for (const createdAt of firstSeen.values()) {
@@ -121,10 +168,7 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
 
   // "Em andamento" = teve atividade no período E o lead ainda não chegou num estado terminal
   // (concluído/descartado) — precisa saber o estágio atual de cada contato envolvido.
-  const activeContactIds = [...new Set([...activeInPeriod].map((k) => contactIdByPair.get(k)).filter((v): v is string => Boolean(v)))];
-  const { data: activeStages } =
-    activeContactIds.length > 0 ? await supabase.from("contacts").select("id, stage").in("id", activeContactIds) : { data: [] };
-  const stageByContact = new Map((activeStages || []).map((c) => [c.id, c.stage as ContactStage]));
+  const stageByContact = await fetchStageByContact(supabase, workspaceId);
 
   let conversasEmAndamento = 0;
   for (const key of activeInPeriod) {
@@ -134,7 +178,7 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
   }
 
   const leadsAbordados = new Set(
-    (allMsgsAsc || []).filter((m) => m.role === "assistant" && (m.created_at as string) >= fromIso && (m.created_at as string) <= toIso).map((m) => m.contact_id)
+    allMsgsAsc.filter((m) => m.role === "assistant" && m.created_at >= fromIso && m.created_at <= toIso).map((m) => m.contact_id)
   ).size;
 
   return {
@@ -154,20 +198,22 @@ export async function getResponseMetrics(workspaceId: string, range: Range): Pro
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
-  const { data: msgs } = await supabase
-    .from("messages")
-    .select("contact_id, agent_id, role, created_at")
-    .eq("workspace_id", workspaceId)
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso)
-    .order("created_at", { ascending: true })
-    .limit(20000);
+  const msgs = await fetchAllPaged<{ contact_id: string; agent_id: string | null; role: string; created_at: string }>((from, to) =>
+    supabase
+      .from("messages")
+      .select("contact_id, agent_id, role, created_at")
+      .eq("workspace_id", workspaceId)
+      .gte("created_at", fromIso)
+      .lte("created_at", toIso)
+      .order("created_at", { ascending: true })
+      .range(from, to)
+  );
 
   const byPair = new Map<string, { role: string; created_at: string }[]>();
-  for (const m of msgs || []) {
+  for (const m of msgs) {
     const key = `${m.contact_id}:${m.agent_id ?? "blast"}`;
     const arr = byPair.get(key) || [];
-    arr.push({ role: m.role as string, created_at: m.created_at as string });
+    arr.push({ role: m.role, created_at: m.created_at });
     byPair.set(key, arr);
   }
 
@@ -204,17 +250,20 @@ export async function getResponseMetrics(workspaceId: string, range: Range): Pro
 // "WhatsApp direto", pra o gráfico nunca ficar vazio/quebrado só por falta desse campo.
 export async function getLeadSources(workspaceId: string, range: Range): Promise<LeadSource[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("contacts")
-    .select("custom_fields")
-    .eq("workspace_id", workspaceId)
-    .gte("created_at", range.from.toISOString())
-    .lte("created_at", range.to.toISOString())
-    .limit(20000);
+  const data = await fetchAllPaged<{ custom_fields: Record<string, unknown> | null }>((from, to) =>
+    supabase
+      .from("contacts")
+      .select("custom_fields")
+      .eq("workspace_id", workspaceId)
+      .gte("created_at", range.from.toISOString())
+      .lte("created_at", range.to.toISOString())
+      .order("created_at", { ascending: true })
+      .range(from, to)
+  );
 
   const counts = new Map<string, number>();
-  for (const c of data || []) {
-    const origem = (c.custom_fields as Record<string, unknown> | null)?.origem;
+  for (const c of data) {
+    const origem = c.custom_fields?.origem;
     const label = typeof origem === "string" && origem.trim() ? origem.trim() : "WhatsApp direto";
     counts.set(label, (counts.get(label) || 0) + 1);
   }
@@ -227,33 +276,49 @@ export async function getConversionMetrics(workspaceId: string, range: Range): P
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
-  const { data: abordadosRows } = await supabase
-    .from("messages")
-    .select("contact_id")
-    .eq("workspace_id", workspaceId)
-    .eq("role", "assistant")
-    .gte("created_at", fromIso)
-    .lte("created_at", toIso)
-    .limit(20000);
-  const abordadosIds = [...new Set((abordadosRows || []).map((r) => r.contact_id as string))];
-  if (abordadosIds.length === 0) return { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null };
-
-  const [{ data: responderamRows }, { data: contactStages }] = await Promise.all([
-    supabase.from("messages").select("contact_id").eq("workspace_id", workspaceId).eq("role", "user").in("contact_id", abordadosIds).gte("created_at", fromIso).lte("created_at", toIso).limit(20000),
-    supabase.from("contacts").select("stage").in("id", abordadosIds),
+  // Busca as duas pontas por workspace_id + período e cruza em memória. Antes isso era um
+  // `.in("contact_id", abordadosIds)` com a lista inteira de abordados — com base grande (TB Rio tem
+  // ~900) a URL estourava e a query falhava calada, zerando as taxas.
+  const [abordadosRows, responderamRows, stageByContact] = await Promise.all([
+    fetchAllPaged<{ contact_id: string }>((from, to) =>
+      supabase
+        .from("messages")
+        .select("contact_id")
+        .eq("workspace_id", workspaceId)
+        .eq("role", "assistant")
+        .gte("created_at", fromIso)
+        .lte("created_at", toIso)
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllPaged<{ contact_id: string }>((from, to) =>
+      supabase
+        .from("messages")
+        .select("contact_id")
+        .eq("workspace_id", workspaceId)
+        .eq("role", "user")
+        .gte("created_at", fromIso)
+        .lte("created_at", toIso)
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
+    fetchStageByContact(supabase, workspaceId),
   ]);
 
-  const responderam = new Set((responderamRows || []).map((r) => r.contact_id)).size;
-  const stages = (contactStages || []).map((c) => c.stage as ContactStage);
+  const abordadosIds = new Set(abordadosRows.map((r) => r.contact_id));
+  if (abordadosIds.size === 0) return { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null };
+
+  const responderam = new Set(responderamRows.map((r) => r.contact_id).filter((id) => abordadosIds.has(id))).size;
+  const stages = [...abordadosIds].map((id) => stageByContact.get(id)).filter((s): s is ContactStage => Boolean(s));
   const interessados = stages.filter((s) => INTERESSE_OU_ALEM.includes(s)).length;
   const qualificados = stages.filter((s) => QUALIFICADO_OU_ALEM.includes(s)).length;
   const fechados = stages.filter((s) => FECHADO.includes(s)).length;
 
   return {
-    taxaResposta: pct(responderam, abordadosIds.length),
-    taxaInteresse: pct(interessados, abordadosIds.length),
-    taxaQualificacao: pct(qualificados, abordadosIds.length),
-    taxaFechamento: pct(fechados, abordadosIds.length),
+    taxaResposta: pct(responderam, abordadosIds.size),
+    taxaInteresse: pct(interessados, abordadosIds.size),
+    taxaQualificacao: pct(qualificados, abordadosIds.size),
+    taxaFechamento: pct(fechados, abordadosIds.size),
   };
 }
 
@@ -267,14 +332,17 @@ export async function getFunnelData(
   funnelEnd: ContactStage = "concluido"
 ): Promise<{ points: FunnelPoint[]; descartados: number }> {
   const supabase = await createClient();
-  const [{ data: contacts }, { data: workspaceRow }] = await Promise.all([
-    supabase
-      .from("contacts")
-      .select("stage")
-      .eq("workspace_id", workspaceId)
-      .gte("created_at", range.from.toISOString())
-      .lte("created_at", range.to.toISOString())
-      .limit(20000),
+  const [contacts, { data: workspaceRow }] = await Promise.all([
+    fetchAllPaged<{ stage: string }>((from, to) =>
+      supabase
+        .from("contacts")
+        .select("stage")
+        .eq("workspace_id", workspaceId)
+        .gte("created_at", range.from.toISOString())
+        .lte("created_at", range.to.toISOString())
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspaceId).maybeSingle(),
   ]);
 
@@ -290,7 +358,8 @@ export async function getFunnelData(
 
   let descartados = 0;
   const displayStageIndex: number[] = new Array(funnelStages.length).fill(0);
-  for (const c of contacts || []) {
+  const currentAtStage: number[] = new Array(funnelStages.length).fill(0);
+  for (const c of contacts) {
     const stage = c.stage as ContactStage;
     if (stage === "descartado") {
       descartados++;
@@ -305,8 +374,14 @@ export async function getFunnelData(
       idx = funnelStages.length - 1;
     }
     for (let i = 0; i <= idx; i++) displayStageIndex[i]++;
+    currentAtStage[idx]++; // mesma regra de exibição do Kanban (displayStageFor), pra bater com ele
   }
 
-  const points: FunnelPoint[] = funnelStages.map((stage, i) => ({ stage, label: stageLabels[stage], value: displayStageIndex[i] }));
+  const points: FunnelPoint[] = funnelStages.map((stage, i) => ({
+    stage,
+    label: stageLabels[stage],
+    value: displayStageIndex[i],
+    current: currentAtStage[i],
+  }));
   return { points, descartados };
 }
