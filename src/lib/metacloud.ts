@@ -138,6 +138,52 @@ export async function getMetaCloudPhoneInfo(phoneNumberId: string): Promise<Meta
   return { displayPhoneNumber: data.display_phone_number ?? null, verifiedName: data.verified_name ?? null };
 }
 
+// Nome de exibição do número ("verified name" — o que aparece no topo da conversa do cliente).
+// Diferente da foto, trocar isso NÃO é imediato: vira um pedido que passa pela revisão da Meta.
+// - name_status: situação do nome que está valendo hoje.
+// - new_name_status: situação do pedido de troca (NONE = não tem pedido aberto).
+export type MetaCloudDisplayName = {
+  verifiedName: string | null;
+  nameStatus: string | null;
+  newNameStatus: string | null;
+};
+
+const DISPLAY_NAME_FIELDS = "verified_name,name_status,new_name_status";
+
+export async function getMetaCloudDisplayName(phoneNumberId: string): Promise<MetaCloudDisplayName> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}?fields=${DISPLAY_NAME_FIELDS}`, {
+    headers: { Authorization: `Bearer ${systemUserToken()}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Não foi possível ler o nome do número: ${res.status} ${await res.text().catch(() => "")}`);
+  const data = (await res.json()) as { verified_name?: string; name_status?: string; new_name_status?: string };
+  return {
+    verifiedName: data.verified_name ?? null,
+    nameStatus: data.name_status ?? null,
+    newNameStatus: data.new_name_status ?? null,
+  };
+}
+
+// Abre o pedido de troca de nome. ATENÇÃO: esse nó da Graph API responde `{"success":true}` pra
+// qualquer POST — inclusive com parâmetro inexistente ou valor vazio (testado na conta real em
+// 2026-09-03). Ou seja, a resposta do POST não prova nada. Por isso a função relê o estado e devolve
+// pra quem chamou decidir: se `new_name_status` continuar NONE e o `verified_name` não tiver mudado,
+// o pedido NÃO entrou, mesmo com "success" na resposta.
+export async function requestMetaCloudDisplayNameChange(
+  phoneNumberId: string,
+  newDisplayName: string
+): Promise<MetaCloudDisplayName> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ new_display_name: newDisplayName }),
+  });
+  if (!res.ok) {
+    throw new Error(`A Meta recusou a troca de nome: ${res.status} ${await res.text().catch(() => "")}`);
+  }
+  return getMetaCloudDisplayName(phoneNumberId);
+}
+
 // Foto de perfil do WhatsApp Business — fluxo em 2 chamadas exigido pela Graph API (Resumable Upload
 // API), diferente de mandar mídia numa mensagem normal: (1) abre uma sessão de upload dentro do APP
 // (não do WABA/número) informando tamanho e tipo do arquivo, recebendo um id de sessão; (2) manda os

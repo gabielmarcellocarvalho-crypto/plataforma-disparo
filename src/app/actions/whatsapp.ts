@@ -13,6 +13,9 @@ import {
   listMetaCloudTemplates,
   updateMetaCloudProfilePhoto,
   getMetaCloudProfilePhotoUrl,
+  getMetaCloudDisplayName,
+  requestMetaCloudDisplayNameChange,
+  type MetaCloudDisplayName,
 } from "@/lib/metacloud";
 import { headers } from "next/headers";
 
@@ -278,5 +281,74 @@ export async function getInstanceProfilePhoto(instanceId: string): Promise<Profi
     return { error: null, photoUrl: await getMetaCloudProfilePhotoUrl(instance.phone_number_id) };
   } catch {
     return { error: null, photoUrl: null };
+  }
+}
+
+export type DisplayNameResult = { error: string | null; name?: MetaCloudDisplayName | null; pendingReview?: boolean };
+
+// Resolve a instância garantindo que ela é do workspace ativo e que é metacloud — mesma checagem
+// que a foto de perfil faz, já que os dois falam com a Graph API pelo phone_number_id.
+async function metacloudPhoneNumberId(instanceId: string): Promise<{ error: string | null; phoneNumberId?: string }> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("channel, phone_number_id")
+    .eq("id", instanceId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!instance) return { error: "Número não encontrado." };
+  if (instance.channel !== "metacloud") return { error: "Troca de nome por aqui só funciona pra números conectados direto via Meta." };
+  if (!instance.phone_number_id) return { error: "Esse número ainda não tem phone_number_id vinculado." };
+  return { error: null, phoneNumberId: instance.phone_number_id };
+}
+
+export async function getInstanceDisplayName(instanceId: string): Promise<DisplayNameResult> {
+  const resolved = await metacloudPhoneNumberId(instanceId);
+  if (resolved.error || !resolved.phoneNumberId) return { error: null, name: null };
+
+  try {
+    return { error: null, name: await getMetaCloudDisplayName(resolved.phoneNumberId) };
+  } catch {
+    return { error: null, name: null };
+  }
+}
+
+// Pede a troca do nome de exibição. A Meta limita o nome a 25 caracteres e precisa que ele tenha
+// relação com a empresa — quem julga isso é a revisão dela, não a gente; aqui só barramos o que é
+// certamente inválido (vazio, longo demais, ou igual ao que já está valendo).
+export async function updateInstanceDisplayName(instanceId: string, newName: string): Promise<DisplayNameResult> {
+  const resolved = await metacloudPhoneNumberId(instanceId);
+  if (resolved.error || !resolved.phoneNumberId) return { error: resolved.error };
+
+  const name = newName.trim();
+  if (!name) return { error: "Escreva o novo nome." };
+  if (name.length > 25) return { error: "A Meta aceita no máximo 25 caracteres." };
+
+  try {
+    const before = await getMetaCloudDisplayName(resolved.phoneNumberId);
+    if (before.verifiedName === name) return { error: "Esse já é o nome atual do número." };
+    if (before.newNameStatus === "PENDING_REVIEW") {
+      return { error: "Já existe um pedido de troca em análise nesse número — espere a Meta responder antes de pedir outro." };
+    }
+
+    const after = await requestMetaCloudDisplayNameChange(resolved.phoneNumberId, name);
+
+    // O POST responde "success" mesmo quando não faz nada (ver comentário em metacloud.ts), então a
+    // única prova de que o pedido entrou é o estado ter mudado depois dele.
+    const entrou = after.newNameStatus !== before.newNameStatus || after.verifiedName !== before.verifiedName;
+    if (!entrou) {
+      return {
+        error: "A Meta respondeu 'ok' mas não registrou o pedido — nada mudou. Tenta pelo WhatsApp Manager e me avisa.",
+        name: after,
+      };
+    }
+
+    revalidatePath("/configuracoes");
+    return { error: null, name: after, pendingReview: after.newNameStatus === "PENDING_REVIEW" };
+  } catch (err) {
+    return { error: (err as Error).message };
   }
 }

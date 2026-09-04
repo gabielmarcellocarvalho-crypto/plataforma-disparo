@@ -7,6 +7,7 @@ import { WhatsappConnect } from "@/components/whatsapp-connect";
 import { Dialog360Connect } from "@/components/dialog360-connect";
 import { MetacloudConnect } from "@/components/metacloud-connect";
 import { MetacloudProfilePhoto } from "@/components/metacloud-profile-photo";
+import { MetacloudDisplayName } from "@/components/metacloud-display-name";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
@@ -52,6 +53,7 @@ export function WhatsappInstancesManager({
             <>
               <p className="text-sm font-bold text-success">✓ conectado direto via Meta</p>
               <MetacloudProfilePhoto instanceId={instance.id} />
+              <MetacloudDisplayName instanceId={instance.id} />
             </>
           ) : (
             <WhatsappConnect initialStatus={instance.connection_status} />
