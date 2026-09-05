@@ -4,6 +4,7 @@ import { resolveStageLabels, resolveHiddenStages } from "@/lib/crm-stages";
 import { resolveLostReasons } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { listBranches, listTeamMembers } from "@/app/actions/team";
+import { listPipelines } from "@/app/actions/pipelines";
 import { CrmBoard } from "@/components/crm-board";
 
 // O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
@@ -28,6 +29,8 @@ type ContactRow = {
   team_member_id: string | null;
   branch_id: string | null;
   lost_reason: string | null;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
 };
 
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
@@ -37,7 +40,7 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
     const { data } = await supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id"
       )
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
@@ -54,15 +57,16 @@ export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches] = workspace
+  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons, ask_lost_reason").eq("id", workspace.id).maybeSingle(),
         listCustomFieldDefs(),
         listTeamMembers(),
         listBranches(),
+        listPipelines(),
       ])
-    : [[] as ContactRow[], { data: null }, [], [], []];
+    : [[] as ContactRow[], { data: null }, [], [], [], []];
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
@@ -83,6 +87,7 @@ export default async function CrmPage() {
         branches={branches}
         lostReasons={lostReasons}
         askLostReason={askLostReason}
+        pipelines={pipelines}
       />
     </div>
   );

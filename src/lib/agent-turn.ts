@@ -11,7 +11,8 @@ import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-ch
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
-import { canAdvanceStage } from "@/lib/crm-stages";
+import { canAdvanceStage, isContactStage, type ContactStage } from "@/lib/crm-stages";
+import { stageForSignal } from "@/lib/pipelines";
 import { normalizeCity } from "@/lib/territories";
 import { canonicalizeValue, parseOptions, type CustomFieldType } from "@/lib/custom-fields";
 import { brPhoneVariant } from "@/lib/import-contacts";
@@ -163,7 +164,7 @@ export async function runAgentTurn(
   pushName: string | null,
   resolved: ResolvedIncoming
 ) {
-  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id";
+  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id, pipeline_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -514,7 +515,32 @@ export async function runAgentTurn(
   // O agente classifica o estágio do funil a cada resposta — só avança o card no Kanban, nunca regride
   // (evita flicker por ruído do modelo), exceto pros estados terminais (concluído/descartado).
   if (stage && canAdvanceStage(contact.stage, stage)) {
-    await supabase.from("contacts").update({ stage, stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
+    const patch: Record<string, unknown> = { stage, stage_changed_at: new Date().toISOString() };
+
+    // Se o lead está num funil personalizado, o card também precisa andar LÁ. O agente continua
+    // falando o vocabulário fixo dos 7 sinais (é o que ele acerta); a tradução pro nome que aquele
+    // cliente deu à etapa acontece aqui. Funil sem etapa pro sinal cai na anterior mais próxima —
+    // nunca joga o lead pra frente do que ele realmente é.
+    if (contact.pipeline_id) {
+      const { data: etapas } = await supabase
+        .from("pipeline_stages")
+        .select("id, pipeline_id, name, signal, position")
+        .eq("pipeline_id", contact.pipeline_id)
+        .order("position");
+      const alvo = stageForSignal(
+        stage,
+        (etapas ?? []).map((e) => ({
+          id: e.id,
+          pipeline_id: e.pipeline_id,
+          name: e.name,
+          signal: (isContactStage(e.signal) ? e.signal : "abordado") as ContactStage,
+          position: e.position,
+        }))
+      );
+      if (alvo) patch.pipeline_stage_id = alvo.id;
+    }
+
+    await supabase.from("contacts").update(patch).eq("id", contact.id);
   }
 
   if (replyParts.length > 0) {

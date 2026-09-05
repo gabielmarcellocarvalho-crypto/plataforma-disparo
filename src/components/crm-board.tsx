@@ -10,6 +10,10 @@ import { CustomFieldsEditor } from "@/components/custom-fields-editor";
 import { formatFieldValue, readMultiValue, type CustomFieldDef } from "@/lib/custom-fields";
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
+import { moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
+import { sortStages, stageForSignal } from "@/lib/pipelines";
+import { PipelinesEditor } from "@/components/pipelines-editor";
+import { useRouter } from "next/navigation";
 
 type Contact = {
   id: string;
@@ -26,6 +30,8 @@ type Contact = {
   team_member_id: string | null;
   branch_id: string | null;
   lost_reason: string | null;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
 };
 
 type FieldFilter = { key: string; value: string };
@@ -362,6 +368,7 @@ export function CrmBoard({
   branches,
   lostReasons: initialLostReasons,
   askLostReason: initialAskLostReason,
+  pipelines,
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -372,6 +379,7 @@ export function CrmBoard({
   branches: BranchRow[];
   lostReasons: string[];
   askLostReason: boolean;
+  pipelines: PipelineWithStages[];
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -383,6 +391,29 @@ export function CrmBoard({
   const [askLostReason, setAskLostReason] = useState(initialAskLostReason);
   const [perdaPendente, setPerdaPendente] = useState<{ id: string; nome: string } | null>(null);
   const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
+  const router = useRouter();
+  const [pipelinesEditorOpen, setPipelinesEditorOpen] = useState(false);
+
+  // Funil aberto agora. Começa no padrão — é onde cai lead novo, então é o que a equipe olha.
+  const [activePipelineId, setActivePipelineId] = useState<string | null>(
+    () => pipelines.find((p) => p.is_default)?.id ?? pipelines[0]?.id ?? null
+  );
+  const activePipeline = pipelines.find((p) => p.id === activePipelineId) ?? null;
+  const pipelineStages = useMemo(() => (activePipeline ? sortStages(activePipeline.stages) : []), [activePipeline]);
+  // Sem funil cadastrado, o board segue exatamente como sempre foi: as 7 fases com rótulo.
+  const modoFunil = pipelineStages.length > 0;
+
+  // Lead que nunca foi movido tem pipeline_id null e pertence ao funil PADRÃO — assim criar um funil
+  // não deixa a base histórica invisível nem exige uma migração de dados pra trás.
+  const pertenceAoFunil = (c: Contact) =>
+    c.pipeline_id ? c.pipeline_id === activePipelineId : Boolean(activePipeline?.is_default);
+
+  // Coluna do card: a etapa gravada, quando ela é deste funil; senão a que corresponde ao SINAL.
+  const colunaDe = (c: Contact) => {
+    const daqui = c.pipeline_stage_id && pipelineStages.find((e) => e.id === c.pipeline_stage_id);
+    if (daqui) return daqui.id;
+    return stageForSignal((c.stage as ContactStage) ?? "nao_abordado", pipelineStages)?.id ?? null;
+  };
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -505,6 +536,41 @@ export function CrmBoard({
     }
   }
 
+  // Soltar o card numa etapa de funil personalizado. Grava a etapa E o sinal por trás dela: é o
+  // sinal que mantém agente, métricas e workflows funcionando sem saber que esse funil existe.
+  function handleDropStage(stageId: string) {
+    if (!draggingId) return;
+    const id = draggingId;
+    const antes = items.find((c) => c.id === id);
+    setDraggingId(null);
+    if (antes && antes.pipeline_stage_id === stageId && antes.pipeline_id === activePipelineId) return;
+
+    const etapa = pipelineStages.find((e) => e.id === stageId);
+    if (!etapa) return;
+
+    setItems((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              pipeline_id: activePipelineId,
+              pipeline_stage_id: stageId,
+              stage: etapa.signal,
+              stage_changed_at: new Date().toISOString(),
+              lost_reason: null,
+            }
+          : c
+      )
+    );
+    startTransition(async () => {
+      await moveContactToStage(id, stageId);
+    });
+
+    if (etapa.signal === LOST_STAGE && askLostReason) {
+      setPerdaPendente({ id, nome: antes?.name || antes?.phone || antes?.email || "sem nome" });
+    }
+  }
+
   function registrarMotivo(motivo: string) {
     const pendente = perdaPendente;
     setPerdaPendente(null);
@@ -524,6 +590,24 @@ export function CrmBoard({
   function removeFieldFilter(i: number) {
     setFieldFilters((f) => f.filter((_, idx) => idx !== i));
   }
+
+  // As duas formas de montar o board (7 fases fixas, ou etapas de um funil) viram a MESMA lista de
+  // colunas aqui, pra o JSX não ter dois caminhos de render que precisam ser mantidos em sincronia.
+  const colunas = modoFunil
+    ? pipelineStages.map((etapa) => ({
+        key: etapa.id,
+        label: etapa.name,
+        signal: etapa.signal,
+        cards: filtered.filter((c) => pertenceAoFunil(c) && colunaDe(c) === etapa.id),
+        onDrop: () => handleDropStage(etapa.id),
+      }))
+    : visibleStages.map((stage) => ({
+        key: stage,
+        label: stageLabels[stage],
+        signal: stage,
+        cards: filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage),
+        onDrop: () => handleDrop(stage),
+      }));
 
   const propertyFilterCount =
     (dateFrom && dateTo ? 1 : 0) +
@@ -601,17 +685,59 @@ export function CrmBoard({
           <button
             type="button"
             onClick={() => {
+              setPipelinesEditorOpen((v) => !v);
+              setFieldsEditorOpen(false);
+              setLabelsEditorOpen(false);
+            }}
+            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="4" width="4" height="16" rx="1" />
+              <rect x="10" y="4" width="4" height="10" rx="1" />
+              <rect x="17" y="4" width="4" height="13" rx="1" />
+            </svg>
+            funis
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               setLabelsEditorOpen((v) => !v);
               setFieldsEditorOpen(false);
+              setPipelinesEditorOpen(false);
             }}
             className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
             </svg>
-            personalizar fases
+            {modoFunil ? "motivos da perda" : "personalizar fases"}
           </button>
         </div>
+
+        {/* Seletor de funil: só aparece quando existe mais de um. Com um funil só, a fileira de
+            chips seria decoração ocupando altura. */}
+        {pipelines.length > 1 && (
+          <div className="flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Funis">
+            {pipelines.map((p) => {
+              const ativo = p.id === activePipelineId;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={ativo}
+                  onClick={() => setActivePipelineId(p.id)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full cursor-pointer border transition-colors ${
+                    ativo ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft hover:text-primary-strong"
+                  }`}
+                >
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Atalhos de visão rápida — mesma ideia da sidebar do Kommo (Leads ativos/ganhos/perdidos/
             etc.), aqui como fileira de chips mutuamente exclusivos. */}
@@ -749,6 +875,16 @@ export function CrmBoard({
         <CustomFieldsEditor defs={fieldDefs} onChanged={setFieldDefs} onClose={() => setFieldsEditorOpen(false)} />
       )}
 
+      {pipelinesEditorOpen && (
+        <PipelinesEditor
+          pipelines={pipelines}
+          // Funil e etapas vêm do servidor (são estrutura, não estado de tela): depois de salvar, a
+          // página recarrega os dados em vez de o board tentar espelhar a mudança na mão.
+          onChanged={() => router.refresh()}
+          onClose={() => setPipelinesEditorOpen(false)}
+        />
+      )}
+
       {labelsEditorOpen && (
         <StageLabelsEditor
           workspaceId={workspaceId}
@@ -771,18 +907,18 @@ export function CrmBoard({
           do wrapper entra em ação (scroll horizontal), igual um board profissional de verdade. */}
       <div className="flex-1 min-h-0 overflow-x-auto">
         <div className="flex gap-3 h-full min-w-full pb-2">
-          {visibleStages.map((stage) => {
-            const cards = filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage);
+          {colunas.map((coluna) => {
+            const cards = coluna.cards;
             return (
               <div
-                key={stage}
+                key={coluna.key}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={() => handleDrop(stage)}
+                onDrop={coluna.onDrop}
                 className="flex-1 min-w-[264px] max-w-[360px] flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
               >
                 <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[stage]}`} aria-hidden />
-                  <span className="text-xs font-bold flex-1">{stageLabels[stage]}</span>
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[coluna.signal]}`} aria-hidden />
+                  <span className="text-xs font-bold flex-1 truncate" title={coluna.label}>{coluna.label}</span>
                   <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
                 </div>
                 <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
