@@ -57,7 +57,7 @@ export default async function CrmPage() {
   const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
-        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons").eq("id", workspace.id).maybeSingle(),
+        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons, ask_lost_reason").eq("id", workspace.id).maybeSingle(),
         listCustomFieldDefs(),
         listTeamMembers(),
         listBranches(),
@@ -67,6 +67,9 @@ export default async function CrmPage() {
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
   const lostReasons = resolveLostReasons(workspaceRow?.lost_reasons);
+  // Coluna nova: workspace criado antes dela lê undefined, e o padrão é perguntar (mesmo
+  // comportamento de quem já usava).
+  const askLostReason = workspaceRow?.ask_lost_reason !== false;
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
@@ -79,6 +82,7 @@ export default async function CrmPage() {
         teamMembers={teamMembers}
         branches={branches}
         lostReasons={lostReasons}
+        askLostReason={askLostReason}
       />
     </div>
   );

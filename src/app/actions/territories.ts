@@ -22,8 +22,8 @@ export async function listTerritories(): Promise<TerritoryRow[]> {
   const supabase = await createClient();
   const todos: TerritoryRow[] = [];
   let offset = 0;
-  // Território é uma linha por cidade: a Luchini tem ~300, e o teto de 1000 do servidor está logo
-  // ali pra quem cobrir um estado inteiro.
+  // Território é uma linha por cidade: uma rede que cobre um estado inteiro passa fácil das
+  // centenas, e o teto de 1000 do servidor está logo ali.
   for (;;) {
     const { data } = await supabase
       .from("territories")

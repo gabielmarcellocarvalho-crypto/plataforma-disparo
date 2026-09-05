@@ -26,7 +26,19 @@ export function emptyWeekHours(): WeekHours {
 }
 
 export type CollectFieldMode = "discreto" | "perguntar";
-export type CollectField = { key: string; label: string; mode: CollectFieldMode };
+export type CollectField = {
+  key: string;
+  label: string;
+  mode: CollectFieldMode;
+  // Opções válidas quando o campo é uma LISTA do workspace (custom_field_defs). Copiadas pra cá na
+  // hora de escolher o campo porque buildSystemPrompt roda também no cliente (pré-visualização do
+  // prompt), onde não dá pra consultar o banco. O agente-turn revalida contra a definição real na
+  // hora de gravar — aqui é só pra instruir o modelo.
+  //
+  // Sem isso o agente escreve uma variação própria onde o campo espera a opção cadastrada, e o
+  // relatório vira uma categoria por lead em vez de somar.
+  options?: string[];
+};
 
 export type AgentMode = "" | "recepcionista" | "sdr" | "closer";
 
@@ -189,6 +201,9 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
             key: String(f.key),
             label: typeof f.label === "string" ? f.label : String(f.key),
             mode: f.mode === "perguntar" ? "perguntar" : ("discreto" as CollectFieldMode),
+            options: Array.isArray(f.options)
+              ? (f.options as unknown[]).map((o) => String(o ?? "").trim()).filter(Boolean)
+              : undefined,
           }))
       : [],
     mediaFolderNotes:
@@ -388,6 +403,18 @@ export function buildSystemPrompt(config: AgentConfig): string {
         `uma tag [[DADOS: chave=valor; chave2=valor2]], usando exatamente estas chaves: ${chaves}. ` +
         "Só inclua a tag quando tiver uma informação nova pra registrar."
     );
+
+    // Campo de lista só serve pra relatório se o valor gravado for sempre um dos mesmos. Uma
+    // variação livre do modelo transforma cada lead numa categoria própria.
+    const comOpcoes = config.collectFields.filter((f) => f.options && f.options.length > 0);
+    if (comOpcoes.length) {
+      lines.push(
+        "Alguns desses campos só aceitam valores de uma lista fixa. Ao preencher, copie a opção exatamente como está " +
+          "escrita aqui (mesma grafia e acentuação), nunca uma variação sua: " +
+          comOpcoes.map((f) => `${f.key} = ${f.options!.join(" | ")}`).join("; ") +
+          ". Se o que o cliente disser não couber em nenhuma das opções, não preencha esse campo."
+      );
+    }
   }
 
   const statusVocab = Object.keys(STATUS_TAG_TO_STAGE).filter((w) => w !== "fechando_proposta").join(", ");

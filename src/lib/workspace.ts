@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { isAccessType, type AccessType } from "@/lib/access-types";
+import { isAccessType, resolveHiddenPages, canAccessPage, type AccessType } from "@/lib/access-types";
 
 const ACTIVE_WORKSPACE_COOKIE = "active_workspace_id";
 
@@ -18,6 +18,9 @@ export type CurrentWorkspace = {
   allWorkspaces: WorkspaceSummary[];
   // null pra staff (sem restrição) e pra cliente ainda não classificado — ver access-types.ts.
   accessType: AccessType | null;
+  // Funções desligadas NESTE workspace. Vale pra todo mundo, inclusive a agência — é a resposta pra
+  // "esse cliente não usa Campanhas", que antes exigiria um plano novo no código.
+  hiddenPages: string[];
 };
 
 // Resolve o workspace "ativo" da sessão atual:
@@ -31,7 +34,7 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) return { workspace: null, isStaff: false, isDeveloper: false, allWorkspaces: [], accessType: null };
+  if (!user) return { workspace: null, isStaff: false, isDeveloper: false, allWorkspaces: [], accessType: null, hiddenPages: [] };
 
   const { data: profile } = await supabase.from("profiles").select("role, access_type").eq("id", user.id).maybeSingle();
   const role = profile?.role ?? "cliente";
@@ -40,29 +43,60 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
   const accessType = !isStaff && isAccessType(profile?.access_type) ? profile.access_type : null;
 
   if (isDeveloper) {
-    const { data: workspaces } = await supabase.from("workspaces").select("id, name").order("created_at", { ascending: true });
-    const all = workspaces ?? [];
+    const { data: workspaces } = await supabase
+      .from("workspaces")
+      .select("id, name, hidden_pages")
+      .order("created_at", { ascending: true });
+    const rows = workspaces ?? [];
+    const all = rows.map(({ id, name }) => ({ id, name }));
     const cookieStore = await cookies();
     const activeId = cookieStore.get(ACTIVE_WORKSPACE_COOKIE)?.value;
-    const active = all.find((w) => w.id === activeId) ?? all[0] ?? null;
-    return { workspace: active, isStaff: true, isDeveloper: true, allWorkspaces: all, accessType: null };
+    const activeRow = rows.find((w) => w.id === activeId) ?? rows[0] ?? null;
+    return {
+      workspace: activeRow ? { id: activeRow.id, name: activeRow.name } : null,
+      isStaff: true,
+      isDeveloper: true,
+      allWorkspaces: all,
+      accessType: null,
+      hiddenPages: resolveHiddenPages(activeRow?.hidden_pages),
+    };
   }
 
   // colaborador (escopado) e cliente compartilham a mesma fonte — workspace_members — a diferença é
   // só que colaborador pode ter mais de 1 vínculo (com cookie pra escolher qual está ativo) e cliente
   // sempre tem exatamente 1.
-  const { data: memberships } = await supabase.from("workspace_members").select("workspaces(id, name)").eq("user_id", user.id);
-  const all = (memberships || []).map((m) => m.workspaces as unknown as WorkspaceSummary).filter(Boolean);
+  const { data: memberships } = await supabase
+    .from("workspace_members")
+    .select("workspaces(id, name, hidden_pages)")
+    .eq("user_id", user.id);
+  type Row = { id: string; name: string; hidden_pages: unknown };
+  const rows = (memberships || []).map((m) => m.workspaces as unknown as Row).filter(Boolean);
+  const all = rows.map(({ id, name }) => ({ id, name }));
 
   if (isStaff) {
     const cookieStore = await cookies();
     const activeId = cookieStore.get(ACTIVE_WORKSPACE_COOKIE)?.value;
-    const active = all.find((w) => w.id === activeId) ?? all[0] ?? null;
-    return { workspace: active, isStaff: true, isDeveloper: false, allWorkspaces: all, accessType: null };
+    const activeRow = rows.find((w) => w.id === activeId) ?? rows[0] ?? null;
+    return {
+      workspace: activeRow ? { id: activeRow.id, name: activeRow.name } : null,
+      isStaff: true,
+      isDeveloper: false,
+      allWorkspaces: all,
+      accessType: null,
+      hiddenPages: resolveHiddenPages(activeRow?.hidden_pages),
+    };
   }
 
-  const workspace = all[0] ?? null;
-  return { workspace, isStaff: false, isDeveloper: false, allWorkspaces: workspace ? [workspace] : [], accessType };
+  const activeRow = rows[0] ?? null;
+  const workspace = activeRow ? { id: activeRow.id, name: activeRow.name } : null;
+  return {
+    workspace,
+    isStaff: false,
+    isDeveloper: false,
+    allWorkspaces: workspace ? [workspace] : [],
+    accessType,
+    hiddenPages: resolveHiddenPages(activeRow?.hidden_pages),
+  };
 }
 
 // Redireciona pra "/" se o cliente logado não tem esse path liberado no tipo de acesso dele (staff
@@ -70,10 +104,12 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
 // dependem do tipo de acesso do cliente).
 export async function assertPageAccess(path: string, opts: { staffOnly?: boolean } = {}): Promise<void> {
   const { redirect } = await import("next/navigation");
-  const { canAccessPage } = await import("@/lib/access-types");
-  const { isStaff, accessType } = await getCurrentWorkspace();
+  const { isStaff, accessType, hiddenPages } = await getCurrentWorkspace();
+  // Função desligada no workspace bloqueia inclusive a agência: se "Agentes" está oculto porque o
+  // cliente não usa IA, abrir a URL na mão não deveria funcionar pra ninguém.
+  if (hiddenPages.includes(path)) redirect("/");
   if (isStaff) return;
-  if (opts.staffOnly || !canAccessPage(accessType, path)) redirect("/");
+  if (opts.staffOnly || !canAccessPage(accessType, path, hiddenPages)) redirect("/");
 }
 
 // Checagens rápidas (sem precisar resolver o workspace ativo) — usadas em telas internas e Server

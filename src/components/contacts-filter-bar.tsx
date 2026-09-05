@@ -7,7 +7,7 @@ import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 
 // Filtro de Contatos. Mora na URL (searchParams) de propósito: a lista é paginada NO SERVIDOR, então
 // o filtro tem que chegar na query do banco — filtrar só a página atual no cliente daria um resultado
-// mentiroso ("2 leads em Lavras" quando existem 40, 38 deles na página 3).
+// mentiroso ("2 leads nessa cidade" quando existem 40, 38 deles na página 3).
 export function ContactsFilterBar({
   defs,
   teamMembers,

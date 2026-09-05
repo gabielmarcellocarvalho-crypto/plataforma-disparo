@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ACTIVE_WORKSPACE_COOKIE, isCurrentUserStaff, isCurrentUserDeveloper } from "@/lib/workspace";
 import { isWorkspacePlan } from "@/lib/workspace-plan";
+import { resolveHiddenPages } from "@/lib/access-types";
 import { extractDominantColor } from "@/lib/logo-color";
 
 export type CreateWorkspaceState = { error: string | null };
@@ -20,8 +21,17 @@ export async function createWorkspace(
   if (!name) return { error: "Informe o nome do cliente." };
   if (!isWorkspacePlan(plan)) return { error: "Escolha o plano desse cliente." };
 
+  // Funções desligadas já na criação: quem cadastra marca o que esse cliente NÃO usa, em vez de
+  // encaixá-lo num molde pronto. Filtrado contra o catálogo pra não gravar caminho inventado.
+  let hiddenPages: string[] = [];
+  try {
+    hiddenPages = resolveHiddenPages(JSON.parse(String(formData.get("hiddenPages") || "[]")));
+  } catch {
+    hiddenPages = [];
+  }
+
   const supabase = await createClient();
-  const { data, error } = await supabase.from("workspaces").insert({ name, plan }).select("id").single();
+  const { data, error } = await supabase.from("workspaces").insert({ name, plan, hidden_pages: hiddenPages }).select("id").single();
 
   if (error) return { error: "Não foi possível criar o workspace (você precisa ser admin da agência)." };
 
@@ -29,6 +39,36 @@ export async function createWorkspace(
   cookieStore.set(ACTIVE_WORKSPACE_COOKIE, data.id, { httpOnly: true, sameSite: "lax", path: "/" });
 
   redirect("/");
+}
+
+// Liga/desliga funções de um workspace já existente. Vale pra todo mundo que trabalha nele — é a
+// resposta pra "esse cliente não usa Campanhas" sem precisar de um plano novo no código.
+export async function updateWorkspaceFeatures(workspaceId: string, hiddenPages: string[]): Promise<CreateWorkspaceState> {
+  if (!(await isCurrentUserStaff())) return { error: "Só a agência pode mudar as funções." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ hidden_pages: resolveHiddenPages(hiddenPages) })
+    .eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar as funções." };
+
+  // O menu é montado no layout, então precisa revalidar a árvore inteira, não só a página atual.
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+// Perguntar o motivo ao mover um card pra perda deixa de ser imposto: operação que não trabalha
+// motivo de perda desliga e o diálogo some.
+export async function updateAskLostReason(workspaceId: string, ask: boolean): Promise<CreateWorkspaceState> {
+  if (!(await isCurrentUserStaff())) return { error: "Só a agência pode mudar isso." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("workspaces").update({ ask_lost_reason: ask }).eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar." };
+
+  revalidatePath("/crm");
+  return { error: null };
 }
 
 export async function setActiveWorkspace(workspaceId: string) {

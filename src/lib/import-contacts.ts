@@ -64,7 +64,7 @@ function readRows(buffer: Buffer, sheetName?: string) {
 }
 
 // Cabeçalho vazio ou repetido quebraria o de/para (duas colunas com a mesma chave). Coluna sem
-// título vira "Coluna D" — a planilha da Luchini tem exatamente isso na coluna do responsável.
+// título vira "Coluna D" — planilha real costuma ter pelo menos uma coluna sem cabeçalho.
 function nomearColunas(primeira: unknown[]): string[] {
   const vistos = new Map<string, number>();
   return primeira.map((v, i) => {

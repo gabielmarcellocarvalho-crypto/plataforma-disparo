@@ -97,7 +97,7 @@ function FieldForm({
             value={draft.optionsText}
             onChange={(e) => setDraft({ ...draft, optionsText: e.target.value })}
             rows={5}
-            placeholder={"Trator\nPeça\nImplemento\nConsórcio"}
+            placeholder={"Opção A\nOpção B\nOpção C"}
             className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-y font-mono"
           />
           <span className="text-[11px] text-text-muted">

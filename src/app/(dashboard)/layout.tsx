@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { workspace, isStaff, isDeveloper, allWorkspaces, accessType } = await getCurrentWorkspace();
+  const { workspace, isStaff, isDeveloper, allWorkspaces, accessType, hiddenPages } = await getCurrentWorkspace();
 
   // Pontos de atenção (agente travado ou só sinalizando) desse workspace — vira o badge da aba Conversas.
   const { count: attentionCount } = workspace
@@ -81,13 +81,57 @@ export default async function DashboardLayout({ children }: { children: React.Re
     </div>
   );
 
+  // Versões compactas dos mesmos blocos, pro estado recolhido do menu. São montadas aqui (Server
+  // Component) porque dependem de dados que a sidebar não tem — nome do workspace e e-mail do
+  // usuário; a sidebar só escolhe qual das duas renderizar.
+  const workspaceCompact = (
+    <div
+      className="grid place-items-center w-9 h-9 mx-auto rounded-lg bg-white/10 text-white text-xs font-extrabold"
+      title={workspace.name}
+      aria-label={`Workspace atual: ${workspace.name}`}
+    >
+      {workspace.name.trim().slice(0, 2).toUpperCase()}
+    </div>
+  );
+
+  // Empilhado em vez de lado a lado: num trilho de 68px não cabem dois alvos de toque de 44px na
+  // horizontal sem encostar um no outro.
+  const userCompact = (
+    <div className="flex flex-col items-center gap-1.5 pt-3 pb-1">
+      <span
+        className="grid place-items-center w-8 h-8 rounded-full bg-white/10 text-white text-[11px] font-bold"
+        title={user?.email ?? ""}
+        aria-label={user?.email ?? "Usuário"}
+      >
+        {initial}
+      </span>
+      <form action={signOut}>
+        <button
+          type="submit"
+          title="Sair"
+          aria-label="Sair"
+          className="grid place-items-center w-11 h-11 rounded-md text-sidebar-muted hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </button>
+      </form>
+    </div>
+  );
+
   return (
     <DashboardShell
       workspaceSlot={workspaceSlot}
+      workspaceCompact={workspaceCompact}
       userSlot={userSlot}
+      userCompact={userCompact}
       isStaff={isStaff}
       isDeveloper={isDeveloper}
       accessType={accessType}
+      hiddenPages={hiddenPages}
       attentionCount={attentionCount ?? 0}
     >
       {children}

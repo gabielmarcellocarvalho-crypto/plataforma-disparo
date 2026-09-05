@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { AgentEditView } from "@/components/agent-edit-view";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
@@ -54,6 +55,10 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       .order("created_at", { ascending: true }),
   ]);
 
+  // Campos do workspace — o agente escolhe o que coletar entre eles, em vez de inventar chave
+  // própria: é isso que faz o dado coletado na conversa cair no mesmo campo que o CRM filtra e soma.
+  const fieldDefs = await listCustomFieldDefs();
+
   const isGemini = agent.llm_provider === "gemini";
   const model = isGemini ? GEMINI_MODEL : ANTHROPIC_MODEL;
   const totalCostUsd = (usageRows || []).reduce(
@@ -79,6 +84,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
         Agentes
       </Link>
       <AgentEditView
+        fieldDefs={fieldDefs}
         agent={agent}
         model={model}
         totalCostUsd={totalCostUsd}

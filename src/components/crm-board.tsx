@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { updateContactStage, updateContactLostReason, updateCrmStageSettings, updateLostReasons } from "@/app/actions/contacts";
+import { updateAskLostReason } from "@/app/actions/workspace";
 import { STAGE_ORDER, HIDEABLE_STAGES, getVisibleStages, displayStageFor, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { GlassDateRangePicker, formatBr } from "@/components/glass-date-range-picker";
@@ -64,6 +65,7 @@ function StageLabelsEditor({
   labels,
   hiddenStages,
   lostReasons,
+  askLostReason,
   onSaved,
   onClose,
 }: {
@@ -71,12 +73,14 @@ function StageLabelsEditor({
   labels: Record<ContactStage, string>;
   hiddenStages: ContactStage[];
   lostReasons: string[];
-  onSaved: (labels: Record<ContactStage, string>, hiddenStages: ContactStage[], lostReasons: string[]) => void;
+  askLostReason: boolean;
+  onSaved: (labels: Record<ContactStage, string>, hiddenStages: ContactStage[], lostReasons: string[], askLostReason: boolean) => void;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(labels);
   const [hiddenDraft, setHiddenDraft] = useState(hiddenStages);
   const [reasonsDraft, setReasonsDraft] = useState(lostReasons.join("\n"));
+  const [askDraft, setAskDraft] = useState(askLostReason);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -91,14 +95,15 @@ function StageLabelsEditor({
       .map((l) => l.trim())
       .filter(Boolean);
     startTransition(async () => {
-      const [fases, perdas] = await Promise.all([
+      const [fases, perdas, perguntar] = await Promise.all([
         updateCrmStageSettings(workspaceId, draft, hiddenDraft),
         updateLostReasons(workspaceId, motivos),
+        updateAskLostReason(workspaceId, askDraft),
       ]);
-      const erro = fases.error || perdas.error;
+      const erro = fases.error || perdas.error || perguntar.error;
       if (erro) setError(erro);
       else {
-        onSaved(draft, hiddenDraft, motivos);
+        onSaved(draft, hiddenDraft, motivos, askDraft);
         onClose();
       }
     });
@@ -150,15 +155,28 @@ function StageLabelsEditor({
       </div>
       <div className="flex flex-col gap-1.5 border-t border-border pt-3">
         <span className="text-sm font-bold">Motivos da perda</span>
+
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={askDraft}
+            onChange={(e) => setAskDraft(e.target.checked)}
+            className="cursor-pointer accent-[var(--color-primary-strong)]"
+          />
+          Perguntar o motivo ao mover um card pra fase de perda
+        </label>
         <p className="text-xs text-text-muted">
-          Um por linha. É o que aparece quando um card cai na fase de perda, e o que vira o relatório
-          de &quot;por que perdemos&quot; em Métricas. Quem move o card pode escrever um motivo fora da lista.
+          Desligado, o card só é movido e ninguém é interrompido — o motivo continua podendo ser
+          preenchido à mão no painel do lead. Ligado, a lista abaixo é o que aparece no diálogo (um
+          por linha) e o que vira o relatório de &quot;por que perdemos&quot; em Métricas; quem move o
+          card também pode escrever um motivo fora da lista.
         </p>
         <textarea
           value={reasonsDraft}
           onChange={(e) => setReasonsDraft(e.target.value)}
           rows={6}
-          className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-y"
+          disabled={!askDraft}
+          className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-y disabled:opacity-50"
         />
       </div>
 
@@ -343,6 +361,7 @@ export function CrmBoard({
   teamMembers,
   branches,
   lostReasons: initialLostReasons,
+  askLostReason: initialAskLostReason,
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -352,6 +371,7 @@ export function CrmBoard({
   teamMembers: TeamMemberRow[];
   branches: BranchRow[];
   lostReasons: string[];
+  askLostReason: boolean;
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -360,6 +380,7 @@ export function CrmBoard({
   const [fieldDefs, setFieldDefs] = useState(initialFieldDefs);
   const [fieldsEditorOpen, setFieldsEditorOpen] = useState(false);
   const [lostReasons, setLostReasons] = useState(initialLostReasons);
+  const [askLostReason, setAskLostReason] = useState(initialAskLostReason);
   const [perdaPendente, setPerdaPendente] = useState<{ id: string; nome: string } | null>(null);
   const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -477,7 +498,9 @@ export function CrmBoard({
       await updateContactStage(id, stage);
     });
 
-    if (stage === LOST_STAGE) {
+    // Perguntar o motivo é configuração do workspace: operação que não trabalha motivo de perda
+    // desliga e não ganha um diálogo no meio do caminho.
+    if (stage === LOST_STAGE && askLostReason) {
       setPerdaPendente({ id, nome: antes?.name || antes?.phone || antes?.email || "sem nome" });
     }
   }
@@ -732,10 +755,12 @@ export function CrmBoard({
           labels={stageLabels}
           hiddenStages={hiddenStages}
           lostReasons={lostReasons}
-          onSaved={(labels, hidden, motivos) => {
+          askLostReason={askLostReason}
+          onSaved={(labels, hidden, motivos, perguntar) => {
             setStageLabels(labels);
             setHiddenStages(hidden);
             setLostReasons(motivos);
+            setAskLostReason(perguntar);
           }}
           onClose={() => setLabelsEditorOpen(false)}
         />

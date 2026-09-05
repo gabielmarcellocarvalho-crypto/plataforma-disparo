@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { createWorkspace, type CreateWorkspaceState } from "@/app/actions/workspace";
 import { WORKSPACE_PLANS, type WorkspacePlan } from "@/lib/workspace-plan";
+import { WorkspaceFeaturesField } from "@/components/workspace-features-picker";
 
 const INITIAL_STATE: CreateWorkspaceState = { error: null };
 
@@ -11,7 +12,7 @@ export function CreateWorkspaceForm() {
   const [plan, setPlan] = useState<WorkspacePlan | "">("");
 
   return (
-    <form action={formAction} className="w-full max-w-sm bg-surface border border-border rounded-lg shadow-md p-7 flex flex-col gap-4">
+    <form action={formAction} className="w-full max-w-2xl bg-surface border border-border rounded-lg shadow-md p-6 sm:p-7 flex flex-col gap-5">
       <div>
         <h1 className="text-xl font-extrabold tracking-tight">Cadastrar cliente</h1>
         <p className="text-sm text-text-muted mt-1">Cria o primeiro workspace da plataforma.</p>
@@ -26,7 +27,7 @@ export function CreateWorkspaceForm() {
           name="name"
           type="text"
           required
-          placeholder="Ex.: Hanoi Editora"
+          placeholder="Ex.: Nome da empresa"
           className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary-soft"
         />
       </div>
@@ -34,7 +35,7 @@ export function CreateWorkspaceForm() {
       <div className="flex flex-col gap-1.5">
         <span className="text-sm font-semibold">Plano</span>
         <input type="hidden" name="plan" value={plan} />
-        <div className="flex flex-col gap-2">
+        <div className="grid sm:grid-cols-2 gap-2">
           {WORKSPACE_PLANS.map((p) => (
             <button
               key={p.key}
@@ -50,6 +51,10 @@ export function CreateWorkspaceForm() {
           ))}
         </div>
         <p className="text-xs text-text-muted">Define até onde vai o funil de conversão mostrado na Visão geral. Dá pra mudar depois em Configurações.</p>
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <WorkspaceFeaturesField />
       </div>
 
       {state.error && <p className="text-sm text-danger font-medium">{state.error}</p>}

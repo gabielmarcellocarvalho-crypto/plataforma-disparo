@@ -162,7 +162,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
         <div className="flex flex-wrap items-end gap-2.5 border-t border-border pt-3">
           <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
             <label className="text-xs font-semibold text-text-muted">Nome da filial</label>
-            <input value={branchDraft.name} onChange={(e) => setBranchDraft({ ...branchDraft, name: e.target.value })} placeholder="ex.: Lavras" className={INPUT} />
+            <input value={branchDraft.name} onChange={(e) => setBranchDraft({ ...branchDraft, name: e.target.value })} placeholder="ex.: Matriz, Filial Centro" className={INPUT} />
           </div>
           <div className="flex flex-col gap-1 flex-1 min-w-[140px]">
             <label className="text-xs font-semibold text-text-muted">Cidade</label>

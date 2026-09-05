@@ -5,6 +5,7 @@ import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manage
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
+import { WorkspaceFeaturesEditor } from "@/components/workspace-features-picker";
 import { EmailFromEditor } from "@/components/email-from-editor";
 import { WorkspaceLogoEditor } from "@/components/workspace-logo-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
@@ -12,7 +13,7 @@ import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
 export default async function ConfiguracoesPage() {
   await assertPageAccess("/configuracoes");
-  const { workspace, isStaff } = await getCurrentWorkspace();
+  const { workspace, isStaff, hiddenPages } = await getCurrentWorkspace();
   const supabase = await createClient();
 
   const [{ data: instances }, apiKeys, { data: workspaceRow }] = await Promise.all([
@@ -37,6 +38,17 @@ export default async function ConfiguracoesPage() {
           {isStaff ? `Conexões do workspace ${workspace?.name}.` : "Conecte ou reconecte seu número de WhatsApp aqui."}
         </p>
       </div>
+
+      {isStaff && workspace && (
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-2xl">
+          <h3 className="font-bold text-[15px] mb-1">Funções ativas</h3>
+          <p className="text-xs text-text-muted mb-4">
+            O que esse cliente usa da plataforma. O que estiver desmarcado some do menu e fica
+            inacessível por URL — pra ele e pra agência.
+          </p>
+          <WorkspaceFeaturesEditor workspaceId={workspace.id} initialHidden={hiddenPages} />
+        </div>
+      )}
 
       {isStaff && (
         <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

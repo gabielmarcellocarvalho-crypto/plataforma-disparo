@@ -60,7 +60,7 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
     listQuery = listQuery.eq("branch_id", sp.filial);
     countQuery = countQuery.eq("branch_id", sp.filial);
   }
-  // Containment em jsonb: casa tanto valor escalar ({"produto":"Trator"}) quanto o valor dentro de um
+  // Containment em jsonb: casa tanto valor escalar ({"campo":"valor"}) quanto o valor dentro de um
   // campo de múltipla escolha, que é gravado como array.
   if (sp.campo && sp.valor) {
     listQuery = listQuery.contains("custom_fields", { [sp.campo]: sp.valor });

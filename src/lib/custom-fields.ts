@@ -81,6 +81,26 @@ export function formatFieldValue(def: Pick<CustomFieldDef, "type">, raw: unknown
   return s;
 }
 
+// Puxa o valor pra grafia exata da lista quando é claramente a mesma coisa escrita diferente
+// (caixa e acento diferentes). Usado no que o agente de IA coleta: por mais que o prompt
+// mande copiar a opção, o modelo varia caixa e acento, e cada variação vira uma categoria a mais no
+// relatório. Não achando equivalente, devolve o valor cru — perder o dado seria pior.
+export function canonicalizeValue(def: Pick<CustomFieldDef, "type" | "options">, raw: string): string {
+  const s = raw.trim();
+  if (!s || (def.type !== "selecao" && def.type !== "selecao_multipla") || def.options.length === 0) return s;
+
+  const chave = (v: string) =>
+    v
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const alvo = chave(s);
+  return def.options.find((o) => chave(o) === alvo) ?? s;
+}
+
 // Validação na hora de salvar um lead. Devolve a mensagem de erro ou null.
 export function validateFieldValue(def: CustomFieldDef, raw: unknown): string | null {
   const isMulti = def.type === "selecao_multipla";

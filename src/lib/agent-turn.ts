@@ -13,6 +13,7 @@ import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 import { normalizeCity } from "@/lib/territories";
+import { canonicalizeValue, parseOptions, type CustomFieldType } from "@/lib/custom-fields";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import { getMonthToDateAgentCostUsd, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 
@@ -448,20 +449,42 @@ export async function runAgentTurn(
   if (contact.missed_offhours) await supabase.from("contacts").update({ missed_offhours: false }).eq("id", contact.id);
 
   if (Object.keys(collectedData).length) {
-    const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...collectedData };
+    // O prompt manda o agente copiar a opção exata da lista, mas o modelo varia caixa e acento
+    // (minúscula, sem acento). Aqui a definição real do campo é a autoridade: puxa o valor pra
+    // grafia cadastrada quando é claramente a mesma coisa. Sem isso cada variação vira uma categoria
+    // a mais no relatório, que era exatamente o problema da planilha que o CRM veio substituir.
+    const { data: defsRaw } = await supabase
+      .from("custom_field_defs")
+      .select("key, type, options")
+      .eq("workspace_id", agent.workspace_id);
+
+    const defs = new Map(
+      (defsRaw ?? []).map((d) => [
+        d.key,
+        { type: (d.type ?? "texto") as CustomFieldType, options: parseOptions(d.options) },
+      ])
+    );
+
+    const normalizado: Record<string, string> = {};
+    for (const [k, v] of Object.entries(collectedData)) {
+      const def = defs.get(k.trim());
+      normalizado[k] = def ? canonicalizeValue(def, v) : v;
+    }
+
+    const merged = { ...((contact.custom_fields as Record<string, unknown>) || {}), ...normalizado };
     const updates: Record<string, unknown> = { custom_fields: merged };
 
     // "nome" e "email" são tratados à parte: também viram os campos principais do lead (aparecem em
     // Contatos, CRM, Conversas), não só um campo dentro de custom_fields — sincroniza a cada atualização.
     // "telefone" fica de fora de propósito: contact.phone já é o número real do WhatsApp de origem,
     // sobrescrever com o que o agente ouviu poderia divergir do número que a gente realmente usa pra enviar.
-    const findKey = (name: string) => Object.keys(collectedData).find((k) => k.trim().toLowerCase() === name);
+    const findKey = (name: string) => Object.keys(normalizado).find((k) => k.trim().toLowerCase() === name);
 
     const nomeKey = findKey("nome");
-    if (nomeKey && collectedData[nomeKey]) updates.name = collectedData[nomeKey];
+    if (nomeKey && normalizado[nomeKey]) updates.name = normalizado[nomeKey];
 
     const emailKey = findKey("email");
-    const emailValue = emailKey ? collectedData[emailKey].trim() : "";
+    const emailValue = emailKey ? normalizado[emailKey].trim() : "";
     if (emailValue && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) updates.email = emailValue;
 
     await supabase.from("contacts").update(updates).eq("id", contact.id);

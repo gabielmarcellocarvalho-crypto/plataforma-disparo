@@ -144,7 +144,7 @@ export function TerritoriesManager({
           value={colagem}
           onChange={(e) => setColagem(e.target.value)}
           rows={5}
-          placeholder={"Três Pontas = Jader\nCampos Gerais = Jader\nNepomuceno = Fred Carvalho"}
+          placeholder={"Cidade A = Nome do vendedor\nCidade B = Nome do vendedor\nCidade C = Outro vendedor"}
           className={`${INPUT} resize-y font-mono text-xs`}
         />
         <p className="text-[11px] text-text-muted">

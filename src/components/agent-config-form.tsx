@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
+import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
   buildSystemPrompt,
   getAgentMode,
@@ -144,7 +145,9 @@ function HoursEditor({ hours, onChange }: { hours: WeekHours; onChange: (h: Week
   );
 }
 
-const PRESET_FIELDS: { key: string; display: string; label: string; mode: CollectFieldMode }[] = [
+// Nome/telefone/e-mail não são campos personalizados: são colunas do próprio contato, e por isso
+// aparecem sempre, mesmo num workspace sem nenhum campo criado.
+const PRESET_FIELDS: { key: string; display: string; label: string; mode: CollectFieldMode; options?: string[] }[] = [
   { key: "nome", display: "Nome", label: "nome do cliente", mode: "discreto" },
   { key: "telefone", display: "Telefone", label: "telefone de contato", mode: "discreto" },
   { key: "email", display: "E-mail", label: "e-mail para cadastro", mode: "perguntar" },
@@ -156,12 +159,14 @@ export function AgentConfigForm({
   initialSystemPrompt,
   initialLlmProvider,
   mediaCategories,
+  fieldDefs = [],
 }: {
   agentId: string;
   initialConfig: AgentConfig;
   initialSystemPrompt: string;
   initialLlmProvider: LlmProvider;
   mediaCategories: string[];
+  fieldDefs?: CustomFieldDef[];
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
@@ -203,7 +208,12 @@ export function AgentConfigForm({
   }
 
   function addField(preset?: (typeof PRESET_FIELDS)[number]) {
-    set("collectFields", [...config.collectFields, preset ? { key: preset.key, label: preset.label, mode: preset.mode } : { key: "", label: "", mode: "discreto" }]);
+    set("collectFields", [
+      ...config.collectFields,
+      preset
+        ? { key: preset.key, label: preset.label, mode: preset.mode, options: preset.options }
+        : { key: "", label: "", mode: "discreto" as CollectFieldMode },
+    ]);
   }
 
   function updateField(index: number, patch: Partial<CollectField>) {
@@ -374,61 +384,95 @@ export function AgentConfigForm({
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <span className="text-sm font-bold">Informações que preciso</span>
         <p className="text-xs text-text-muted">
-          Dados que o agente deve descobrir na conversa e salvar no contato (aparecem depois em Contatos/CRM). Se não
-          adicionar nenhum campo, o agente não coleta nada. &quot;Discretamente&quot; = só anota se o cliente mencionar
-          sozinho, sem perguntar; &quot;Pode perguntar&quot; = o agente pergunta ativamente quando precisar.
+          Dados que o agente deve descobrir na conversa e salvar no contato. Os campos abaixo são os mesmos do
+          Pipeline — o que o agente coletar cai no campo que o CRM filtra e soma, com a mesma grafia da lista. Se não
+          adicionar nenhum, o agente não coleta nada. &quot;Discretamente&quot; = só anota se o cliente mencionar
+          sozinho; &quot;Pode perguntar&quot; = o agente pergunta ativamente quando precisar.
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {PRESET_FIELDS.map((p) => {
-            const added = config.collectFields.some((f) => f.key === p.key);
-            return (
-              <button
-                key={p.key}
-                type="button"
-                disabled={added}
-                onClick={() => addField(p)}
-                className="text-xs font-semibold px-2.5 py-1 rounded-full border border-border text-primary-strong disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                + {p.display}
-              </button>
-            );
-          })}
+          {[...PRESET_FIELDS, ...fieldDefs.map((d) => ({ key: d.key, display: d.label, label: d.label, mode: "discreto" as CollectFieldMode, options: d.options }))].map(
+            (p) => {
+              const added = config.collectFields.some((f) => f.key === p.key);
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  disabled={added}
+                  onClick={() => addField(p)}
+                  className="text-xs font-semibold px-2.5 py-1 rounded-full border border-border text-primary-strong disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  + {p.display}
+                </button>
+              );
+            }
+          )}
           <button
             type="button"
             onClick={() => addField()}
             className="text-xs font-semibold px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted cursor-pointer"
           >
-            + campo personalizado
+            + campo avulso
           </button>
         </div>
 
-        {config.collectFields.map((field, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              value={field.key}
-              onChange={(e) => updateField(i, { key: e.target.value })}
-              placeholder="chave"
-              className="w-28 border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary"
-            />
-            <input
-              value={field.label}
-              onChange={(e) => updateField(i, { label: e.target.value })}
-              placeholder="descrição (ex: data prevista de check-in)"
-              className="flex-1 border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary"
-            />
-            <select
-              value={field.mode}
-              onChange={(e) => updateField(i, { mode: e.target.value as CollectFieldMode })}
-              className="border border-border rounded-md px-1.5 py-1.5 text-xs outline-none focus:border-primary cursor-pointer"
-            >
-              <option value="discreto">Discretamente</option>
-              <option value="perguntar">Pode perguntar</option>
-            </select>
-            <button type="button" onClick={() => removeField(i)} aria-label="Remover campo" className="text-danger text-xs font-bold px-1.5 cursor-pointer">
-              ×
-            </button>
-          </div>
-        ))}
+        {config.collectFields.map((field, i) => {
+          // Campo que existe no workspace tem chave e rótulo definidos lá — editar aqui só criaria
+          // uma chave paralela, e o dado coletado deixaria de cair no campo que o CRM filtra.
+          const doWorkspace = fieldDefs.find((d) => d.key === field.key);
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                {doWorkspace ? (
+                  <span className="flex items-center gap-1.5 border border-primary-soft bg-primary-faint text-primary-strong rounded-md px-2.5 py-1.5 text-xs font-semibold min-w-0">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span className="truncate">{doWorkspace.label}</span>
+                  </span>
+                ) : (
+                  <>
+                    <input
+                      value={field.key}
+                      onChange={(e) => updateField(i, { key: e.target.value })}
+                      placeholder="chave"
+                      className="w-28 border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary"
+                    />
+                    <input
+                      value={field.label}
+                      onChange={(e) => updateField(i, { label: e.target.value })}
+                      placeholder="descrição (ex: data prevista de check-in)"
+                      className="flex-1 min-w-[160px] border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+                    />
+                  </>
+                )}
+                <select
+                  value={field.mode}
+                  onChange={(e) => updateField(i, { mode: e.target.value as CollectFieldMode })}
+                  className="border border-border rounded-md px-1.5 py-1.5 text-xs outline-none focus:border-primary cursor-pointer"
+                >
+                  <option value="discreto">Discretamente</option>
+                  <option value="perguntar">Pode perguntar</option>
+                </select>
+                <button type="button" onClick={() => removeField(i)} aria-label="Remover campo" className="text-danger text-xs font-bold px-1.5 cursor-pointer">
+                  ×
+                </button>
+              </div>
+
+              {doWorkspace && doWorkspace.options.length > 0 && (
+                <span className="text-[11px] text-text-muted pl-1">
+                  O agente só pode usar: {doWorkspace.options.slice(0, 8).join(", ")}
+                  {doWorkspace.options.length > 8 ? ` e mais ${doWorkspace.options.length - 8}` : ""}.
+                </span>
+              )}
+              {!doWorkspace && field.key && (
+                <span className="text-[11px] text-warning-text pl-1">
+                  Campo avulso: entra em &quot;Outros campos&quot; no lead, mas não vira coluna nem filtro. Crie ele em
+                  Pipeline → campos do lead pra virar um campo de verdade.
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {mediaCategories.length > 0 && (

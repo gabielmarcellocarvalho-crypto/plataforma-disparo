@@ -3,8 +3,8 @@
 // Usado em três momentos, sempre com a mesma regra: na importação de planilha, quando o agente
 // descobre a cidade no meio da conversa, e no botão que aplica em massa aos leads já existentes.
 
-// A mesma cidade chega escrita de N jeitos ("Três Pontas", "TRES PONTAS", "tres  pontas", "Três
-// Pontas - MG"). A chave normalizada é o que faz as três virarem a mesma linha do mapa.
+// A mesma cidade chega escrita de N jeitos (caixa alta, sem acento, com espaço a mais, com sufixo
+// de UF). A chave normalizada é o que faz todas virarem a mesma linha do mapa.
 export function normalizeCity(raw: string): string {
   return raw
     .normalize("NFD")
@@ -20,8 +20,8 @@ export function normalizeCity(raw: string): string {
 export type TerritoryRoute = { teamMemberId: string | null; branchId: string | null };
 
 // ── Casamento de nome de vendedor ─────────────────────────────────────────
-// O mapa de território é escrito com apelido ("JADER", "FRED CARVALHO", "Joao H."), enquanto o
-// cadastro tem o nome completo ("Jader Augusto Reis Brito", "Frederico Teixeira Carvalho Firmiano").
+// O mapa de território é escrito com apelido ("PEDRO", "ANA COSTA", "Joao H."), enquanto o cadastro
+// tem o nome completo ("Pedro Almeida Santos", "Ana Carolina Costa Lima").
 // Casar só por primeiro nome erra nos dois sentidos: "FRED" não é prefixo exato de nada, e "Joao"
 // bate em dois vendedores diferentes da mesma filial.
 
@@ -35,8 +35,8 @@ function tokens(nome: string): string[] {
 
 function tokenCasa(a: string, b: string): boolean {
   if (a === b) return true;
-  // Letra sozinha é inicial abreviada: em "Joao H." o "H" é o que separa João Henrique de João
-  // Batista, os dois vendedores da mesma filial. Sem isso os dois empatam e ninguém ganha.
+  // Letra sozinha é inicial abreviada: em "Joao H." o "H" é o que separa dois vendedores que
+  // compartilham o primeiro nome. Sem isso os dois empatam e ninguém ganha.
   if (a.length === 1 || b.length === 1) return a[0] === b[0];
   // Prefixo nos dois sentidos cobre "fred" -> "frederico".
   if (a.length >= 3 && b.startsWith(a)) return true;

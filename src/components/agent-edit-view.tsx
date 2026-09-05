@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
+import type { CustomFieldDef } from "@/lib/custom-fields";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
 import { AgentKnowledgeLibrary } from "@/components/agent-knowledge-library";
 import { normalizeAgentConfig } from "@/lib/agent-prompt";
@@ -61,6 +62,7 @@ export function AgentEditView({
   media,
   knowledge,
   canManage,
+  fieldDefs,
 }: {
   agent: Agent;
   model: string;
@@ -68,6 +70,7 @@ export function AgentEditView({
   media: AgentMedia[];
   knowledge: KnowledgeDoc[];
   canManage: boolean;
+  fieldDefs: CustomFieldDef[];
 }) {
   const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
@@ -274,6 +277,7 @@ export function AgentEditView({
             initialSystemPrompt={agent.system_prompt}
             initialLlmProvider={agent.llm_provider}
             mediaCategories={mediaCategories}
+            fieldDefs={fieldDefs}
           />
         </div>
       )}
