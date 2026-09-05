@@ -2,8 +2,17 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { getContactDetail, updateContactInfo, updateContactStage, addContactNote, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
+import {
+  getContactDetail,
+  updateContactInfo,
+  updateContactStage,
+  updateContactLostReason,
+  addContactNote,
+  type ContactDetail,
+  type ContactNote,
+} from "@/app/actions/contacts";
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { LOST_STAGE } from "@/lib/lost-reasons";
 import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
 import { updateContactAssignment, type BranchRow, type TeamMemberRow } from "@/app/actions/team";
@@ -28,6 +37,7 @@ export function CrmLeadDrawer({
   fieldDefs = [],
   teamMembers = [],
   branches = [],
+  lostReasons = [],
 }: {
   contactId: string | null;
   onClose: () => void;
@@ -36,6 +46,7 @@ export function CrmLeadDrawer({
   fieldDefs?: CustomFieldDef[];
   teamMembers?: TeamMemberRow[];
   branches?: BranchRow[];
+  lostReasons?: string[];
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -139,9 +150,20 @@ export function CrmLeadDrawer({
 
   function handleStageChange(stage: ContactStage) {
     if (!contactId || !contact) return;
-    setContact({ ...contact, stage });
+    // Sair da fase de perda limpa o motivo: lead reaberto com "perdemos por preço" pendurado
+    // envenenaria o relatório de perdas. Quem limpa de verdade é a action; aqui é só o espelho.
+    setContact({ ...contact, stage, lost_reason: stage === LOST_STAGE ? contact.lost_reason : null });
     startTransition(async () => {
-      const result = await updateContactStage(contactId, stage);
+      const result = await updateContactStage(contactId, stage, contact.lost_reason);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handleLostReason(motivo: string) {
+    if (!contactId || !contact) return;
+    setContact({ ...contact, lost_reason: motivo || null });
+    startTransition(async () => {
+      const result = await updateContactLostReason(contactId, motivo);
       if (result.error) setError(result.error);
     });
   }
@@ -270,6 +292,24 @@ export function CrmLeadDrawer({
                   </select>
                   <span className="text-xs text-text-muted">há {daysSince(contact.stage_changed_at)}d nessa fase</span>
                 </div>
+                {contact.stage === LOST_STAGE && (
+                  <div className="mt-1.5">
+                    <select
+                      value={contact.lost_reason ?? ""}
+                      onChange={(e) => handleLostReason(e.target.value)}
+                      className="text-xs px-2 py-1 rounded-md border border-border bg-surface outline-none focus:border-primary cursor-pointer max-w-full"
+                    >
+                      <option value="">motivo da perda — não registrado</option>
+                      {/* Motivo escrito à mão no diálogo do Kanban continua selecionável mesmo fora
+                          da lista oficial, senão trocar de aba apagaria o que já foi registrado. */}
+                      {[...new Set([...lostReasons, ...(contact.lost_reason ? [contact.lost_reason] : [])])].map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 </div>
               </div>
               <button type="button" onClick={onClose} aria-label="Fechar" className="text-text-muted hover:text-text cursor-pointer p-1 shrink-0">

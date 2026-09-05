@@ -5,6 +5,11 @@ import { resolvePeriod } from "@/lib/period";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { CostBudgetCard } from "@/components/cost-budget-card";
 import { CostStackedBarChart } from "@/components/charts/cost-stacked-bar-chart";
+import { LeadReportsSection } from "@/components/lead-reports";
+import { getLeadReports } from "@/lib/lead-reports";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
+import { listBranches, listTeamMembers } from "@/app/actions/team";
+import { resolveStageLabels } from "@/lib/crm-stages";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
@@ -39,9 +44,31 @@ export default async function MetricasPage({
   const avgCostPerConversationBrl = totalConversations > 0 ? totalCostBrl / totalConversations : 0;
   const budget = (budgetRow as { data: { monthly_cost_budget_brl: number | null; cost_alert_pct: number | null } | null }).data;
 
+  // Relatórios de lead veem TODO MUNDO (diferente do custo de IA, que é margem da agência): são as
+  // tabelas dinâmicas que o cliente já mantinha na mão e é justamente o que ele quer olhar.
+  const leadReports = workspace
+    ? await (async () => {
+        const supabase = await createClient();
+        const [fieldDefs, teamMembers, branches, { data: ws }] = await Promise.all([
+          listCustomFieldDefs(),
+          listTeamMembers(),
+          listBranches(),
+          supabase.from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
+        ]);
+        return getLeadReports(workspace.id, period, {
+          fieldDefs,
+          stageLabels: resolveStageLabels(ws?.crm_stage_labels),
+          teamNames: new Map(teamMembers.map((m) => [m.id, m.name])),
+          branchNames: new Map(branches.map((b) => [b.id, b.name])),
+        });
+      })()
+    : null;
+
   return (
     <div className="flex flex-col gap-6">
       <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
+
+      {leadReports && <LeadReportsSection reports={leadReports} periodLabel={period.label} />}
 
       {showCost && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -133,10 +160,6 @@ export default async function MetricasPage({
         </div>
       )}
 
-      <div className="bg-surface border border-border rounded-lg shadow-sm p-10 text-center text-text-muted">
-        <p className="font-semibold text-text">Funil de campanhas — sem dados ainda</p>
-        <p className="text-sm mt-1">Aparece assim que a primeira campanha for disparada.</p>
-      </div>
     </div>
   );
 }

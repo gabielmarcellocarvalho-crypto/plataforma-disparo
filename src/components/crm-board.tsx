@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { updateContactStage, updateCrmStageSettings } from "@/app/actions/contacts";
+import { updateContactStage, updateContactLostReason, updateCrmStageSettings, updateLostReasons } from "@/app/actions/contacts";
 import { STAGE_ORDER, HIDEABLE_STAGES, getVisibleStages, displayStageFor, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { GlassDateRangePicker, formatBr } from "@/components/glass-date-range-picker";
 import { CustomFieldsEditor } from "@/components/custom-fields-editor";
 import { formatFieldValue, readMultiValue, type CustomFieldDef } from "@/lib/custom-fields";
+import { LOST_STAGE } from "@/lib/lost-reasons";
 import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 
 type Contact = {
@@ -23,6 +24,7 @@ type Contact = {
   created_at: string;
   team_member_id: string | null;
   branch_id: string | null;
+  lost_reason: string | null;
 };
 
 type FieldFilter = { key: string; value: string };
@@ -61,17 +63,20 @@ function StageLabelsEditor({
   workspaceId,
   labels,
   hiddenStages,
+  lostReasons,
   onSaved,
   onClose,
 }: {
   workspaceId: string;
   labels: Record<ContactStage, string>;
   hiddenStages: ContactStage[];
-  onSaved: (labels: Record<ContactStage, string>, hiddenStages: ContactStage[]) => void;
+  lostReasons: string[];
+  onSaved: (labels: Record<ContactStage, string>, hiddenStages: ContactStage[], lostReasons: string[]) => void;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(labels);
   const [hiddenDraft, setHiddenDraft] = useState(hiddenStages);
+  const [reasonsDraft, setReasonsDraft] = useState(lostReasons.join("\n"));
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -81,11 +86,19 @@ function StageLabelsEditor({
 
   function handleSave() {
     setError(null);
+    const motivos = reasonsDraft
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
     startTransition(async () => {
-      const result = await updateCrmStageSettings(workspaceId, draft, hiddenDraft);
-      if (result.error) setError(result.error);
+      const [fases, perdas] = await Promise.all([
+        updateCrmStageSettings(workspaceId, draft, hiddenDraft),
+        updateLostReasons(workspaceId, motivos),
+      ]);
+      const erro = fases.error || perdas.error;
+      if (erro) setError(erro);
       else {
-        onSaved(draft, hiddenDraft);
+        onSaved(draft, hiddenDraft, motivos);
         onClose();
       }
     });
@@ -135,6 +148,20 @@ function StageLabelsEditor({
           );
         })}
       </div>
+      <div className="flex flex-col gap-1.5 border-t border-border pt-3">
+        <span className="text-sm font-bold">Motivos da perda</span>
+        <p className="text-xs text-text-muted">
+          Um por linha. É o que aparece quando um card cai na fase de perda, e o que vira o relatório
+          de &quot;por que perdemos&quot; em Métricas. Quem move o card pode escrever um motivo fora da lista.
+        </p>
+        <textarea
+          value={reasonsDraft}
+          onChange={(e) => setReasonsDraft(e.target.value)}
+          rows={6}
+          className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-y"
+        />
+      </div>
+
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -147,6 +174,76 @@ function StageLabelsEditor({
         {error && <span className="text-xs text-danger font-medium">{error}</span>}
       </div>
     </div>
+  );
+}
+
+// Perguntado no momento em que o card cai na fase de perda. Deixa pular de propósito: obrigar a
+// escolher faria as pessoas marcarem qualquer coisa só pra fechar o diálogo, e um relatório com
+// motivo inventado é pior do que um com lacuna.
+function LostReasonPrompt({
+  nome,
+  motivos,
+  onConfirmar,
+  onPular,
+}: {
+  nome: string;
+  motivos: string[];
+  onConfirmar: (motivo: string) => void;
+  onPular: () => void;
+}) {
+  const [outro, setOutro] = useState("");
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/30 z-40" onClick={onPular} aria-hidden />
+      <div
+        role="dialog"
+        aria-label="Motivo da perda"
+        className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(420px,calc(100vw-2rem))] bg-surface border border-border rounded-xl shadow-2xl p-5 flex flex-col gap-3"
+      >
+        <div>
+          <h3 className="text-sm font-bold">Por que perdeu esse lead?</h3>
+          <p className="text-xs text-text-muted mt-0.5 truncate">{nome}</p>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {motivos.map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => onConfirmar(m)}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full border border-border hover:border-primary-strong hover:text-primary-strong cursor-pointer transition-colors"
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 border-t border-border pt-3">
+          <input
+            value={outro}
+            onChange={(e) => setOutro(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && outro.trim()) onConfirmar(outro.trim());
+            }}
+            placeholder="ou escreva outro motivo…"
+            className="flex-1 border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface"
+          />
+          <button
+            type="button"
+            onClick={() => onConfirmar(outro.trim())}
+            disabled={!outro.trim()}
+            className="bg-primary-strong text-white text-xs font-bold px-3 py-2 rounded-md cursor-pointer disabled:opacity-50"
+          >
+            Salvar
+          </button>
+        </div>
+
+        <button type="button" onClick={onPular} className="self-start text-xs font-semibold text-text-muted hover:text-text cursor-pointer">
+          pular — registrar depois
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -212,6 +309,11 @@ function ContactCard({
         {contact.needs_attention && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">precisa de atenção</span>}
         {!contact.needs_attention && contact.flagged_reason && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">alerta do agente</span>}
         {stale && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">parado {ageInStage}d</span>}
+        {contact.lost_reason && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted truncate max-w-[160px]" title={contact.lost_reason}>
+            {contact.lost_reason}
+          </span>
+        )}
       </div>
 
       {fields.length > 0 && (
@@ -240,6 +342,7 @@ export function CrmBoard({
   fieldDefs: initialFieldDefs,
   teamMembers,
   branches,
+  lostReasons: initialLostReasons,
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -248,6 +351,7 @@ export function CrmBoard({
   fieldDefs: CustomFieldDef[];
   teamMembers: TeamMemberRow[];
   branches: BranchRow[];
+  lostReasons: string[];
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -255,6 +359,8 @@ export function CrmBoard({
   const [labelsEditorOpen, setLabelsEditorOpen] = useState(false);
   const [fieldDefs, setFieldDefs] = useState(initialFieldDefs);
   const [fieldsEditorOpen, setFieldsEditorOpen] = useState(false);
+  const [lostReasons, setLostReasons] = useState(initialLostReasons);
+  const [perdaPendente, setPerdaPendente] = useState<{ id: string; nome: string } | null>(null);
   const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -267,12 +373,21 @@ export function CrmBoard({
   const [stageFilter, setStageFilter] = useState<ContactStage | "">("");
   const [teamFilter, setTeamFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
+  const [lostReasonFilter, setLostReasonFilter] = useState("");
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
   const [pickerValue, setPickerValue] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const cardDefs = useMemo(() => fieldDefs.filter((d) => d.show_in_card), [fieldDefs]);
+
+  // A lista configurada mais o que já foi gravado à mão no diálogo de perda — motivo digitado uma
+  // vez precisa continuar filtrável mesmo sem estar na lista oficial.
+  const motivosEmUso = useMemo(() => {
+    const todos = new Set(lostReasons);
+    for (const c of items) if (c.lost_reason) todos.add(c.lost_reason);
+    return [...todos].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [lostReasons, items]);
   const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
 
   // Campo COM definição usa a lista de opções cadastrada (aparece mesmo com zero lead preenchido, e
@@ -312,6 +427,11 @@ export function CrmBoard({
       if (stageFilter && c.stage !== stageFilter) return false;
       if (teamFilter && (teamFilter === "__nenhum__" ? c.team_member_id : c.team_member_id !== teamFilter)) return false;
       if (branchFilter && (branchFilter === "__nenhum__" ? c.branch_id : c.branch_id !== branchFilter)) return false;
+      if (lostReasonFilter) {
+        // "sem motivo" só faz sentido dentro da fase de perda — lead ativo não tem motivo por
+        // definição, e listar todos eles como "sem motivo" enterraria o que falta preencher.
+        if (lostReasonFilter === "__nenhum__" ? c.stage !== LOST_STAGE || c.lost_reason : c.lost_reason !== lostReasonFilter) return false;
+      }
       if (search) {
         const q = search.toLowerCase();
         const hay = `${c.name || ""} ${c.phone || ""} ${c.email || ""}`.toLowerCase();
@@ -327,7 +447,7 @@ export function CrmBoard({
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, lostReasonFilter, fieldFilters]);
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
@@ -344,10 +464,31 @@ export function CrmBoard({
   function handleDrop(stage: ContactStage) {
     if (!draggingId) return;
     const id = draggingId;
+    const antes = items.find((c) => c.id === id);
     setDraggingId(null);
-    setItems((prev) => prev.map((c) => (c.id === id ? { ...c, stage, stage_changed_at: new Date().toISOString() } : c)));
+    if (antes && antes.stage === stage) return;
+
+    setItems((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, stage, stage_changed_at: new Date().toISOString(), lost_reason: null } : c))
+    );
+    // A mudança de fase é gravada JÁ, sem esperar o motivo. Se dependesse do diálogo, fechar a aba
+    // no meio perderia o movimento do card — e o motivo é opcional, o movimento não.
     startTransition(async () => {
       await updateContactStage(id, stage);
+    });
+
+    if (stage === LOST_STAGE) {
+      setPerdaPendente({ id, nome: antes?.name || antes?.phone || antes?.email || "sem nome" });
+    }
+  }
+
+  function registrarMotivo(motivo: string) {
+    const pendente = perdaPendente;
+    setPerdaPendente(null);
+    if (!pendente || !motivo) return;
+    setItems((prev) => prev.map((c) => (c.id === pendente.id ? { ...c, lost_reason: motivo } : c)));
+    startTransition(async () => {
+      await updateContactLostReason(pendente.id, motivo);
     });
   }
 
@@ -362,7 +503,12 @@ export function CrmBoard({
   }
 
   const propertyFilterCount =
-    (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0) + (teamFilter ? 1 : 0) + (branchFilter ? 1 : 0) + fieldFilters.length;
+    (dateFrom && dateTo ? 1 : 0) +
+    (stageFilter ? 1 : 0) +
+    (teamFilter ? 1 : 0) +
+    (branchFilter ? 1 : 0) +
+    (lostReasonFilter ? 1 : 0) +
+    fieldFilters.length;
   const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
 
   function clearFilters() {
@@ -373,6 +519,7 @@ export function CrmBoard({
     setStageFilter("");
     setTeamFilter("");
     setBranchFilter("");
+    setLostReasonFilter("");
     setFieldFilters([]);
   }
 
@@ -526,6 +673,20 @@ export function CrmBoard({
                   ))}
                 </select>
               )}
+
+              <select
+                value={lostReasonFilter}
+                onChange={(e) => setLostReasonFilter(e.target.value)}
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+              >
+                <option value="">Motivo da perda: todos</option>
+                <option value="__nenhum__">Perdido sem motivo registrado</option>
+                {motivosEmUso.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border">
@@ -570,9 +731,11 @@ export function CrmBoard({
           workspaceId={workspaceId}
           labels={stageLabels}
           hiddenStages={hiddenStages}
-          onSaved={(labels, hidden) => {
+          lostReasons={lostReasons}
+          onSaved={(labels, hidden, motivos) => {
             setStageLabels(labels);
             setHiddenStages(hidden);
+            setLostReasons(motivos);
           }}
           onClose={() => setLabelsEditorOpen(false)}
         />
@@ -621,6 +784,15 @@ export function CrmBoard({
         </div>
       </div>
 
+      {perdaPendente && (
+        <LostReasonPrompt
+          nome={perdaPendente.nome}
+          motivos={lostReasons}
+          onConfirmar={registrarMotivo}
+          onPular={() => setPerdaPendente(null)}
+        />
+      )}
+
       <CrmLeadDrawer
         contactId={openId}
         onClose={() => setOpenId(null)}
@@ -629,6 +801,7 @@ export function CrmBoard({
         fieldDefs={fieldDefs}
         teamMembers={teamMembers}
         branches={branches}
+        lostReasons={lostReasons}
       />
     </div>
   );

@@ -6,6 +6,7 @@ import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
 import { normalizePhone, parseContactsFile } from "@/lib/import-contacts";
 import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, type ContactStage } from "@/lib/crm-stages";
 import { buildCustomFields } from "@/lib/custom-fields";
+import { LOST_STAGE } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 
 export type ActionResult = { error: string | null; ok?: boolean };
@@ -139,21 +140,66 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
 
 // Mover o card manualmente no Kanban — vale pra contato de qualquer canal (agente, disparo em
 // massa ou e-mail), já que o estágio é um campo só, compartilhado.
-export async function updateContactStage(contactId: string, stage: string): Promise<ActionResult> {
+//
+// `lostReason` só é aceito quando o destino é a fase de perda. Sair dela LIMPA o motivo: um lead que
+// voltou a ser trabalhado com "perdemos por preço" pendurado envenenaria o relatório de perdas.
+export async function updateContactStage(contactId: string, stage: string, lostReason?: string | null): Promise<ActionResult> {
   if (!isContactStage(stage)) return { error: "Estágio inválido." };
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const patch: Record<string, unknown> = { stage, stage_changed_at: new Date().toISOString() };
+  patch.lost_reason = stage === LOST_STAGE ? (lostReason?.trim() || null) : null;
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("contacts").update(patch).eq("id", contactId).eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível mover o contato." };
+
+  revalidatePath("/crm");
+  revalidatePath("/conversas");
+  revalidatePath("/metricas");
+  return { error: null, ok: true };
+}
+
+// Preencher/corrigir o motivo sem mexer na fase — usado quando o lead já está em perda e alguém
+// só quer registrar o porquê depois.
+export async function updateContactLostReason(contactId: string, lostReason: string): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
 
   const supabase = await createClient();
   const { error } = await supabase
     .from("contacts")
-    .update({ stage, stage_changed_at: new Date().toISOString() })
+    .update({ lost_reason: lostReason.trim().slice(0, 60) || null })
     .eq("id", contactId)
     .eq("workspace_id", workspace.id);
-  if (error) return { error: "Não foi possível mover o contato." };
+  if (error) return { error: "Não foi possível salvar o motivo." };
 
   revalidatePath("/crm");
-  revalidatePath("/conversas");
+  revalidatePath("/metricas");
+  return { error: null, ok: true };
+}
+
+// Lista de motivos aceitos nesse workspace. Vazia volta pro padrão de fábrica na leitura.
+export async function updateLostReasons(workspaceId: string, reasons: string[]): Promise<ActionResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace || workspace.id !== workspaceId) return { error: "Nenhum workspace ativo." };
+
+  const limpos: string[] = [];
+  const vistos = new Set<string>();
+  for (const r of reasons) {
+    const s = String(r ?? "").trim().slice(0, 60);
+    if (!s || vistos.has(s)) continue;
+    vistos.add(s);
+    limpos.push(s);
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("workspaces").update({ lost_reasons: limpos }).eq("id", workspaceId);
+  if (error) return { error: "Não foi possível salvar os motivos." };
+
+  revalidatePath("/crm");
+  revalidatePath("/metricas");
   return { error: null, ok: true };
 }
 
@@ -224,6 +270,7 @@ export type ContactDetail = {
   // Atribuição na rede do cliente (vendedor/filial sem login) — ver actions/team.ts.
   team_member_id: string | null;
   branch_id: string | null;
+  lost_reason: string | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -237,7 +284,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
     supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, companies(name)"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, companies(name)"
       )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
