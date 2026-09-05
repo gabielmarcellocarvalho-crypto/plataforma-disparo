@@ -12,6 +12,7 @@ import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
+import { normalizeCity } from "@/lib/territories";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import { getMonthToDateAgentCostUsd, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 
@@ -161,7 +162,7 @@ export async function runAgentTurn(
   pushName: string | null,
   resolved: ResolvedIncoming
 ) {
-  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url";
+  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -464,6 +465,27 @@ export async function runAgentTurn(
     if (emailValue && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) updates.email = emailValue;
 
     await supabase.from("contacts").update(updates).eq("id", contact.id);
+
+    // Roteamento por território: descobriu a cidade na conversa, o lead cai no vendedor daquela
+    // praça sozinho. Só vale pra lead SEM dono — reatribuir um lead que alguém já pegou seria
+    // arrancar o atendimento de quem está falando com o cliente agora.
+    if (!contact.team_member_id) {
+      const { data: wsRow } = await supabase.from("workspaces").select("city_field_key").eq("id", agent.workspace_id).maybeSingle();
+      const cidade = wsRow?.city_field_key ? merged[wsRow.city_field_key] : null;
+      if (cidade) {
+        const { data: territorio } = await supabase
+          .from("territories")
+          .select("team_member_id, branch_id")
+          .eq("workspace_id", agent.workspace_id)
+          .eq("city_key", normalizeCity(String(cidade)))
+          .maybeSingle();
+        if (territorio?.team_member_id) {
+          const patch: Record<string, unknown> = { team_member_id: territorio.team_member_id };
+          if (territorio.branch_id) patch.branch_id = territorio.branch_id;
+          await supabase.from("contacts").update(patch).eq("id", contact.id);
+        }
+      }
+    }
   }
 
   // O agente classifica o estágio do funil a cada resposta — só avança o card no Kanban, nunca regride

@@ -3,8 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
-import { normalizePhone, parseContactsFile } from "@/lib/import-contacts";
-import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, type ContactStage } from "@/lib/crm-stages";
+import {
+  normalizePhone,
+  inspectSheet,
+  suggestMapping,
+  parseWithMapping,
+  type ImportTarget,
+  type SheetPreview,
+} from "@/lib/import-contacts";
+import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
+import { normalizeCity } from "@/lib/territories";
 import { buildCustomFields } from "@/lib/custom-fields";
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
@@ -54,11 +62,49 @@ export async function addContact(_prevState: ActionResult, formData: FormData): 
 export type ImportResult = {
   error: string | null;
   imported?: number;
+  updated?: number;
   skippedDuplicate?: number;
   skippedInvalid?: number;
   total?: number;
+  // Nome de vendedor/filial que veio na planilha e não bate com nenhum cadastro — devolvido pra
+  // quem importou consertar, em vez de sumir em silêncio.
+  unmatchedResponsaveis?: string[];
+  unmatchedFiliais?: string[];
+  newOptions?: number;
+  // Quantos leads ganharam vendedor pelo mapa de territórios (a planilha não trazia responsável).
+  roteadosPorTerritorio?: number;
 };
 
+// Passo 1 do importador: lê o arquivo e devolve abas, cabeçalhos, uma amostra e um de/para chutado.
+// Nada é gravado aqui — é só pra montar a tela de mapeamento.
+export async function inspectImportFile(formData: FormData): Promise<SheetPreview & { suggestion: Record<string, ImportTarget> }> {
+  const vazio = { sheets: [], sheet: "", headers: [], sample: [], total: 0, suggestion: {} };
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { ...vazio, error: "Nenhum workspace ativo." };
+
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) return { ...vazio, error: "Selecione um arquivo." };
+  const sheetName = String(formData.get("sheet") || "") || undefined;
+
+  let preview: SheetPreview;
+  try {
+    preview = inspectSheet(Buffer.from(await file.arrayBuffer()), sheetName);
+  } catch (err) {
+    return { ...vazio, error: `Não consegui ler o arquivo: ${(err as Error).message}` };
+  }
+  if (preview.error) return { ...preview, suggestion: {} };
+
+  const defs = await listCustomFieldDefs();
+  return { ...preview, suggestion: suggestMapping(preview.headers, defs) };
+}
+
+const semAcento = (s: string) => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+// Passo 2: importa de verdade, com o de/para confirmado na tela.
+//
+// O arquivo é reenviado em vez de ficar guardado entre os dois passos — Server Action não tem
+// sessão onde pendurar um upload, e um cache de arquivo por usuário seria estado pra manter e
+// expirar sem necessidade nenhuma.
 export async function importContacts(_prevState: ImportResult, formData: FormData): Promise<ImportResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -66,60 +112,197 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return { error: "Selecione um arquivo." };
 
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const sheetName = String(formData.get("sheet") || "");
+  const modo = String(formData.get("mode") || "ignorar") === "atualizar" ? "atualizar" : "ignorar";
+
+  let mapping: Record<string, ImportTarget>;
+  try {
+    mapping = JSON.parse(String(formData.get("mapping") || "{}"));
+  } catch {
+    return { error: "Mapeamento inválido." };
+  }
 
   let parsed;
   try {
-    parsed = parseContactsFile(buffer);
+    parsed = parseWithMapping(Buffer.from(await file.arrayBuffer()), sheetName, mapping);
   } catch (err) {
     return { error: `Não consegui ler o arquivo: ${(err as Error).message}` };
   }
   if (parsed.error) return { error: parsed.error };
-  if (parsed.contacts.length === 0) return { error: "Nenhum contato válido encontrado na planilha." };
+  if (parsed.rows.length === 0) return { error: "Nenhuma linha com telefone ou e-mail nessa aba." };
 
   const supabase = await createClient();
-  const whatsappInstanceId = await soleWhatsappInstanceId(supabase, workspace.id);
-  // E-mail repetido na planilha (ex.: mesma administradora/empresa em várias linhas) bate na
-  // constraint de e-mail único por workspace — como o upsert só resolve conflito por telefone
-  // (onConflict abaixo), um e-mail repetido derruba o LOTE INTEIRO de 500, não só a linha. Zera o
-  // e-mail das repetições (mantém o contato pelo telefone, que é único e válido) em vez de perder
-  // o lote inteiro por causa disso.
-  const seenEmails = new Set<string>();
-  const rows = parsed.contacts.map((c) => {
-    let email = c.email || null;
-    if (email) {
-      if (seenEmails.has(email)) email = null;
-      else seenEmails.add(email);
+  const [defs, { data: team }, { data: branches }, { data: wsRow }] = await Promise.all([
+    listCustomFieldDefs(),
+    supabase.from("team_members").select("id, name").eq("workspace_id", workspace.id),
+    supabase.from("branches").select("id, name").eq("workspace_id", workspace.id),
+    supabase.from("workspaces").select("crm_stage_labels, city_field_key").eq("id", workspace.id).maybeSingle(),
+  ]);
+
+  const teamPorNome = new Map((team ?? []).map((m) => [semAcento(m.name), m.id]));
+  const filialPorNome = new Map((branches ?? []).map((b) => [semAcento(b.name), b.id]));
+
+  // Mapa de territórios: lead que chega sem vendedor na planilha, mas com cidade, cai no dono
+  // daquela praça. É o mesmo roteamento que roda quando o agente descobre a cidade na conversa.
+  const cityFieldKey = wsRow?.city_field_key ?? null;
+  const territorios = new Map<string, { team_member_id: string | null; branch_id: string | null }>();
+  if (cityFieldKey) {
+    const { data: rotas } = await supabase
+      .from("territories")
+      .select("city_key, team_member_id, branch_id")
+      .eq("workspace_id", workspace.id);
+    for (const r of rotas ?? []) territorios.set(r.city_key, { team_member_id: r.team_member_id, branch_id: r.branch_id });
+  }
+
+  // Etapa aceita tanto a chave interna ("descartado") quanto o rótulo que o cliente vê
+  // ("Finalizado sem compra") — quem exporta de uma planilha escreve o rótulo, não a chave.
+  const stageLabels = resolveStageLabels(wsRow?.crm_stage_labels);
+  const stagePorTexto = new Map<string, ContactStage>();
+  for (const s of STAGE_ORDER) {
+    stagePorTexto.set(s, s);
+    stagePorTexto.set(semAcento(stageLabels[s]), s);
+  }
+
+  const defPorKey = new Map(defs.map((d) => [d.key, d]));
+  const unmatchedResponsaveis = new Set<string>();
+  const unmatchedFiliais = new Set<string>();
+  // Valor de lista que a planilha traz e o campo ainda não conhece. Importar 76 cidades num campo
+  // com 3 opções cadastradas deixaria o filtro inútil, então a lista cresce junto com o dado.
+  const novasOpcoes = new Map<string, Set<string>>();
+  let roteados = 0;
+
+  const linhas = parsed.rows.map((r) => {
+    const custom: Record<string, string> = {};
+    for (const [key, valor] of Object.entries(r.campos)) {
+      const def = defPorKey.get(key);
+      if (!def) continue;
+      custom[key] = valor;
+      if ((def.type === "selecao" || def.type === "selecao_multipla") && !def.options.includes(valor)) {
+        if (!novasOpcoes.has(key)) novasOpcoes.set(key, new Set());
+        novasOpcoes.get(key)!.add(valor);
+      }
     }
+
+    let teamMemberId: string | null = null;
+    if (r.responsavel) {
+      teamMemberId = teamPorNome.get(semAcento(r.responsavel)) ?? null;
+      if (!teamMemberId) unmatchedResponsaveis.add(r.responsavel);
+    }
+    let branchId: string | null = null;
+    if (r.filial) {
+      branchId = filialPorNome.get(semAcento(r.filial)) ?? null;
+      if (!branchId) unmatchedFiliais.add(r.filial);
+    }
+
+    if (!teamMemberId && cityFieldKey && custom[cityFieldKey]) {
+      const rota = territorios.get(normalizeCity(custom[cityFieldKey]));
+      if (rota?.team_member_id) {
+        teamMemberId = rota.team_member_id;
+        roteados++;
+        if (!branchId) branchId = rota.branch_id;
+      }
+    }
+
+    const stage = r.etapa ? stagePorTexto.get(semAcento(r.etapa)) ?? null : null;
+
     return {
-      workspace_id: workspace.id,
-      name: c.name || null,
-      phone: c.phone,
-      email,
-      whatsapp_instance_id: whatsappInstanceId,
+      name: r.name || null,
+      phone: r.phone,
+      email: r.email || null,
+      custom_fields: custom,
+      team_member_id: teamMemberId,
+      branch_id: branchId,
+      stage,
+      lost_reason: r.motivoPerda || null,
     };
   });
 
-  // Upsert ignorando duplicados (telefone único por workspace), em lotes de 500. Lotes rodam em
-  // grupos de até 5 em paralelo (não um por um) — sequencial puro é lento demais pra planilha grande
-  // (11 mil contatos = 22 lotes; um por um passa fácil do tempo de execução da function e a
-  // importação morre no meio sem terminar). Um lote com erro não aborta os outros — junta o que deu
-  // certo e reporta o problema no final, em vez de perder uma importação grande por causa de 1 lote ruim.
-  const BATCH_SIZE = 500;
-  const CONCURRENCY = 5;
-  const batches: (typeof rows)[] = [];
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) batches.push(rows.slice(i, i + BATCH_SIZE));
+  // Cresce a lista de opções ANTES de gravar os leads: se o import falhar depois, sobra uma opção a
+  // mais numa lista (inofensivo), e não um lead com valor que o formulário recusa.
+  for (const [key, valores] of novasOpcoes) {
+    const def = defPorKey.get(key)!;
+    await supabase
+      .from("custom_field_defs")
+      .update({ options: [...def.options, ...valores], updated_at: new Date().toISOString() })
+      .eq("id", def.id)
+      .eq("workspace_id", workspace.id);
+  }
 
+  const whatsappInstanceId = await soleWhatsappInstanceId(supabase, workspace.id);
+
+  // E-mail repetido na planilha (ex.: mesma administradora em várias linhas) bate na constraint de
+  // e-mail único por workspace — como o upsert só resolve conflito por telefone, um e-mail repetido
+  // derrubaria o LOTE INTEIRO, não só a linha. Zera o e-mail das repetições.
+  const emailsVistos = new Set<string>();
+
+  // No modo "atualizar", o custom_fields do lead que já existe é MESCLADO com o da planilha em vez
+  // de substituído: a planilha costuma trazer só algumas colunas, e sobrescrever apagaria o que foi
+  // preenchido na plataforma depois.
+  const existentes = new Map<string, { id: string; custom_fields: Record<string, unknown> | null }>();
+  if (modo === "atualizar") {
+    let offset = 0;
+    for (;;) {
+      const { data } = await supabase
+        .from("contacts")
+        .select("id, phone, custom_fields")
+        .eq("workspace_id", workspace.id)
+        .not("phone", "is", null)
+        .order("id", { ascending: true })
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      for (const c of data) if (c.phone) existentes.set(c.phone, { id: c.id, custom_fields: c.custom_fields });
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+  }
+
+  const rows = linhas.map((l) => {
+    let email = l.email;
+    if (email) {
+      if (emailsVistos.has(email)) email = null;
+      else emailsVistos.add(email);
+    }
+    const jaExiste = l.phone ? existentes.get(l.phone) : undefined;
+    const custom = jaExiste ? { ...(jaExiste.custom_fields ?? {}), ...l.custom_fields } : l.custom_fields;
+
+    const linha: Record<string, unknown> = {
+      workspace_id: workspace.id,
+      name: l.name,
+      phone: l.phone,
+      email,
+      custom_fields: custom,
+      team_member_id: l.team_member_id,
+      branch_id: l.branch_id,
+      lost_reason: l.lost_reason,
+      whatsapp_instance_id: whatsappInstanceId,
+    };
+    // Etapa só entra quando a planilha mandou uma: sem isso, todo lead importado voltaria pra
+    // "não abordado" a cada reimportação, desfazendo o trabalho do time no Kanban.
+    if (l.stage) {
+      linha.stage = l.stage;
+      linha.stage_changed_at = new Date().toISOString();
+    }
+    return linha;
+  });
+
+  // O PostgREST recusa insert em massa quando os objetos do lote têm chaves diferentes
+  // ("All object keys must match"), então stage/stage_changed_at precisam existir em TODA linha do
+  // lote — os lotes são separados por presença de etapa em vez de preencher com um valor inventado.
+  const comEtapa = rows.filter((r) => r.stage !== undefined);
+  const semEtapa = rows.filter((r) => r.stage === undefined);
+
+  const BATCH_SIZE = 500;
   let imported = 0;
   const batchErrors: string[] = [];
-  for (let i = 0; i < batches.length; i += CONCURRENCY) {
-    const group = batches.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(
-      group.map((batch) =>
-        supabase.from("contacts").upsert(batch, { onConflict: "workspace_id,phone", ignoreDuplicates: true, count: "exact" })
-      )
-    );
-    for (const { error, count } of results) {
+
+  for (const grupo of [comEtapa, semEtapa]) {
+    for (let i = 0; i < grupo.length; i += BATCH_SIZE) {
+      const lote = grupo.slice(i, i + BATCH_SIZE);
+      const { error, count } = await supabase.from("contacts").upsert(lote, {
+        onConflict: "workspace_id,phone",
+        ignoreDuplicates: modo === "ignorar",
+        count: "exact",
+      });
       if (error) batchErrors.push(error.message);
       else imported += count ?? 0;
     }
@@ -128,13 +311,20 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
   if (batchErrors.length > 0) console.error(`importContacts: ${batchErrors.length} lote(s) falharam:`, batchErrors);
   if (imported === 0 && batchErrors.length > 0) return { error: `Erro ao importar: ${batchErrors[0]}` };
 
-  revalidatePath("/contatos");
+  for (const path of ["/contatos", "/crm", "/metricas"]) revalidatePath(path);
+
+  const atualizados = modo === "atualizar" ? linhas.filter((l) => l.phone && existentes.has(l.phone)).length : 0;
   return {
     error: null,
-    imported,
-    skippedDuplicate: rows.length - imported,
+    imported: imported - atualizados,
+    updated: atualizados,
+    skippedDuplicate: modo === "ignorar" ? linhas.length - imported : 0,
     skippedInvalid: parsed.skippedNoPhoneOrEmail,
     total: parsed.total,
+    unmatchedResponsaveis: [...unmatchedResponsaveis].slice(0, 20),
+    unmatchedFiliais: [...unmatchedFiliais].slice(0, 20),
+    newOptions: [...novasOpcoes.values()].reduce((s, v) => s + v.size, 0),
+    roteadosPorTerritorio: roteados,
   };
 }
 

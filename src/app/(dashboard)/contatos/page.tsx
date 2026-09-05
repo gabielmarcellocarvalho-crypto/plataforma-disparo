@@ -88,7 +88,7 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
         </div>
         <div className="flex items-center gap-3">
           <PageSizeSelect size={size} />
-          <ImportContactsForm />
+          <ImportContactsForm fieldDefs={fieldDefs} />
           <AddContactForm />
         </div>
       </div>
