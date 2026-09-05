@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages } from "@/lib/crm-stages";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
+import { listBranches, listTeamMembers } from "@/app/actions/team";
 import { CrmBoard } from "@/components/crm-board";
 
 // O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
@@ -22,6 +24,8 @@ type ContactRow = {
   needs_attention: boolean;
   flagged_reason: string | null;
   created_at: string;
+  team_member_id: string | null;
+  branch_id: string | null;
 };
 
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
@@ -30,7 +34,9 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
   while (all.length < CONTACT_LIMIT) {
     const { data } = await supabase
       .from("contacts")
-      .select("id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at")
+      .select(
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id"
+      )
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
@@ -46,19 +52,30 @@ export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [rows, { data: workspaceRow }] = workspace
+  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
+        listCustomFieldDefs(),
+        listTeamMembers(),
+        listBranches(),
       ])
-    : [[] as ContactRow[], { data: null }];
+    : [[] as ContactRow[], { data: null }, [], [], []];
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
-      <CrmBoard contacts={rows} stageLabels={stageLabels} hiddenStages={hiddenStages} workspaceId={workspace?.id ?? ""} />
+      <CrmBoard
+        contacts={rows}
+        stageLabels={stageLabels}
+        hiddenStages={hiddenStages}
+        workspaceId={workspace?.id ?? ""}
+        fieldDefs={fieldDefs}
+        teamMembers={teamMembers}
+        branches={branches}
+      />
     </div>
   );
 }

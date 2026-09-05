@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteContacts } from "@/app/actions/contacts";
+import { formatFieldValue, type CustomFieldDef } from "@/lib/custom-fields";
+import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 
 export type ContactRow = {
   id: string;
@@ -11,6 +13,9 @@ export type ContactRow = {
   email: string | null;
   opt_out_whatsapp: boolean | null;
   opt_out_email: boolean | null;
+  custom_fields?: Record<string, unknown> | null;
+  team_member_id?: string | null;
+  branch_id?: string | null;
 };
 
 // Checkbox do cabeçalho: marcado quando a página inteira está selecionada, "traço" (indeterminate)
@@ -32,8 +37,21 @@ function HeaderCheckbox({ checked, indeterminate, onChange }: { checked: boolean
   );
 }
 
-export function ContactsTable({ rows }: { rows: ContactRow[] }) {
+export function ContactsTable({
+  rows,
+  fieldDefs = [],
+  teamMembers = [],
+  branches = [],
+}: {
+  rows: ContactRow[];
+  fieldDefs?: CustomFieldDef[];
+  teamMembers?: TeamMemberRow[];
+  branches?: BranchRow[];
+}) {
   const router = useRouter();
+  const columns = useMemo(() => fieldDefs.filter((d) => d.show_in_table), [fieldDefs]);
+  const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
+  const branchNameById = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +172,13 @@ export function ContactsTable({ rows }: { rows: ContactRow[] }) {
               <th className="px-4 py-3">Nome</th>
               <th className="px-4 py-3">Telefone</th>
               <th className="px-4 py-3">E-mail</th>
+              {teamMembers.length > 0 && <th className="px-4 py-3">Responsável</th>}
+              {branches.length > 0 && <th className="px-4 py-3">Filial</th>}
+              {columns.map((def) => (
+                <th key={def.id} className="px-4 py-3 whitespace-nowrap">
+                  {def.label}
+                </th>
+              ))}
               <th className="px-4 py-3">Status</th>
             </tr>
           </thead>
@@ -179,6 +204,15 @@ export function ContactsTable({ rows }: { rows: ContactRow[] }) {
                   <td className="px-4 py-3 font-semibold">{c.name || "—"}</td>
                   <td className="px-4 py-3">{c.phone || "—"}</td>
                   <td className="px-4 py-3">{c.email || "—"}</td>
+                  {teamMembers.length > 0 && (
+                    <td className="px-4 py-3">{(c.team_member_id && teamNameById.get(c.team_member_id)) || "—"}</td>
+                  )}
+                  {branches.length > 0 && <td className="px-4 py-3">{(c.branch_id && branchNameById.get(c.branch_id)) || "—"}</td>}
+                  {columns.map((def) => (
+                    <td key={def.id} className="px-4 py-3">
+                      {formatFieldValue(def, (c.custom_fields || {})[def.key]) || "—"}
+                    </td>
+                  ))}
                   <td className="px-4 py-3">
                     {c.opt_out_whatsapp || c.opt_out_email ? (
                       <span className="text-danger font-semibold text-xs">opt-out</span>

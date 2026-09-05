@@ -7,13 +7,14 @@ export type AccessType = "disparo_avulso" | "sdr" | "closer" | "sdr_light" | "ul
 // expirado, troca de aparelho) sem depender da agência. A página em si já esconde as seções de
 // agência (plano, API keys) do cliente, mesmo com a rota liberada aqui.
 // "/empresas" entra em todo tipo de acesso, ao lado de "/crm" — faz parte do CRM que o cliente já paga
-// (Empresas + Tarefas), não é feature nova a monetizar separadamente.
+// (Empresas + Tarefas), não é feature nova a monetizar separadamente. "/equipe" segue a mesma regra:
+// é o cadastro de quem pode ficar responsável por um lead, sem o qual o Pipeline fica manco.
 export const ACCESS_TYPES: { key: AccessType; label: string; pages: string[] }[] = [
-  { key: "disparo_avulso", label: "Disparo Avulso", pages: ["/", "/conversas", "/crm", "/empresas", "/agenda", "/automacoes", "/contatos", "/campanhas", "/configuracoes"] },
-  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/empresas", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/empresas", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/empresas", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
-  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/empresas", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
+  { key: "disparo_avulso", label: "Disparo Avulso", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/campanhas", "/configuracoes"] },
+  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
+  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
+  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
+  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
 ];
 
 const PAGES_BY_TYPE = new Map(ACCESS_TYPES.map((t) => [t.key, new Set(t.pages)]));

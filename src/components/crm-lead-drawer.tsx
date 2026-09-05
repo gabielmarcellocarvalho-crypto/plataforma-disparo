@@ -6,7 +6,10 @@ import { getContactDetail, updateContactInfo, updateContactStage, addContactNote
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
+import { updateContactAssignment, type BranchRow, type TeamMemberRow } from "@/app/actions/team";
 import { isTaskOverdue } from "@/lib/tasks";
+import { splitKnownAndExtras, type CustomFieldDef } from "@/lib/custom-fields";
+import { CustomFieldInput } from "@/components/custom-field-inputs";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -22,11 +25,17 @@ export function CrmLeadDrawer({
   onClose,
   stageLabels,
   workspaceId,
+  fieldDefs = [],
+  teamMembers = [],
+  branches = [],
 }: {
   contactId: string | null;
   onClose: () => void;
   stageLabels: Record<ContactStage, string>;
   workspaceId?: string;
+  fieldDefs?: CustomFieldDef[];
+  teamMembers?: TeamMemberRow[];
+  branches?: BranchRow[];
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -34,7 +43,12 @@ export function CrmLeadDrawer({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  // Campos COM definição (esquema do workspace) e o resto — chave/valor solto vindo do formato
+  // antigo ou do que o agente de IA coletou sozinho. Os dois são salvos juntos.
+  const [values, setValues] = useState<Record<string, string | string[]>>({});
   const [fields, setFields] = useState<FieldRow[]>([]);
+  const [teamMemberId, setTeamMemberId] = useState("");
+  const [branchId, setBranchId] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,9 +79,17 @@ export function CrmLeadDrawer({
       setName(result.contact.name || "");
       setPhone(result.contact.phone || "");
       setEmail(result.contact.email || "");
-      setFields(Object.entries(result.contact.custom_fields || {}).map(([key, value]) => ({ key, value: String(value) })));
+      setTeamMemberId(result.contact.team_member_id || "");
+      setBranchId(result.contact.branch_id || "");
+      const { known, extras } = splitKnownAndExtras(fieldDefs, result.contact.custom_fields);
+      setValues(known as Record<string, string | string[]>);
+      setFields(extras);
       setLoading(false);
     });
+    // fieldDefs muda quando o editor de campos salva; recarregar o lead aqui reclassificaria o que é
+    // "campo com definição" na hora, mas o drawer nem fica aberto nessa hora — fora da dependência
+    // de propósito, pra não refazer a busca a cada re-render do board.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
 
   function addField() {
@@ -86,11 +108,32 @@ export function CrmLeadDrawer({
     if (!contactId) return;
     setError(null);
     setSaved(false);
-    const customFields = Object.fromEntries(fields.filter((f) => f.key.trim()).map((f) => [f.key.trim(), f.value.trim()]));
+    const extraFields = Object.fromEntries(fields.filter((f) => f.key.trim()).map((f) => [f.key.trim(), f.value.trim()]));
     startTransition(async () => {
-      const result = await updateContactInfo(contactId, { name, phone, email, customFields });
+      const result = await updateContactInfo(contactId, { name, phone, email, customFields: values, extraFields });
       if (result.error) setError(result.error);
       else setSaved(true);
+    });
+  }
+
+  // Vendedor e filial salvam na hora (igual estágio e empresa) — são um clique só, não faz sentido
+  // exigir "Salvar" depois de escolher no select.
+  function handleAssignment(next: { teamMemberId?: string; branchId?: string }) {
+    if (!contactId) return;
+    const member = next.teamMemberId ?? teamMemberId;
+    let branch = next.branchId ?? branchId;
+
+    // Escolher o vendedor já preenche a filial dele quando o lead ainda não tem uma — é o caminho
+    // normal (o lead cai pra alguém e herda a loja), sem sobrescrever uma filial já definida à mão.
+    if (next.teamMemberId !== undefined && !branch) {
+      branch = teamMembers.find((m) => m.id === next.teamMemberId)?.branch_id || "";
+    }
+
+    setTeamMemberId(member);
+    setBranchId(branch);
+    startTransition(async () => {
+      const result = await updateContactAssignment(contactId, { teamMemberId: member || null, branchId: branch || null });
+      if (result.error) setError(result.error);
     });
   }
 
@@ -284,13 +327,38 @@ export function CrmLeadDrawer({
                   </div>
                 </div>
 
+                {fieldDefs.length > 0 && (
+                  <div className="flex flex-col gap-2.5 border-t border-border pt-3">
+                    <span className="text-xs font-bold text-text-muted">Campos do lead</span>
+                    {fieldDefs.map((def) => (
+                      <CustomFieldInput
+                        key={def.id}
+                        def={def}
+                        value={values[def.key]}
+                        onChange={(v) => {
+                          setValues((prev) => ({ ...prev, [def.key]: v }));
+                          setSaved(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-2 border-t border-border pt-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-text-muted">Campos adicionais (dores, gênero, cidade, etc.)</span>
+                    <span className="text-xs font-bold text-text-muted">
+                      {fieldDefs.length > 0 ? "Outros campos (fora do padrão)" : "Campos adicionais (dores, gênero, cidade, etc.)"}
+                    </span>
                     <button type="button" onClick={addField} className="text-xs font-bold text-primary-strong hover:underline cursor-pointer">
                       + campo
                     </button>
                   </div>
+                  {fieldDefs.length > 0 && fields.length > 0 && (
+                    <p className="text-[11px] text-text-muted">
+                      Preenchido antes de existir um campo padrão, ou coletado pelo agente. Crie o campo em
+                      &quot;Campos do lead&quot; com a mesma chave pra ele passar a valer pra todo mundo.
+                    </p>
+                  )}
                   {fields.map((f, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <input
@@ -325,6 +393,53 @@ export function CrmLeadDrawer({
                   {error && <span className="text-xs text-danger font-medium">{error}</span>}
                 </div>
               </div>
+
+              {(teamMembers.length > 0 || branches.length > 0) && (
+                <div className="flex flex-col gap-2.5 border-t border-border pt-4">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h3 className="text-sm font-bold">Atribuição</h3>
+                    <span className="text-[11px] text-text-muted">salva na hora</span>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-2.5">
+                    {teamMembers.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-semibold text-text-muted">Responsável</label>
+                        <select
+                          value={teamMemberId}
+                          onChange={(e) => handleAssignment({ teamMemberId: e.target.value })}
+                          className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface cursor-pointer"
+                        >
+                          <option value="">— sem responsável</option>
+                          {teamMembers.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                              {m.role ? ` — ${m.role}` : ""}
+                              {m.active ? "" : " (inativo)"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {branches.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-semibold text-text-muted">Filial</label>
+                        <select
+                          value={branchId}
+                          onChange={(e) => handleAssignment({ branchId: e.target.value })}
+                          className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface cursor-pointer"
+                        >
+                          <option value="">— sem filial</option>
+                          {branches.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {workspaceId && (
                 <div className="flex flex-col gap-2 border-t border-border pt-4">

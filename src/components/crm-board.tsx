@@ -5,6 +5,9 @@ import { updateContactStage, updateCrmStageSettings } from "@/app/actions/contac
 import { STAGE_ORDER, HIDEABLE_STAGES, getVisibleStages, displayStageFor, STALE_AFTER_DAYS, daysSince, type ContactStage } from "@/lib/crm-stages";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { GlassDateRangePicker, formatBr } from "@/components/glass-date-range-picker";
+import { CustomFieldsEditor } from "@/components/custom-fields-editor";
+import { formatFieldValue, readMultiValue, type CustomFieldDef } from "@/lib/custom-fields";
+import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 
 type Contact = {
   id: string;
@@ -18,6 +21,8 @@ type Contact = {
   needs_attention: boolean;
   flagged_reason: string | null;
   created_at: string;
+  team_member_id: string | null;
+  branch_id: string | null;
 };
 
 type FieldFilter = { key: string; value: string };
@@ -151,14 +156,28 @@ function ContactCard({
   onDragStart,
   onDragEnd,
   onOpen,
+  cardDefs,
+  responsibleName,
 }: {
   contact: Contact;
   dragging: boolean;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
   onOpen: (id: string) => void;
+  cardDefs: CustomFieldDef[];
+  responsibleName: string | null;
 }) {
-  const fields = Object.entries(contact.custom_fields || {}).slice(0, 3);
+  // Com esquema definido, o card mostra só os campos marcados como "etiqueta no card" (e pelo
+  // rótulo, não pela chave crua). Sem nenhum campo marcado, cai no comportamento antigo: os 3
+  // primeiros pares que o lead tiver, pra não deixar o card vazio em quem ainda não configurou.
+  const fields =
+    cardDefs.length > 0
+      ? cardDefs
+          .map((def) => [def.label, formatFieldValue(def, (contact.custom_fields || {})[def.key])] as const)
+          .filter(([, value]) => value !== "")
+      : Object.entries(contact.custom_fields || {})
+          .slice(0, 3)
+          .map(([k, v]) => [k, Array.isArray(v) ? readMultiValue(v).join(", ") : String(v)] as const);
   const stage = contact.stage as ContactStage;
   const ageInStage = daysSince(contact.stage_changed_at);
   const stale = ageInStage >= STALE_AFTER_DAYS && stage !== "concluido" && stage !== "descartado";
@@ -198,16 +217,16 @@ function ContactCard({
       {fields.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {fields.map(([key, value]) => (
-            <span key={key} className="text-[10px] font-mono bg-surface-2 border border-border rounded px-1.5 py-0.5 text-text-muted truncate max-w-[130px]" title={`${key}: ${value}`}>
-              {key}: {String(value)}
+            <span key={key} className="text-[10px] bg-surface-2 border border-border rounded px-1.5 py-0.5 text-text-muted truncate max-w-[130px]" title={`${key}: ${value}`}>
+              {key}: {value}
             </span>
           ))}
         </div>
       )}
 
-      <div className="text-[10.5px] text-text-muted flex items-center justify-between border-t border-border pt-1.5 mt-0.5">
-        <span>entrou {formatDateShort(contact.created_at)}</span>
-        {!stale && <span>{ageInStage === 0 ? "hoje" : `há ${ageInStage}d`}</span>}
+      <div className="text-[10.5px] text-text-muted flex items-center justify-between gap-2 border-t border-border pt-1.5 mt-0.5">
+        <span className="truncate">{responsibleName ? responsibleName : `entrou ${formatDateShort(contact.created_at)}`}</span>
+        {!stale && <span className="shrink-0">{ageInStage === 0 ? "hoje" : `há ${ageInStage}d`}</span>}
       </div>
     </div>
   );
@@ -218,16 +237,24 @@ export function CrmBoard({
   stageLabels: initialStageLabels,
   hiddenStages: initialHiddenStages,
   workspaceId,
+  fieldDefs: initialFieldDefs,
+  teamMembers,
+  branches,
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
   hiddenStages: ContactStage[];
   workspaceId: string;
+  fieldDefs: CustomFieldDef[];
+  teamMembers: TeamMemberRow[];
+  branches: BranchRow[];
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
   const [hiddenStages, setHiddenStages] = useState(initialHiddenStages);
   const [labelsEditorOpen, setLabelsEditorOpen] = useState(false);
+  const [fieldDefs, setFieldDefs] = useState(initialFieldDefs);
+  const [fieldsEditorOpen, setFieldsEditorOpen] = useState(false);
   const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -238,22 +265,40 @@ export function CrmBoard({
   const [dateTo, setDateTo] = useState("");
   const [quickView, setQuickView] = useState<QuickView>("todos");
   const [stageFilter, setStageFilter] = useState<ContactStage | "">("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
   const [pickerValue, setPickerValue] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const cardDefs = useMemo(() => fieldDefs.filter((d) => d.show_in_card), [fieldDefs]);
+  const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
+
+  // Campo COM definição usa a lista de opções cadastrada (aparece mesmo com zero lead preenchido, e
+  // na ordem que o cliente definiu). Campo sem definição — herança do formato livre antigo e do que
+  // o agente coleta sozinho — continua descoberto a partir dos dados, senão sumiria do filtro.
   const fieldOptions = useMemo(() => {
-    const map = new Map<string, Set<string>>();
+    const discovered = new Map<string, Set<string>>();
     for (const c of items) {
       for (const [k, v] of Object.entries(c.custom_fields || {})) {
         if (v === null || v === undefined || v === "") continue;
-        if (!map.has(k)) map.set(k, new Set());
-        map.get(k)!.add(String(v));
+        if (!discovered.has(k)) discovered.set(k, new Set());
+        for (const one of Array.isArray(v) ? readMultiValue(v) : [String(v)]) discovered.get(k)!.add(one);
       }
     }
-    return Array.from(map.entries()).map(([key, values]) => ({ key, values: Array.from(values).sort() }));
-  }, [items]);
+
+    const out: { key: string; label: string; values: string[] }[] = [];
+    for (const def of fieldDefs) {
+      const extra = Array.from(discovered.get(def.key) ?? []).filter((v) => !def.options.includes(v));
+      out.push({ key: def.key, label: def.label, values: [...def.options, ...extra.sort()] });
+      discovered.delete(def.key);
+    }
+    for (const [key, values] of discovered) {
+      out.push({ key, label: key, values: Array.from(values).sort() });
+    }
+    return out;
+  }, [items, fieldDefs]);
 
   const filtered = useMemo(() => {
     return items.filter((c) => {
@@ -265,6 +310,8 @@ export function CrmBoard({
         if (!parado) return false;
       }
       if (stageFilter && c.stage !== stageFilter) return false;
+      if (teamFilter && (teamFilter === "__nenhum__" ? c.team_member_id : c.team_member_id !== teamFilter)) return false;
+      if (branchFilter && (branchFilter === "__nenhum__" ? c.branch_id : c.branch_id !== branchFilter)) return false;
       if (search) {
         const q = search.toLowerCase();
         const hay = `${c.name || ""} ${c.phone || ""} ${c.email || ""}`.toLowerCase();
@@ -273,11 +320,14 @@ export function CrmBoard({
       if (dateFrom && c.created_at < dateFrom) return false;
       if (dateTo && c.created_at > `${dateTo}T23:59:59`) return false;
       for (const ff of fieldFilters) {
-        if (String((c.custom_fields || {})[ff.key] ?? "") !== ff.value) return false;
+        const raw = (c.custom_fields || {})[ff.key];
+        // Multi-seleção casa se QUALQUER valor bate; os outros tipos comparam direto.
+        const matches = Array.isArray(raw) ? readMultiValue(raw).includes(ff.value) : String(raw ?? "") === ff.value;
+        if (!matches) return false;
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, quickView, stageFilter, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, fieldFilters]);
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
@@ -311,8 +361,20 @@ export function CrmBoard({
     setFieldFilters((f) => f.filter((_, idx) => idx !== i));
   }
 
-  const activeFilterCount =
-    (search ? 1 : 0) + (dateFrom || dateTo ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + (stageFilter ? 1 : 0) + fieldFilters.length;
+  const propertyFilterCount =
+    (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0) + (teamFilter ? 1 : 0) + (branchFilter ? 1 : 0) + fieldFilters.length;
+  const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
+
+  function clearFilters() {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+    setQuickView("todos");
+    setStageFilter("");
+    setTeamFilter("");
+    setBranchFilter("");
+    setFieldFilters([]);
+  }
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
@@ -341,30 +403,38 @@ export function CrmBoard({
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
-            filtros{fieldFilters.length + (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0) > 0 ? ` (${fieldFilters.length + (dateFrom && dateTo ? 1 : 0) + (stageFilter ? 1 : 0)})` : ""}
+            filtros{propertyFilterCount > 0 ? ` (${propertyFilterCount})` : ""}
           </button>
 
           {activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                setDateFrom("");
-                setDateTo("");
-                setQuickView("todos");
-                setStageFilter("");
-                setFieldFilters([]);
-              }}
-              className="text-xs font-semibold text-text-muted hover:text-danger cursor-pointer"
-            >
+            <button type="button" onClick={clearFilters} className="text-xs font-semibold text-text-muted hover:text-danger cursor-pointer">
               limpar
             </button>
           )}
 
           <button
             type="button"
-            onClick={() => setLabelsEditorOpen((v) => !v)}
+            onClick={() => {
+              setFieldsEditorOpen((v) => !v);
+              setLabelsEditorOpen(false);
+            }}
             className="ml-auto text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+              <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" />
+            </svg>
+            campos do lead
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setLabelsEditorOpen((v) => !v);
+              setFieldsEditorOpen(false);
+            }}
+            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -423,13 +493,46 @@ export function CrmBoard({
                   setDateTo("");
                 }}
               />
+
+              {teamMembers.length > 0 && (
+                <select
+                  value={teamFilter}
+                  onChange={(e) => setTeamFilter(e.target.value)}
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+                >
+                  <option value="">Responsável: todos</option>
+                  <option value="__nenhum__">Sem responsável</option>
+                  {teamMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                      {m.role ? ` — ${m.role}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {branches.length > 0 && (
+                <select
+                  value={branchFilter}
+                  onChange={(e) => setBranchFilter(e.target.value)}
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+                >
+                  <option value="">Filial: todas</option>
+                  <option value="__nenhum__">Sem filial</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border">
             <select value={pickerKey} onChange={(e) => { setPickerKey(e.target.value); setPickerValue(""); }} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer mt-2.5">
-              <option value="">campo customizado (ex: cidade, gênero)</option>
+              <option value="">campo do lead (ex: cidade, produto)</option>
               {fieldOptions.map((f) => (
-                <option key={f.key} value={f.key}>{f.key}</option>
+                <option key={f.key} value={f.key}>{f.label}</option>
               ))}
             </select>
             <select value={pickerValue} onChange={(e) => setPickerValue(e.target.value)} disabled={!pickerKey} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer disabled:opacity-50 mt-2.5">
@@ -441,11 +544,15 @@ export function CrmBoard({
             <button type="button" onClick={addFieldFilter} disabled={!pickerKey || !pickerValue} className="text-xs font-bold text-primary-strong hover:underline cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
               + adicionar
             </button>
-            {fieldOptions.length === 0 && <span className="text-xs text-text-muted">Nenhum campo customizado cadastrado ainda nos contatos.</span>}
+            {fieldOptions.length === 0 && (
+              <span className="text-xs text-text-muted">
+                Nenhum campo do lead ainda — crie em &quot;campos do lead&quot;.
+              </span>
+            )}
 
             {fieldFilters.map((f, i) => (
-              <span key={i} className="flex items-center gap-1.5 text-[11px] font-mono bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
-                {f.key}: {f.value}
+              <span key={i} className="flex items-center gap-1.5 text-[11px] bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                {fieldOptions.find((o) => o.key === f.key)?.label ?? f.key}: {f.value}
                 <button type="button" onClick={() => removeFieldFilter(i)} aria-label="Remover filtro" className="cursor-pointer font-bold">×</button>
               </span>
             ))}
@@ -453,6 +560,10 @@ export function CrmBoard({
           </div>
         )}
       </div>
+
+      {fieldsEditorOpen && (
+        <CustomFieldsEditor defs={fieldDefs} onChanged={setFieldDefs} onClose={() => setFieldsEditorOpen(false)} />
+      )}
 
       {labelsEditorOpen && (
         <StageLabelsEditor
@@ -491,7 +602,16 @@ export function CrmBoard({
                     <p className="text-[11px] text-text-muted text-center py-6">vazio</p>
                   ) : (
                     cards.map((c) => (
-                      <ContactCard key={c.id} contact={c} dragging={draggingId === c.id} onDragStart={setDraggingId} onDragEnd={() => setDraggingId(null)} onOpen={setOpenId} />
+                      <ContactCard
+                        key={c.id}
+                        contact={c}
+                        dragging={draggingId === c.id}
+                        onDragStart={setDraggingId}
+                        onDragEnd={() => setDraggingId(null)}
+                        onOpen={setOpenId}
+                        cardDefs={cardDefs}
+                        responsibleName={c.team_member_id ? teamNameById.get(c.team_member_id) ?? null : null}
+                      />
                     ))
                   )}
                 </div>
@@ -501,7 +621,15 @@ export function CrmBoard({
         </div>
       </div>
 
-      <CrmLeadDrawer contactId={openId} onClose={() => setOpenId(null)} stageLabels={stageLabels} workspaceId={workspaceId} />
+      <CrmLeadDrawer
+        contactId={openId}
+        onClose={() => setOpenId(null)}
+        stageLabels={stageLabels}
+        workspaceId={workspaceId}
+        fieldDefs={fieldDefs}
+        teamMembers={teamMembers}
+        branches={branches}
+      />
     </div>
   );
 }

@@ -97,6 +97,21 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/equipe",
+    label: "Equipe",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21V8l6-4 6 4v13" />
+        <path d="M15 21V11l6 4v6" />
+        <line x1="3" y1="21" x2="21" y2="21" />
+        <line x1="7" y1="10" x2="7" y2="10" />
+        <line x1="11" y1="10" x2="11" y2="10" />
+        <line x1="7" y1="14" x2="7" y2="14" />
+        <line x1="11" y1="14" x2="11" y2="14" />
+      </svg>
+    ),
+  },
+  {
     href: "/campanhas",
     label: "Campanhas",
     icon: (

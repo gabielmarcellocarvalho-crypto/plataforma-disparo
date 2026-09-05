@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
 import { normalizePhone, parseContactsFile } from "@/lib/import-contacts";
 import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, type ContactStage } from "@/lib/crm-stages";
+import { buildCustomFields } from "@/lib/custom-fields";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 
@@ -211,7 +213,7 @@ export type ContactDetail = {
   photo_url: string | null;
   stage: string;
   stage_changed_at: string;
-  custom_fields: Record<string, string> | null;
+  custom_fields: Record<string, unknown> | null;
   needs_attention: boolean;
   attention_reason: string | null;
   flagged_reason: string | null;
@@ -219,6 +221,9 @@ export type ContactDetail = {
   message_count: number;
   company_id: string | null;
   company_name: string | null;
+  // Atribuição na rede do cliente (vendedor/filial sem login) — ver actions/team.ts.
+  team_member_id: string | null;
+  branch_id: string | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -232,7 +237,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
     supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, companies(name)"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, companies(name)"
       )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
@@ -257,11 +262,21 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   };
 }
 
-// Edição manual de "infos pessoais" — nome/telefone/e-mail e os campos customizados (chave/valor
-// livre, tipo gênero/cidade), pra dar de preencher isso mesmo em contato que não veio do agente.
+// Edição manual de "infos pessoais" — nome/telefone/e-mail e os campos personalizados.
+//
+// `customFields` são os campos COM definição (migration 0063): validados aqui contra o esquema do
+// workspace, não só no cliente — Server Action é chamável direto, sem passar pelo formulário.
+// `extraFields` são pares chave/valor sem definição: o formato antigo, mais o que o agente de IA
+// grava sozinho via [[DADOS: chave=valor]]. Continuam sendo aceitos pra não perder dado do cliente.
 export async function updateContactInfo(
   contactId: string,
-  fields: { name: string; phone: string; email: string; customFields: Record<string, string> }
+  fields: {
+    name: string;
+    phone: string;
+    email: string;
+    customFields: Record<string, string | string[]>;
+    extraFields?: Record<string, string>;
+  }
 ): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -269,11 +284,9 @@ export async function updateContactInfo(
   const phone = fields.phone.trim() ? normalizePhone(fields.phone) : null;
   if (fields.phone.trim() && !phone) return { error: "Telefone inválido." };
 
-  const cleanFields = Object.fromEntries(
-    Object.entries(fields.customFields)
-      .map(([k, v]) => [k.trim(), v.trim()])
-      .filter(([k, v]) => k && v)
-  );
+  const defs = await listCustomFieldDefs();
+  const { values: cleanFields, error: fieldError } = buildCustomFields(defs, fields.customFields, fields.extraFields ?? {});
+  if (fieldError) return { error: fieldError };
 
   const supabase = await createClient();
   const { error } = await supabase
