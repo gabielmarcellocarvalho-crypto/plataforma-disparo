@@ -14,6 +14,9 @@ import { moveContactToStage, type PipelineWithStages } from "@/app/actions/pipel
 import { sortStages, stageForSignal } from "@/lib/pipelines";
 import { PipelinesEditor } from "@/components/pipelines-editor";
 import { useRouter } from "next/navigation";
+import { SORT_OPTIONS, sortContacts, type SortKey } from "@/lib/crm-sorting";
+import type { ContactActivity } from "@/lib/contact-activity";
+import { isTaskOverdue } from "@/lib/tasks";
 
 type Contact = {
   id: string;
@@ -369,6 +372,7 @@ export function CrmBoard({
   lostReasons: initialLostReasons,
   askLostReason: initialAskLostReason,
   pipelines,
+  activity,
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -380,6 +384,7 @@ export function CrmBoard({
   lostReasons: string[];
   askLostReason: boolean;
   pipelines: PipelineWithStages[];
+  activity: ContactActivity;
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -393,6 +398,15 @@ export function CrmBoard({
   const visibleStages = useMemo(() => getVisibleStages(hiddenStages), [hiddenStages]);
   const router = useRouter();
   const [pipelinesEditorOpen, setPipelinesEditorOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("recentes");
+  const [modoLista, setModoLista] = useState(false);
+
+  // Map não atravessa a fronteira Server → Client Component, então a atividade chega como par de
+  // arrays e é remontada aqui, uma vez só.
+  const atividade = useMemo(
+    () => ({ nextTaskAt: new Map(activity.nextTaskAt), interactions: new Map(activity.interactions) }),
+    [activity]
+  );
 
   // Funil aberto agora. Começa no padrão — é onde cai lead novo, então é o que a equipe olha.
   const [activePipelineId, setActivePipelineId] = useState<string | null>(
@@ -598,16 +612,33 @@ export function CrmBoard({
         key: etapa.id,
         label: etapa.name,
         signal: etapa.signal,
-        cards: filtered.filter((c) => pertenceAoFunil(c) && colunaDe(c) === etapa.id),
+        cards: sortContacts(filtered.filter((c) => pertenceAoFunil(c) && colunaDe(c) === etapa.id), sortKey, atividade),
         onDrop: () => handleDropStage(etapa.id),
       }))
     : visibleStages.map((stage) => ({
         key: stage,
         label: stageLabels[stage],
         signal: stage,
-        cards: filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage),
+        cards: sortContacts(
+          filtered.filter((c) => displayStageFor(c.stage as ContactStage, visibleStages) === stage),
+          sortKey,
+          atividade
+        ),
         onDrop: () => handleDrop(stage),
       }));
+
+  // Na visão de lista as colunas não existem: é uma tabela só, com a etapa virando coluna de dado.
+  const listaOrdenada = sortContacts(
+    modoFunil ? filtered.filter(pertenceAoFunil) : filtered,
+    sortKey,
+    atividade
+  );
+
+  // Nome da etapa de cada lead, pra mostrar na lista sem recalcular por linha.
+  const nomeDaEtapa = (c: Contact) => {
+    if (!modoFunil) return stageLabels[displayStageFor(c.stage as ContactStage, visibleStages)];
+    return pipelineStages.find((e) => e.id === colunaDe(c))?.name ?? "—";
+  };
 
   const propertyFilterCount =
     (dateFrom && dateTo ? 1 : 0) +
@@ -757,6 +788,60 @@ export function CrmBoard({
               </button>
             );
           })}
+
+          <div className="flex items-center gap-2 ml-auto">
+            {/* Kanban x Lista: o Kanban mostra o formato do funil, a lista mostra volume e detalhe.
+                Board com centenas de cards por coluna é ruim de ler; a lista resolve isso sem
+                inventar um segundo lugar pra mesma informação. */}
+            <div className="flex rounded-md border border-border overflow-hidden" role="group" aria-label="Formato de visualização">
+              <button
+                type="button"
+                onClick={() => setModoLista(false)}
+                aria-pressed={!modoLista}
+                title="Ver em Kanban"
+                className={`grid place-items-center w-9 h-9 cursor-pointer transition-colors ${
+                  !modoLista ? "bg-primary-strong text-white" : "text-text-muted hover:text-primary-strong"
+                }`}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="3" y="4" width="4" height="16" rx="1" />
+                  <rect x="10" y="4" width="4" height="10" rx="1" />
+                  <rect x="17" y="4" width="4" height="13" rx="1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModoLista(true)}
+                aria-pressed={modoLista}
+                title="Ver em lista"
+                className={`grid place-items-center w-9 h-9 cursor-pointer transition-colors ${
+                  modoLista ? "bg-primary-strong text-white" : "text-text-muted hover:text-primary-strong"
+                }`}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <line x1="8" y1="6" x2="21" y2="6" />
+                  <line x1="8" y1="12" x2="21" y2="12" />
+                  <line x1="8" y1="18" x2="21" y2="18" />
+                  <line x1="3" y1="6" x2="3" y2="6" />
+                  <line x1="3" y1="12" x2="3" y2="12" />
+                  <line x1="3" y1="18" x2="3" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              aria-label="Ordenar por"
+              className="border border-border rounded-md px-2.5 py-2 text-xs font-semibold outline-none focus:border-primary cursor-pointer bg-surface"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {filtersOpen && (
@@ -768,10 +853,21 @@ export function CrmBoard({
                 onChange={(e) => setStageFilter(e.target.value as ContactStage | "")}
                 className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
               >
-                <option value="">Estágio: todos</option>
-                {visibleStages.map((s) => (
-                  <option key={s} value={s}>{stageLabels[s]}</option>
-                ))}
+                <option value="">Etapa: todas</option>
+                {/* Em funil personalizado a lista mostra as etapas DAQUELE funil, com os nomes que o
+                    cliente deu. O valor continua sendo o sinal, que é por onde o filtro compara —
+                    duas etapas com o mesmo significado filtram juntas, o que é o esperado. */}
+                {modoFunil
+                  ? pipelineStages.map((etapa) => (
+                      <option key={etapa.id} value={etapa.signal}>
+                        {etapa.name}
+                      </option>
+                    ))
+                  : visibleStages.map((s) => (
+                      <option key={s} value={s}>
+                        {stageLabels[s]}
+                      </option>
+                    ))}
               </select>
 
               <GlassDateRangePicker
@@ -902,48 +998,109 @@ export function CrmBoard({
         />
       )}
 
-      {/* Sem minWidth:max-content de propósito — com flex-1 + min-w, poucas colunas esticam pra
-          preencher a largura toda; muitas colunas encolhem até o min-w e só aí o overflow-x-auto
-          do wrapper entra em ação (scroll horizontal), igual um board profissional de verdade. */}
-      <div className="flex-1 min-h-0 overflow-x-auto">
-        <div className="flex gap-3 h-full min-w-full pb-2">
-          {colunas.map((coluna) => {
-            const cards = coluna.cards;
-            return (
-              <div
-                key={coluna.key}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={coluna.onDrop}
-                className="flex-1 min-w-[264px] max-w-[360px] flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
-              >
-                <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[coluna.signal]}`} aria-hidden />
-                  <span className="text-xs font-bold flex-1 truncate" title={coluna.label}>{coluna.label}</span>
-                  <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
-                </div>
-                <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
-                  {cards.length === 0 ? (
-                    <p className="text-[11px] text-text-muted text-center py-6">vazio</p>
-                  ) : (
-                    cards.map((c) => (
-                      <ContactCard
-                        key={c.id}
-                        contact={c}
-                        dragging={draggingId === c.id}
-                        onDragStart={setDraggingId}
-                        onDragEnd={() => setDraggingId(null)}
-                        onOpen={setOpenId}
-                        cardDefs={cardDefs}
-                        responsibleName={c.team_member_id ? teamNameById.get(c.team_member_id) ?? null : null}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      {modoLista ? (
+        <div className="flex-1 min-h-0 overflow-auto bg-surface border border-border rounded-xl">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-surface z-10">
+              <tr className="border-b border-border text-left text-text-muted text-xs font-bold uppercase">
+                <th className="px-3 py-2.5">Lead</th>
+                <th className="px-3 py-2.5">Etapa</th>
+                {teamMembers.length > 0 && <th className="px-3 py-2.5">Responsável</th>}
+                <th className="px-3 py-2.5 whitespace-nowrap">Próxima tarefa</th>
+                <th className="px-3 py-2.5 text-right whitespace-nowrap">Interações</th>
+                <th className="px-3 py-2.5 whitespace-nowrap">Parado há</th>
+                <th className="px-3 py-2.5 whitespace-nowrap">Entrou</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listaOrdenada.map((c) => {
+                const parado = daysSince(c.stage_changed_at);
+                const tarefa = atividade.nextTaskAt.get(c.id);
+                // Mesmo critério da Agenda (vencida = antes de hoje), reaproveitado pra tarefa
+                // atrasada não significar uma coisa aqui e outra lá.
+                const atrasada = isTaskOverdue(tarefa ?? null, null);
+                return (
+                  <tr
+                    key={c.id}
+                    onClick={() => setOpenId(c.id)}
+                    className="border-b border-border last:border-0 cursor-pointer hover:bg-surface-2 transition-colors"
+                  >
+                    <td className="px-3 py-2.5">
+                      <div className="font-semibold truncate max-w-[220px]">{c.name || c.phone || c.email || "sem nome"}</div>
+                      <div className="text-[11px] text-text-muted truncate max-w-[220px]">{c.phone || c.email || ""}</div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[c.stage as ContactStage]}`} aria-hidden />
+                        <span className="truncate max-w-[160px]">{nomeDaEtapa(c)}</span>
+                      </span>
+                      {c.lost_reason && <div className="text-[11px] text-text-muted truncate max-w-[180px]">{c.lost_reason}</div>}
+                    </td>
+                    {teamMembers.length > 0 && (
+                      <td className="px-3 py-2.5 text-text-muted truncate max-w-[160px]">
+                        {(c.team_member_id && teamNameById.get(c.team_member_id)) || "—"}
+                      </td>
+                    )}
+                    <td className={`px-3 py-2.5 whitespace-nowrap ${atrasada ? "text-danger font-semibold" : "text-text-muted"}`}>
+                      {tarefa ? formatDateShort(tarefa) : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-text-muted">{atividade.interactions.get(c.id) ?? 0}</td>
+                    <td className={`px-3 py-2.5 whitespace-nowrap tabular-nums ${parado >= STALE_AFTER_DAYS ? "text-danger font-semibold" : "text-text-muted"}`}>
+                      {parado === 0 ? "hoje" : `${parado}d`}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-text-muted">{formatDateShort(c.created_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {listaOrdenada.length === 0 && <p className="text-sm text-text-muted text-center py-10">Nenhum lead com esses filtros.</p>}
         </div>
-      </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-x-auto">
+          {/* Sem minWidth:max-content de propósito — com flex-1 + min-w, poucas colunas esticam pra
+              preencher a largura toda; muitas colunas encolhem até o min-w e só aí o overflow-x-auto
+              do wrapper entra em ação (scroll horizontal), igual um board profissional de verdade. */}
+          <div className="flex gap-3 h-full min-w-full pb-2">
+            {colunas.map((coluna) => {
+              const cards = coluna.cards;
+              return (
+                <div
+                  key={coluna.key}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={coluna.onDrop}
+                  className="flex-1 min-w-[264px] max-w-[360px] flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
+                >
+                  <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[coluna.signal]}`} aria-hidden />
+                    <span className="text-xs font-bold flex-1 truncate" title={coluna.label}>{coluna.label}</span>
+                    <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
+                    {cards.length === 0 ? (
+                      <p className="text-[11px] text-text-muted text-center py-6">vazio</p>
+                    ) : (
+                      cards.map((c) => (
+                        <ContactCard
+                          key={c.id}
+                          contact={c}
+                          dragging={draggingId === c.id}
+                          onDragStart={setDraggingId}
+                          onDragEnd={() => setDraggingId(null)}
+                          onOpen={setOpenId}
+                          cardDefs={cardDefs}
+                          responsibleName={c.team_member_id ? teamNameById.get(c.team_member_id) ?? null : null}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {perdaPendente && (
         <LostReasonPrompt

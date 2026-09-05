@@ -5,6 +5,7 @@ import { resolveLostReasons } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { listBranches, listTeamMembers } from "@/app/actions/team";
 import { listPipelines } from "@/app/actions/pipelines";
+import { getContactActivity } from "@/lib/contact-activity";
 import { CrmBoard } from "@/components/crm-board";
 
 // O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
@@ -57,7 +58,7 @@ export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines] = workspace
+  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines, activity] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons, ask_lost_reason").eq("id", workspace.id).maybeSingle(),
@@ -65,8 +66,9 @@ export default async function CrmPage() {
         listTeamMembers(),
         listBranches(),
         listPipelines(),
+        getContactActivity(supabase, workspace.id),
       ])
-    : [[] as ContactRow[], { data: null }, [], [], [], []];
+    : [[] as ContactRow[], { data: null }, [], [], [], [], { nextTaskAt: [], interactions: [] }];
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
@@ -88,6 +90,7 @@ export default async function CrmPage() {
         lostReasons={lostReasons}
         askLostReason={askLostReason}
         pipelines={pipelines}
+        activity={activity}
       />
     </div>
   );
