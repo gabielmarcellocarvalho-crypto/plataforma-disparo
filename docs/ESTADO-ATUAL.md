@@ -1,35 +1,20 @@
 # Estado atual — retomada de contexto
 
-Última atualização: **2026-09-05**. Leia isto antes de mexer em qualquer coisa.
+Última atualização: **2026-09-08**. Leia isto antes de mexer em qualquer coisa.
 
 ---
 
 ## ⚠️ O que está pendente AGORA (comece por aqui)
 
-**Bloco 4 (passagem de bastão SDR → Closer) está escrito, com build e lint limpos, mas NÃO
-commitado e a migration NÃO foi aplicada.**
+**Nada com risco de derrubar cliente.** O bloco 4 subiu em 2026-09-08 (`5a84d0c`), com a migration
+`0070` aplicada e conferida no banco antes do push.
 
-Arquivos modificados sem commit:
+O que sobrou é **teste, não código**: a passagem de bastão está em produção mas **desligada em todos
+os agentes** e **nunca foi testada em conversa real**. Antes de ligar em qualquer cliente, criar um
+segundo agente num número de teste e passar um lead de verdade — principalmente o modo `numero`, que
+é o único que envia mensagem por conta própria. Ver "Teste que ainda não foi feito" no fim.
 
-```
- M src/app/(dashboard)/agentes/[id]/page.tsx
- M src/app/actions/agents.ts
- M src/app/api/webhook/dialog360/route.ts
- M src/app/api/webhook/whatsapp/route.ts
- M src/components/agent-edit-view.tsx
- M src/lib/agent-turn.ts
-?? src/components/agent-handoff-form.tsx
-?? src/lib/agent-handoff.ts
-?? supabase/migrations/0070_agent_handoff.sql
-```
-
-**A migration `0070_agent_handoff.sql` precisa rodar ANTES do deploy.** Os dois webhooks passaram a
-selecionar `AGENT_COLUMNS`, que inclui as colunas novas (`handoff_to_agent_id`, `handoff_mode`,
-`handoff_signal`, `handoff_intro`, `handoff_notice`) — sem elas no banco, **o select falha e o agente
-para de responder em produção**. Este é o único ponto desta rodada com risco de derrubar atendimento
-de cliente real.
-
-Ordem correta: rodar a migration → conferir no banco → commit → push.
+Depois disso, o próximo passo de código é o **redesign visual do Pipeline**, que fecha o bloco 3.
 
 ---
 
@@ -99,6 +84,7 @@ Commits, do mais antigo pro mais novo:
 | `c57d6f8` | Agente ↔ campos do CRM; sidebar agrupada/recolhível; funções opcionais por workspace | 0067 |
 | `2cb76cc` | Multi-funil (`pipelines`, `pipeline_stages`) | 0068 |
 | `e6d8135` | Ordenações e visão de lista no Pipeline | 0069 |
+| `5a84d0c` | Passagem de bastão SDR → Closer entre agentes | 0070 |
 
 Detalhes que importam:
 
@@ -117,6 +103,13 @@ Detalhes que importam:
 - **Ordenações** em `src/lib/crm-sorting.ts` (estado de tela, não config do workspace). "Interações"
   usa a função agregada `contact_message_counts` (`security invoker`, respeita RLS). Se a função
   sumir, o Pipeline **não quebra**: só perde essa ordenação.
+- **Passagem de bastão** (`src/lib/agent-handoff.ts`): `agents.handoff_to_agent_id/mode/signal/intro/
+  notice` + `contacts.active_agent_id/handed_off_at`. Modo `papel` troca só o cérebro no mesmo número
+  (o destino nem precisa de número próprio); modo `numero` faz o destino se apresentar pelo número
+  dele e o antigo dar um aviso curto e parar. O gatilho compara por **posição** na ordem canônica de
+  `contacts.stage`, não por igualdade, porque o agente pula etapas; ganho e perda não disparam. A
+  atribuição é gravada **antes** do envio da apresentação, senão falha de envio deixa o lead em limbo.
+  **Desligado por padrão**: sem `handoff_to_agent_id`, nenhuma linha nova executa.
 
 ---
 
@@ -127,7 +120,7 @@ Detalhes que importam:
 | ✅ | 1 — Agente ↔ campos personalizados | em produção |
 | ✅ | 2 — Sidebar + funções opcionais por workspace | em produção |
 | 🟡 | 3 — Multi-funil, ordenações, visão de lista | em produção; **falta só o redesign visual do Pipeline** |
-| 🟡 | 4 — SDR ↔ Closer | **código pronto, não commitado, migration 0070 não aplicada** |
+| ✅ | 4 — SDR ↔ Closer | em produção (`5a84d0c`); **desligado em todos os agentes, falta teste real** |
 | ⬜ | 5 — Facebook Lead Ads | não começado |
 
 ### Bloco 5 — Facebook Lead Ads (não começado)
@@ -150,8 +143,10 @@ demora semanas — o pedido deveria ser aberto em paralelo, não quando o bloco 
 
 ### Teste que ainda não foi feito
 
-O bloco 4 mexe no motor que atende **cliente real** (Hanoi, TB Rio, ENACAL, Valec). Está aditivo e
-desligado por padrão — sem `handoff_to_agent_id` preenchido, nenhuma linha nova executa. Mas
+O bloco 4 mexe no motor que atende **cliente real** (Hanoi, TB Rio, ENACAL, Valec) e **já está em
+produção desde 2026-09-08**. Está aditivo e desligado — conferido no banco no dia do deploy: 8
+agentes, **0 com `handoff_to_agent_id`**, 0 contatos com `active_agent_id`. Enquanto ficar assim,
+nenhuma linha nova executa e o atendimento se comporta exatamente como antes. Mas
 **conversa real nunca foi testada daqui**. Antes de ligar em qualquer cliente: criar um segundo
 agente num número de teste e passar por um lead de verdade, principalmente o modo "outro número",
 que é o único que envia mensagem sozinho.
