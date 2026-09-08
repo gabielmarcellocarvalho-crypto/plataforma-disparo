@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchContactProfilePicture } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-channel";
+import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -30,7 +31,20 @@ export type Agent = {
   reply_delay_min_seconds: number;
   reply_delay_max_seconds: number;
   llm_provider: string;
+  // Passagem de bastão (SDR → Closer). Null em agente que não usa, que é o padrão. Ver agent-handoff.ts.
+  handoff_to_agent_id?: string | null;
+  handoff_mode?: string | null;
+  handoff_signal?: string | null;
+  handoff_intro?: string | null;
+  handoff_notice?: string | null;
+  whatsapp_instance_id?: string | null;
+  name?: string;
 };
+
+// Colunas do agente usadas quando a conversa troca de cérebro. Mesma lista dos webhooks, mais os
+// campos de handoff — deixar as duas divergirem faria a troca de papel receber um agente sem prompt.
+export const AGENT_COLUMNS =
+  "id, workspace_id, name, system_prompt, config, status, evolution_instance_name, whatsapp_instance_id, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider, handoff_to_agent_id, handoff_mode, handoff_signal, handoff_intro, handoff_notice";
 
 export type RawIncomingMedia = { base64: string; mimetype: string; kind: "image" | "audio" };
 export type ResolvedIncoming = {
@@ -164,7 +178,7 @@ export async function runAgentTurn(
   pushName: string | null,
   resolved: ResolvedIncoming
 ) {
-  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id, pipeline_id";
+  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -200,6 +214,27 @@ export async function runAgentTurn(
   // que não bate mais com o que a Meta espera pra esse envio).
 
   if (contact.opt_out_whatsapp) return;
+
+  // ── Passagem de bastão ────────────────────────────────────────────────────
+  // A conversa pode já ter sido entregue a outro agente. Quem manda daqui pra frente é
+  // `contact.active_agent_id`, não o agente do número que recebeu a mensagem.
+  let cerebro: Agent = agent;
+  if (contact.active_agent_id && contact.active_agent_id !== agent.id && agent.handoff_to_agent_id === contact.active_agent_id) {
+    const { data: destino } = await supabase.from("agents").select(AGENT_COLUMNS).eq("id", contact.active_agent_id).maybeSingle();
+
+    if (destino) {
+      if ((agent.handoff_mode ?? "papel") === "numero") {
+        // Modo dois números: a conversa mudou de caixa de entrada. Responder normalmente aqui
+        // colocaria dois agentes falando por cima um do outro; ficar mudo abandonaria o cliente.
+        // Então este número dá um aviso curto e para.
+        await agentSendText(channel, phone, textoDoAviso(agent as unknown as HandoffAgent));
+        return;
+      }
+      // Modo mesmo número: troca só o cérebro (prompt e configuração), o canal segue o mesmo. O
+      // cliente não percebe troca nenhuma — muda o objetivo de quem responde, não o número.
+      cerebro = { ...(destino as Agent), evolution_instance_name: agent.evolution_instance_name };
+    }
+  }
 
   // Busca a foto de perfil do WhatsApp só na 1ª vez (contato sem foto salva ainda) — não repete a
   // cada mensagem. Best-effort: sem foto pública, fica null e segue normal. Só existe no Evolution —
@@ -299,9 +334,11 @@ export async function runAgentTurn(
   }
 
   if (contact.needs_attention) return; // humano já assumiu essa conversa — agente não responde até ser resolvido
-  if (agent.status !== "ativo") return;
+  // Pausar qualquer um dos dois cala o número: o do canal porque é ele que fala, e o cérebro
+  // porque é ele que pensa.
+  if (agent.status !== "ativo" || cerebro.status !== "ativo") return;
 
-  const agentConfig = normalizeAgentConfig(agent.config);
+  const agentConfig = normalizeAgentConfig(cerebro.config);
   // Checagem REAL de horário — não é só o texto do prompt (o modelo pode ignorar). Fora do horário
   // configurado, não responde nada mesmo (sem marcar atenção — não é erro, é esperado). Marca
   // missed_offhours pra, quando o cliente mandar mensagem de novo dentro do horário, o agente abrir
@@ -425,9 +462,9 @@ export async function runAgentTurn(
     ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n")
     : undefined;
 
-  const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
+  const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    agent.system_prompt,
+    cerebro.system_prompt,
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,
@@ -541,6 +578,30 @@ export async function runAgentTurn(
     }
 
     await supabase.from("contacts").update(patch).eq("id", contact.id);
+
+    // Passagem de bastão: o lead alcançou o ponto configurado e este agente tem um sucessor. Roda
+    // DEPOIS de gravar o estágio, pra que a entrega já aconteça com o funil no estado certo.
+    //
+    // No modo 'papel' a troca vale a partir da PRÓXIMA mensagem: a resposta que está saindo agora já
+    // foi gerada por este agente, e reescrevê-la seria pior do que deixar a virada acontecer no
+    // turno seguinte.
+    if (
+      agent.handoff_to_agent_id &&
+      contact.active_agent_id !== agent.handoff_to_agent_id &&
+      atingiuGatilho(stage, agent.handoff_signal ?? null)
+    ) {
+      const { data: destino } = await supabase.from("agents").select(AGENT_COLUMNS).eq("id", agent.handoff_to_agent_id).maybeSingle();
+      if (destino) {
+        const r = await aplicarHandoff(
+          supabase,
+          agent as unknown as HandoffAgent,
+          destino as unknown as HandoffAgent,
+          contact.id,
+          phone
+        );
+        if (r.motivo) console.warn(`handoff ${agent.id} -> ${agent.handoff_to_agent_id}: ${r.motivo}`);
+      }
+    }
   }
 
   if (replyParts.length > 0) {

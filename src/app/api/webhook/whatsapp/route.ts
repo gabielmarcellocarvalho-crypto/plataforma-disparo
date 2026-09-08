@@ -2,7 +2,7 @@ import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getMediaBase64, fetchContactProfilePicture } from "@/lib/evolution";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
-import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
+import { runAgentTurn, AGENT_COLUMNS, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
@@ -130,7 +130,7 @@ async function processWebhook(body: {
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider")
+    .select(AGENT_COLUMNS)
     .eq("evolution_instance_name", instanceName)
     .maybeSingle();
 

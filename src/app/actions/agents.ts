@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace, requireStaff } from "@/lib/workspace";
 import { createInstance, setWebhook, fetchQrCode, fetchInstanceInfo, agentInstanceNameFor } from "@/lib/evolution";
 import { buildSystemPrompt, normalizeAgentConfig, type AgentConfig } from "@/lib/agent-prompt";
+import { HANDOFF_SIGNALS } from "@/lib/agent-handoff";
 import { extractKnowledgeText } from "@/lib/agent-knowledge";
 import { MAX_TOTAL_CHARS } from "@/lib/agent-knowledge-limits";
 
@@ -335,5 +336,50 @@ export async function updateAgentDelay(agentId: string, minSeconds: number, maxS
     .eq("id", agentId);
   if (error) return { error: "Não foi possível salvar o delay." };
   revalidatePath("/agentes");
+  return { error: null };
+}
+
+// Passagem de bastão entre agentes (SDR → Closer). Toda a configuração fica no agente de ORIGEM: é
+// uma decisão só ("quando eu qualificar, quem assume e como"), num formulário só.
+export async function updateAgentHandoff(
+  agentId: string,
+  fields: { toAgentId: string | null; mode: string; signal: string; intro: string; notice: string }
+): Promise<{ error: string | null }> {
+  await requireStaff();
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  // Passar pra si mesmo seria um laço: o contato ficaria com active_agent_id apontando pro próprio
+  // agente e a troca de cérebro nunca aconteceria de verdade.
+  if (fields.toAgentId === agentId) return { error: "Um agente não pode passar a conversa pra ele mesmo." };
+
+  const supabase = await createClient();
+
+  // O destino tem que ser do mesmo workspace — sem isso, um id de outro cliente entregaria a conversa
+  // pra fora.
+  if (fields.toAgentId) {
+    const { data: destino } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("id", fields.toAgentId)
+      .eq("workspace_id", workspace.id)
+      .maybeSingle();
+    if (!destino) return { error: "Agente de destino não encontrado neste workspace." };
+  }
+
+  const { error } = await supabase
+    .from("agents")
+    .update({
+      handoff_to_agent_id: fields.toAgentId,
+      handoff_mode: fields.mode === "numero" ? "numero" : "papel",
+      handoff_signal: (HANDOFF_SIGNALS as string[]).includes(fields.signal) ? fields.signal : "encaminhamento",
+      handoff_intro: fields.intro.trim() || null,
+      handoff_notice: fields.notice.trim() || null,
+    })
+    .eq("id", agentId)
+    .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível salvar a passagem de bastão." };
+
+  revalidatePath(`/agentes/${agentId}`);
   return { error: null };
 }

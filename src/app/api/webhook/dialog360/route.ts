@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, getDialog360Media, type Dialog360WebhookBody, type Dialog360IncomingMessage } from "@/lib/dialog360";
 import { getMetaCloudMedia } from "@/lib/metacloud";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
-import { runAgentTurn, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
+import { runAgentTurn, AGENT_COLUMNS, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import type { AgentImage } from "@/lib/agent-reply";
@@ -121,7 +121,7 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
     // em vez de só logar. Sem agente vinculado, segue o comportamento de sempre (linha abaixo).
     const { data: agentRow } = await supabase
       .from("agents")
-      .select("id, workspace_id, system_prompt, config, status, evolution_instance_name, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider")
+      .select(AGENT_COLUMNS)
       .eq("whatsapp_instance_id", instance.id)
       .maybeSingle();
 

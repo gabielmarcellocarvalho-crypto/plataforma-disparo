@@ -18,7 +18,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
   const { data: agentRow, error: agentError } = await supabase
     .from("agents")
     .select(
-      "id, name, system_prompt, config, evolution_instance_name, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider, whatsapp_instances(channel)"
+      "id, workspace_id, name, system_prompt, config, evolution_instance_name, whatsapp_instance_id, phone_number, photo_url, connection_status, status, reply_delay_min_seconds, reply_delay_max_seconds, llm_provider, handoff_to_agent_id, handoff_mode, handoff_signal, handoff_intro, handoff_notice, whatsapp_instances(channel)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -59,6 +59,20 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
   // própria: é isso que faz o dado coletado na conversa cair no mesmo campo que o CRM filtra e soma.
   const fieldDefs = await listCustomFieldDefs();
 
+  // Candidatos a receber a conversa: os outros agentes do mesmo workspace. "Tem número" decide se o
+  // modo "outro número" é viável — sem número conectado, o agente que assume não consegue se apresentar.
+  const { data: outrosAgentes } = await supabase
+    .from("agents")
+    .select("id, name, evolution_instance_name, whatsapp_instance_id")
+    .eq("workspace_id", agent.workspace_id)
+    .neq("id", agent.id)
+    .order("name");
+  const handoffOptions = (outrosAgentes ?? []).map((a) => ({
+    id: a.id,
+    name: a.name,
+    temNumero: Boolean(a.evolution_instance_name || a.whatsapp_instance_id),
+  }));
+
   const isGemini = agent.llm_provider === "gemini";
   const model = isGemini ? GEMINI_MODEL : ANTHROPIC_MODEL;
   const totalCostUsd = (usageRows || []).reduce(
@@ -85,6 +99,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       </Link>
       <AgentEditView
         fieldDefs={fieldDefs}
+        handoffOptions={handoffOptions}
         agent={agent}
         model={model}
         totalCostUsd={totalCostUsd}

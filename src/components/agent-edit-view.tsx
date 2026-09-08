@@ -6,6 +6,7 @@ import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, 
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import type { CustomFieldDef } from "@/lib/custom-fields";
+import { AgentHandoffForm, type HandoffAgentOption } from "@/components/agent-handoff-form";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
 import { AgentKnowledgeLibrary } from "@/components/agent-knowledge-library";
 import { normalizeAgentConfig } from "@/lib/agent-prompt";
@@ -27,6 +28,12 @@ type Agent = {
   reply_delay_min_seconds: number;
   reply_delay_max_seconds: number;
   llm_provider: LlmProvider;
+  // Passagem de bastão — null em agente que não usa, que é o padrão. Ver agent-handoff.ts.
+  handoff_to_agent_id: string | null;
+  handoff_mode: string | null;
+  handoff_signal: string | null;
+  handoff_intro: string | null;
+  handoff_notice: string | null;
 };
 
 type AgentMedia = {
@@ -63,6 +70,7 @@ export function AgentEditView({
   knowledge,
   canManage,
   fieldDefs,
+  handoffOptions,
 }: {
   agent: Agent;
   model: string;
@@ -71,6 +79,7 @@ export function AgentEditView({
   knowledge: KnowledgeDoc[];
   canManage: boolean;
   fieldDefs: CustomFieldDef[];
+  handoffOptions: HandoffAgentOption[];
 }) {
   const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
@@ -265,6 +274,23 @@ export function AgentEditView({
           </div>
           {delayError && <p className="text-xs text-danger font-medium mt-1.5">{delayError}</p>}
           <p className="text-xs text-text-muted mt-1.5">Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo.</p>
+        </div>
+      )}
+
+      {canManage && handoffOptions.length > 0 && (
+        <div className="bg-surface border border-border rounded-2xl shadow-sm p-6">
+          <h2 className="text-sm font-bold mb-1">Passagem de bastão</h2>
+          <AgentHandoffForm
+            agentId={agent.id}
+            agentes={handoffOptions}
+            initial={{
+              toAgentId: agent.handoff_to_agent_id ?? null,
+              mode: agent.handoff_mode ?? "papel",
+              signal: agent.handoff_signal ?? "encaminhamento",
+              intro: agent.handoff_intro ?? "",
+              notice: agent.handoff_notice ?? "",
+            }}
+          />
         </div>
       )}
 
