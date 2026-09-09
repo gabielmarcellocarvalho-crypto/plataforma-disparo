@@ -7,8 +7,10 @@ import { ApiKeysManager } from "@/components/api-keys-manager";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
 import { WorkspaceFeaturesEditor } from "@/components/workspace-features-picker";
 import { EmailFromEditor } from "@/components/email-from-editor";
+import { EmailDomainsManager } from "@/components/email-domains-manager";
 import { WorkspaceLogoEditor } from "@/components/workspace-logo-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
+import { listEmailDomains } from "@/app/actions/email-domains";
 import { resolveWorkspacePlan } from "@/lib/workspace-plan";
 
 export default async function ConfiguracoesPage() {
@@ -16,7 +18,7 @@ export default async function ConfiguracoesPage() {
   const { workspace, isStaff, hiddenPages } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: instances }, apiKeys, { data: workspaceRow }] = await Promise.all([
+  const [{ data: instances }, apiKeys, { data: workspaceRow }, emailDomains] = await Promise.all([
     workspace
       ? supabase.from("whatsapp_instances").select("id, connection_status, channel, department").eq("workspace_id", workspace.id).order("created_at")
       : Promise.resolve({ data: [] }),
@@ -24,6 +26,7 @@ export default async function ConfiguracoesPage() {
     isStaff && workspace
       ? supabase.from("workspaces").select("plan, email_from, logo_url, brand_color").eq("id", workspace.id).maybeSingle()
       : Promise.resolve({ data: null }),
+    isStaff ? listEmailDomains() : Promise.resolve([]),
   ]);
   const currentPlan = resolveWorkspacePlan(workspaceRow?.plan);
 
@@ -81,6 +84,14 @@ export default async function ConfiguracoesPage() {
             <h3 className="font-bold text-[15px] mb-1">E-mail</h3>
             <p className="text-xs text-text-muted mb-4">Remetente das campanhas de e-mail desse workspace.</p>
             {workspace && <EmailFromEditor workspaceId={workspace.id} current={workspaceRow?.email_from ?? null} />}
+          </div>
+
+          <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-2xl">
+            <h3 className="font-bold text-[15px] mb-1">Domínios de e-mail</h3>
+            <p className="text-xs text-text-muted mb-4">
+              O domínio do remetente acima precisa aparecer aqui como verificado, senão o envio falha.
+            </p>
+            <EmailDomainsManager domains={emailDomains} />
           </div>
 
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-xl">

@@ -36,6 +36,10 @@ export async function verifyDomain(domainId: string): Promise<{ object: string; 
   return request("POST", `/domains/${domainId}/verify`);
 }
 
+export async function deleteDomain(domainId: string): Promise<void> {
+  await request("DELETE", `/domains/${domainId}`);
+}
+
 export async function sendEmail(from: string, to: string, subject: string, text: string) {
   return request("POST", "/emails", { from, to, subject, text });
 }
