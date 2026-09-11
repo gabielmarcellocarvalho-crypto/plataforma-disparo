@@ -73,6 +73,26 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
     temNumero: Boolean(a.evolution_instance_name || a.whatsapp_instance_id),
   }));
 
+  // Números oficiais (360dialog/metacloud) conectados em Configurações que nenhum agente usa ainda —
+  // viram a opção "usar número oficial" no card de conexão deste agente. Mesma lista que o formulário
+  // de criação oferece (ver /agentes/page.tsx), filtrada pelos que já estão vinculados a outro agente.
+  const [{ data: officialInstances }, { data: linkedRows }] = await Promise.all([
+    supabase
+      .from("whatsapp_instances")
+      .select("id, department, channel, phone_number_id")
+      .eq("workspace_id", agent.workspace_id)
+      .in("channel", ["360dialog", "metacloud"]),
+    supabase
+      .from("agents")
+      .select("whatsapp_instance_id")
+      .eq("workspace_id", agent.workspace_id)
+      .not("whatsapp_instance_id", "is", null),
+  ]);
+  const usedInstanceIds = new Set((linkedRows || []).map((r) => r.whatsapp_instance_id as string));
+  const availableInstances = (officialInstances || [])
+    .filter((i) => !usedInstanceIds.has(i.id))
+    .map((i) => ({ id: i.id, department: i.department as string, channel: i.channel as "360dialog" | "metacloud", phone_number_id: i.phone_number_id as string | null }));
+
   const isGemini = agent.llm_provider === "gemini";
   const model = isGemini ? GEMINI_MODEL : ANTHROPIC_MODEL;
   const totalCostUsd = (usageRows || []).reduce(
@@ -99,6 +119,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       </Link>
       <AgentEditView
         fieldDefs={fieldDefs}
+        availableInstances={availableInstances}
         handoffOptions={handoffOptions}
         agent={agent}
         model={model}

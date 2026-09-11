@@ -103,6 +103,52 @@ export async function connectAgent(agentId: string): Promise<ConnectResult> {
   }
 }
 
+export type LinkInstanceResult = { error: string | null; ok?: boolean };
+
+// Vincula um número oficial já conectado em Configurações (360dialog/metacloud) a um agente QUE JÁ
+// EXISTE. Mesma escolha que o formulário de "Adicionar agente" oferece na criação — antes só dava pra
+// fazer nesse momento: um agente criado com número próprio (QR) que depois ganhasse acesso oficial
+// precisava ser apagado e refeito, perdendo prompt, mídia, base de conhecimento e histórico.
+//
+// evolution_instance_name é zerado no vínculo: com os dois preenchidos, a mesma conversa poderia
+// entrar pelos dois webhooks (Evolution e Cloud API) e o agente responderia duas vezes. O nome é
+// derivado do id (agentInstanceNameFor), então é recuperável se algum dia precisar desfazer.
+export async function linkAgentInstance(agentId: string, instanceId: string): Promise<LinkInstanceResult> {
+  await requireStaff();
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { data: agent } = await supabase
+    .from("agents")
+    .select("id, whatsapp_instance_id")
+    .eq("id", agentId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!agent) return { error: "Agente não encontrado nesse workspace." };
+  if (agent.whatsapp_instance_id) return { error: "Esse agente já usa um número conectado." };
+
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("id, channel")
+    .eq("id", instanceId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!instance) return { error: "Número selecionado não encontrado nesse workspace." };
+  if (instance.channel === "evolution") return { error: "Número Evolution não pode ser reaproveitado aqui — cada agente Evolution tem sua própria instância." };
+
+  const { error } = await supabase
+    .from("agents")
+    .update({ whatsapp_instance_id: instanceId, evolution_instance_name: null, connection_status: "conectado" })
+    .eq("id", agentId);
+  // Mesmo índice único da criação (idx_agents_whatsapp_instance): 1 número, 1 agente.
+  if (error) return { error: error.message.includes("idx_agents_whatsapp_instance") ? "Esse número já está em uso por outro agente." : "Não foi possível vincular o número." };
+
+  revalidatePath("/agentes");
+  revalidatePath(`/agentes/${agentId}`);
+  return { error: null, ok: true };
+}
+
 export async function refreshAgentStatus(agentId: string) {
   await requireStaff();
   const supabase = await createClient();

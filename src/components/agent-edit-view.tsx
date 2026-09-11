@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { connectAgent, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
+import { connectAgent, linkAgentInstance, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import type { CustomFieldDef } from "@/lib/custom-fields";
@@ -47,6 +47,12 @@ type AgentMedia = {
 
 type KnowledgeDoc = { id: string; file_name: string; char_count: number };
 
+// Número oficial já conectado em Configurações e ainda livre (nenhum agente usa) — ver a query em
+// /agentes/[id]/page.tsx.
+type AvailableInstance = { id: string; department: string; channel: "360dialog" | "metacloud"; phone_number_id: string | null };
+
+const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
+
 const USD_TO_BRL = 5.4;
 
 const CONNECTION_STYLES: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -71,6 +77,7 @@ export function AgentEditView({
   canManage,
   fieldDefs,
   handoffOptions,
+  availableInstances = [],
 }: {
   agent: Agent;
   model: string;
@@ -80,6 +87,7 @@ export function AgentEditView({
   canManage: boolean;
   fieldDefs: CustomFieldDef[];
   handoffOptions: HandoffAgentOption[];
+  availableInstances?: AvailableInstance[];
 }) {
   const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
@@ -91,6 +99,10 @@ export function AgentEditView({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Como esse agente vai atender: QR code (instância Evolution própria, fluxo de sempre) ou um número
+  // oficial já conectado em Configurações. Só aparece quando existe número oficial livre.
+  const [connectMode, setConnectMode] = useState<"qr" | "oficial">("qr");
+  const [instanceId, setInstanceId] = useState(availableInstances[0]?.id || "");
 
   const isInstanceLinked = Boolean(agent.whatsapp_instance_channel);
   const connected = isInstanceLinked || agent.connection_status === "open";
@@ -105,6 +117,15 @@ export function AgentEditView({
       const result = await connectAgent(agent.id);
       if (result.error) setError(result.error);
       else setQr(result.qrcodeBase64 ?? null);
+    });
+  }
+
+  function handleLinkInstance() {
+    setError(null);
+    startTransition(async () => {
+      const result = await linkAgentInstance(agent.id, instanceId);
+      if (result.error) setError(result.error);
+      else router.refresh();
     });
   }
 
@@ -215,17 +236,72 @@ export function AgentEditView({
         )}
 
         {canManage && !isInstanceLinked && !connected && (
-          <div className="flex flex-col items-start gap-2 border-t border-border pt-3">
-            <button
-              type="button"
-              onClick={handleConnect}
-              disabled={pending}
-              className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {pending ? "Gerando QR…" : "Conectar número"}
-            </button>
+          <div className="flex flex-col items-start gap-3 border-t border-border pt-3">
+            {availableInstances.length > 0 && (
+              <div className="flex flex-col gap-1.5 w-full max-w-lg">
+                <span className="text-sm font-semibold">Número do agente</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConnectMode("qr")}
+                    aria-pressed={connectMode === "qr"}
+                    className={`text-left border rounded-md p-2.5 cursor-pointer transition-colors ${
+                      connectMode === "qr" ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                    }`}
+                  >
+                    <div className="text-xs font-bold">Número próprio</div>
+                    <div className="text-[11px] text-text-muted mt-0.5">Conecta um número novo por QR code, só pra esse agente.</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConnectMode("oficial")}
+                    aria-pressed={connectMode === "oficial"}
+                    className={`text-left border rounded-md p-2.5 cursor-pointer transition-colors ${
+                      connectMode === "oficial" ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                    }`}
+                  >
+                    <div className="text-xs font-bold">API oficial (Configurações)</div>
+                    <div className="text-[11px] text-text-muted mt-0.5">Usa um número oficial já conectado — o mesmo número dispara campanha e conduz a conversa.</div>
+                  </button>
+                </div>
+                {connectMode === "oficial" && (
+                  <select
+                    value={instanceId}
+                    onChange={(e) => setInstanceId(e.target.value)}
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface mt-1"
+                  >
+                    {availableInstances.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {DEPARTMENT_LABEL[i.department] || i.department} — {i.channel === "360dialog" ? "360dialog" : "Meta"}
+                        {i.phone_number_id ? ` · ID ${i.phone_number_id}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {connectMode === "oficial" && availableInstances.length > 0 ? (
+              <button
+                type="button"
+                onClick={handleLinkInstance}
+                disabled={pending || !instanceId}
+                className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {pending ? "Conectando…" : "Conectar número oficial"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnect}
+                disabled={pending}
+                className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {pending ? "Gerando QR…" : "Conectar número"}
+              </button>
+            )}
             {error && <p className="text-sm text-danger font-medium">{error}</p>}
-            {qr && (
+            {qr && connectMode === "qr" && (
               <div className="flex flex-col items-start gap-2">
                 <p className="text-sm text-text-muted">Escaneie com o WhatsApp que vai virar esse agente (Aparelhos conectados → Conectar um aparelho):</p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
