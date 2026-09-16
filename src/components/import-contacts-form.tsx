@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { inspectImportFile, importContacts, type ImportResult } from "@/app/actions/contacts";
 import type { ImportTarget, SheetPreview } from "@/lib/import-contacts";
 import type { CustomFieldDef } from "@/lib/custom-fields";
+import { TagPicker } from "@/components/tag-picker";
 
 type Preview = SheetPreview & { suggestion: Record<string, ImportTarget> };
 
@@ -19,12 +20,14 @@ const ALVOS_PADRAO: { key: ImportTarget; label: string }[] = [
   { key: "motivo_perda", label: "Motivo da perda" },
 ];
 
-export function ImportContactsForm({ fieldDefs = [] }: { fieldDefs?: CustomFieldDef[] }) {
+export function ImportContactsForm({ fieldDefs = [], availableTags = [] }: { fieldDefs?: CustomFieldDef[]; availableTags?: string[] }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mapping, setMapping] = useState<Record<string, ImportTarget>>({});
   const [modo, setModo] = useState<"ignorar" | "atualizar">("ignorar");
+  // Tags aplicadas a toda a planilha — é o que transforma a lista importada num grupo pra disparar.
+  const [tags, setTags] = useState<string[]>([]);
   const [resultado, setResultado] = useState<ImportResult | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -60,6 +63,7 @@ export function ImportContactsForm({ fieldDefs = [] }: { fieldDefs?: CustomField
     fd.set("sheet", preview.sheet);
     fd.set("mode", modo);
     fd.set("mapping", JSON.stringify(mapping));
+    fd.set("tags", tags.join(","));
     startTransition(async () => {
       const r = await importContacts({ error: null }, fd);
       if (r.error) {
@@ -203,6 +207,15 @@ export function ImportContactsForm({ fieldDefs = [] }: { fieldDefs?: CustomField
                   })}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-text-muted">Tags dessa lista</span>
+              <p className="text-[11px] text-text-muted">
+                Aplicadas a todas as {preview.total} linhas. É por elas que você escolhe esse grupo na hora de ativar um disparo —
+                quem já existe mantém as tags que tinha, essas entram por cima.
+              </p>
+              <TagPicker value={tags} onChange={setTags} suggestions={availableTags} placeholder="ex.: Lista ENACAL 2026" compact />
             </div>
 
             <div className="flex flex-col gap-1.5">

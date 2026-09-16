@@ -8,6 +8,8 @@ import {
   updateContactStage,
   updateContactLostReason,
   addContactNote,
+  listWorkspaceTags,
+  updateContactTags,
   type ContactDetail,
   type ContactNote,
 } from "@/app/actions/contacts";
@@ -18,6 +20,7 @@ import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow }
 import { updateContactAssignment, type BranchRow, type TeamMemberRow } from "@/app/actions/team";
 import { isTaskOverdue } from "@/lib/tasks";
 import { splitKnownAndExtras, type CustomFieldDef } from "@/lib/custom-fields";
+import { TagPicker } from "@/components/tag-picker";
 import { CustomFieldInput } from "@/components/custom-field-inputs";
 
 function formatDate(iso: string) {
@@ -61,6 +64,8 @@ export function CrmLeadDrawer({
   const [teamMemberId, setTeamMemberId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -79,6 +84,7 @@ export function CrmLeadDrawer({
     setCompanyOptions([]);
     setTaskTitleDraft("");
     getTasksForRecord("contact", contactId).then(setTasks);
+    listWorkspaceTags().then((rows) => setTagSuggestions(rows.map((r) => r.tag)));
     getContactDetail(contactId).then((result) => {
       if (!result) {
         setError("Contato não encontrado.");
@@ -92,6 +98,7 @@ export function CrmLeadDrawer({
       setEmail(result.contact.email || "");
       setTeamMemberId(result.contact.team_member_id || "");
       setBranchId(result.contact.branch_id || "");
+      setTags(result.contact.tags || []);
       const { known, extras } = splitKnownAndExtras(fieldDefs, result.contact.custom_fields);
       setValues(known as Record<string, string | string[]>);
       setFields(extras);
@@ -102,6 +109,17 @@ export function CrmLeadDrawer({
     // de propósito, pra não refazer a busca a cada re-render do board.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
+
+  // Tag salva na hora da marcação, e não no "Salvar" de infos pessoais: ela é usada pra segmentar
+  // disparo, e uma tag marcada que não foi salva por esquecimento vira lead de fora da campanha.
+  function handleTagsChange(next: string[]) {
+    setTags(next);
+    if (!contactId) return;
+    startTransition(async () => {
+      const r = await updateContactTags(contactId, next);
+      if (r.error) setError(r.error);
+    });
+  }
 
   function addField() {
     setFields((f) => [...f, { key: "", value: "" }]);
@@ -349,6 +367,11 @@ export function CrmLeadDrawer({
                   {contact.needs_attention ? contact.attention_reason || "Precisa de atenção humana." : contact.flagged_reason}
                 </div>
               )}
+
+              <div className="flex flex-col gap-1.5">
+                <h3 className="text-sm font-bold">Tags</h3>
+                <TagPicker value={tags} onChange={handleTagsChange} suggestions={tagSuggestions} placeholder="nova tag + Enter" compact />
+              </div>
 
               <div className="flex flex-col gap-3">
                 <h3 className="text-sm font-bold">Infos pessoais</h3>

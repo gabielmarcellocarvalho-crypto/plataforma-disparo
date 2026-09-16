@@ -5,6 +5,7 @@ import { createCampaign, type ActionResult } from "@/app/actions/campaigns";
 import { listWhatsappTemplates } from "@/app/actions/whatsapp";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 import { EmailPreview } from "@/components/email-preview";
+import { TagPicker } from "@/components/tag-picker";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
@@ -36,9 +37,11 @@ export function CreateCampaignForm({
   emailFrom = null,
   brandColor = null,
   logoUrl = null,
+  availableTags = [],
 }: {
   agents?: AgentOption[];
   whatsappInstances?: WhatsappInstanceOption[];
+  availableTags?: string[];
   // Identidade visual do e-mail, pro preview mostrar o mesmo cabeçalho/cor que o envio vai usar.
   emailFrom?: string | null;
   brandColor?: string | null;
@@ -60,6 +63,9 @@ export function CreateCampaignForm({
   const [emailCtaLabel, setEmailCtaLabel] = useState("");
   const [emailCtaUrl, setEmailCtaUrl] = useState("");
   const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [preheader, setPreheader] = useState("");
+  // Tags que a campanha carimba em quem receber — vale pros dois canais.
+  const [campaignTags, setCampaignTags] = useState<string[]>([]);
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
 
@@ -199,6 +205,21 @@ export function CreateCampaignForm({
                   placeholder="Assunto do e-mail"
                   className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
                 />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="preheader" className="text-sm font-semibold">
+                  Preheader <span className="font-normal text-text-muted">(opcional)</span>
+                </label>
+                <input
+                  id="preheader"
+                  name="preheader"
+                  value={preheader}
+                  onChange={(e) => setPreheader(e.target.value)}
+                  placeholder="Linha que aparece em cinza ao lado do assunto na caixa de entrada"
+                  className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+                />
+                <p className="text-xs text-text-muted">Sem isso, o Gmail mostra a primeira linha do corpo (normalmente o &quot;Olá, Fulano&quot;).</p>
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -540,6 +561,7 @@ export function CreateCampaignForm({
             <EmailPreview
               from={emailFrom}
               subject={subject}
+              preheader={preheader}
               bodyText={emailBody}
               ctaLabel={emailCtaLabel}
               ctaUrl={emailCtaUrl}
@@ -548,6 +570,15 @@ export function CreateCampaignForm({
               bannerFile={bannerFile}
             />
           )}
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold">Tags dessa campanha</span>
+            <p className="text-xs text-text-muted -mt-1">
+              Quem receber fica marcado com elas — é assim que você segmenta a próxima campanha por &quot;já passou por essa etapa&quot;.
+            </p>
+            <input type="hidden" name="tags" value={campaignTags.join(",")} />
+            <TagPicker value={campaignTags} onChange={setCampaignTags} suggestions={availableTags} placeholder="ex.: Aquecimento" />
+          </div>
 
           {mode === "sequence" ? (
             <div className="grid grid-cols-2 gap-3">

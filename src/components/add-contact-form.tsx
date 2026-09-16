@@ -1,13 +1,15 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { addContact, type ActionResult } from "@/app/actions/contacts";
+import { TagPicker } from "@/components/tag-picker";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
-export function AddContactForm() {
+export function AddContactForm({ availableTags = [] }: { availableTags?: string[] }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [state, formAction, pending] = useActionState(addContact, INITIAL_STATE);
+  const [tags, setTags] = useState<string[]>([]);
 
   useEffect(() => {
     if (state.ok) dialogRef.current?.close();
@@ -16,7 +18,10 @@ export function AddContactForm() {
   return (
     <>
       <button
-        onClick={() => dialogRef.current?.showModal()}
+        onClick={() => {
+          setTags([]);
+          dialogRef.current?.showModal();
+        }}
         className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md"
       >
         Adicionar contato
@@ -58,6 +63,13 @@ export function AddContactForm() {
               type="email"
               className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold">Tags</span>
+            <p className="text-xs text-text-muted -mt-1">Grupo pra segmentar o disparo depois (ex.: Associado, Lista ENACAL).</p>
+            <input type="hidden" name="tags" value={tags.join(",")} />
+            <TagPicker value={tags} onChange={setTags} suggestions={availableTags} />
           </div>
 
           {state.error && <p className="text-sm text-danger font-medium">{state.error}</p>}

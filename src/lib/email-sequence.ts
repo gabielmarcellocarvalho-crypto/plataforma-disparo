@@ -4,6 +4,8 @@
 // dia/hora configurada (ramp_config.days/hourStart/hourEnd, mesmo formato já usado no blast).
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendCampaignEmail, ResendError } from "@/lib/email";
+import { applyContactVars } from "@/lib/message-vars";
+import { mergeTags, normalizeTags } from "@/lib/contact-tags";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import crypto from "crypto";
 
@@ -26,12 +28,6 @@ function brtNow() {
   return { weekday, hour };
 }
 
-function firstName(name: string | null): string {
-  const first = (name || "").trim().split(/\s+/)[0];
-  if (!first) return "";
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-}
-
 export type EmailSequenceResult = { sent: number; skipped: number };
 
 export async function runEmailSequences(supabase: AdminClient, siteOrigin: string): Promise<EmailSequenceResult> {
@@ -43,7 +39,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
   const { data: campaigns } = await supabase
     .from("campaigns")
-    .select("id, workspace_id, name, subject, sequence_steps, cta_phone, cta_message, banner_url, ramp_config")
+    .select("id, workspace_id, name, subject, sequence_steps, cta_phone, cta_message, banner_url, preheader, tags, ramp_config")
     .eq("status", "ativa")
     .eq("channel", "email")
     .eq("mode", "sequence");
@@ -75,7 +71,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: recipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .lte("next_step_at", now.toISOString()) // NULL não passa aqui — ver query separada abaixo pro 1º envio
@@ -83,7 +79,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: freshRecipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .is("next_step_at", null) // ainda não recebeu nenhum passo — 1º envio (Dia 1)
@@ -96,7 +92,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
         skipped++;
         continue;
       }
-      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean; stage: string } | null;
+      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean; stage: string; tags: string[] | null } | null;
       const stepIndex = r.sequence_step;
       if (!contact || stepIndex >= steps.length) continue;
 
@@ -112,14 +108,14 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
       // tentativa: uma falha (ex.: cota do Resend estourada) não infla o número de "enviados".
       const token = crypto.randomUUID();
       const ctaUrl = `${siteOrigin}/api/e/${token}`;
-      const body = step.body.replaceAll("{nome}", firstName(contact.name));
+      const body = applyContactVars(step.body, contact.name);
       const unsubUrl = unsubscribeUrl(siteOrigin, contact.id);
 
       try {
         await sendCampaignEmail({
           from: emailFrom,
           to: contact.email,
-          subject: step.subject,
+          subject: applyContactVars(step.subject, contact.name),
           bodyText: body,
           unsubscribeUrl: unsubUrl,
           cta: { label: step.ctaLabel, url: ctaUrl },
@@ -127,6 +123,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
           logoUrl,
           // Banner é da campanha, não do passo: os e-mails da sequência saem com a mesma arte de topo.
           bannerUrl: campaign.banner_url || null,
+          preheader: campaign.preheader ? applyContactVars(campaign.preheader, contact.name) : null,
         });
 
         await supabase.from("email_clicks").insert({
@@ -156,8 +153,20 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
         // Mesmo avanço que o disparo em massa de WhatsApp já faz: 1º contato de verdade tira o lead
         // de "não abordado" — sem isso, quem só recebe e-mail nunca sai do começo do funil, mesmo
         // depois de vários e-mails enviados de verdade.
+        const contactUpdates: Record<string, unknown> = {};
         if (contact.stage === "nao_abordado") {
-          await supabase.from("contacts").update({ stage: "abordado", stage_changed_at: now.toISOString() }).eq("id", contact.id);
+          contactUpdates.stage = "abordado";
+          contactUpdates.stage_changed_at = now.toISOString();
+        }
+        // Mesma herança de tag do disparo em massa — a sequência marca a cada passo enviado, então
+        // "quem recebeu o Aquecimento" fica segmentável mesmo quem parou no meio da régua.
+        const campaignTags = normalizeTags(campaign.tags);
+        if (campaignTags.length > 0) {
+          const merged = mergeTags(contact.tags, campaignTags);
+          if (merged.length !== normalizeTags(contact.tags).length) contactUpdates.tags = merged;
+        }
+        if (Object.keys(contactUpdates).length > 0) {
+          await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
         }
 
         sent++;

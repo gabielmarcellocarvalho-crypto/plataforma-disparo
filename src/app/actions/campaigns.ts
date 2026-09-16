@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { isContactStage } from "@/lib/crm-stages";
+import { normalizeTags, toPostgrestArrayLiteral } from "@/lib/contact-tags";
 import { listDialog360Templates } from "@/lib/dialog360";
 import { listMetaCloudTemplates } from "@/lib/metacloud";
 import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
@@ -33,6 +34,10 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   // sempre apontam pro WhatsApp — são coisas diferentes e não se misturam).
   const ctaLabel = String(formData.get("cta_label") || "").trim() || null;
   const ctaUrl = String(formData.get("cta_url") || "").trim() || null;
+  const preheader = String(formData.get("preheader") || "").trim() || null;
+  // Tags que esta campanha carimba em quem receber (ex.: "Aquecimento", "Abertura") — é o que torna
+  // "quem já passou por essa etapa" um filtro na próxima campanha.
+  const campaignTags = normalizeTags(String(formData.get("tags") || ""));
   const ctaMessage = String(formData.get("cta_message") || "").trim() || null;
   const sequenceDaysRaw = String(formData.get("sequence_days") || "[]");
   const sequenceStepsRaw = String(formData.get("sequence_steps") || "[]");
@@ -228,6 +233,8 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       cta_label: channel === "email" && mode === "blast" ? ctaLabel : null,
       cta_url: channel === "email" && mode === "blast" ? ctaUrl : null,
       banner_url: bannerUrl,
+      preheader: channel === "email" ? preheader : null,
+      tags: campaignTags,
       // ramp = cota diária crescente (anti-ban) — configurável na tela agora; padrão é a mesma faixa
       // já validada no piloto (50 no dia 1, 80 no dia 2... estabiliza em 300/dia a partir do 6º dia).
       // Em modo sequência não há ramp (é 1 e-mail por contato por passo, sem cota diária de novos
@@ -252,6 +259,11 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
 
 export type ActivateCampaignFilters = {
   stages: string[]; // fases do CRM selecionadas (vazio = todas as fases, sem filtro de estágio)
+  // Segmentação por tag: incluir = tem ALGUMA das marcadas (não todas — "Associado ou Convidado" é
+  // o recorte útil); excluir = não tem NENHUMA das marcadas, que é como se evita remandar pra quem
+  // já recebeu a etapa anterior.
+  tagsInclude?: string[];
+  tagsExclude?: string[];
   sinceDays: number | null; // só quem mudou de fase do CRM nos últimos N dias (null = sem limite)
   contactId?: string | null; // teste com 1 lead específico — ignora stages/sinceDays/limit quando setado
   limit?: number | null; // teste de disparo pra só os N primeiros do filtro (null = sem limite, todo mundo)
@@ -333,12 +345,23 @@ export async function activateCampaign(
       if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
     }
     const since = filters.sinceDays && filters.sinceDays > 0 ? new Date(Date.now() - filters.sinceDays * 86400000).toISOString() : null;
+    const tagsInclude = normalizeTags(filters.tagsInclude);
+    const tagsExclude = normalizeTags(filters.tagsExclude);
 
     const workspaceId = workspace.id;
     function baseQuery() {
-      let q = supabase.from("contacts").select("id").eq("workspace_id", workspaceId).eq(optOutColumn, false).not(contactColumn, "is", null);
-      if (validStages.length > 0) q = q.in("stage", validStages);
-      if (since) q = q.gte("stage_changed_at", since);
+      const inicial = supabase.from("contacts").select("id").eq("workspace_id", workspaceId).eq(optOutColumn, false).not(contactColumn, "is", null);
+      // Cada filtro opcional volta pro MESMO tipo do builder inicial. Sem esse `as Query`, encadear
+      // mais dois filtros condicionais estoura o limite de profundidade de tipo do supabase-js
+      // (TS2589) — o tipo do builder carrega toda a cadeia aplicada até ali.
+      type Query = typeof inicial;
+      let q: Query = inicial;
+      if (validStages.length > 0) q = q.in("stage", validStages) as Query;
+      if (since) q = q.gte("stage_changed_at", since) as Query;
+      if (tagsInclude.length > 0) q = q.overlaps("tags", tagsInclude) as Query;
+      // "não tem nenhuma dessas" não tem atalho no client — vai no DSL do PostgREST, com o literal
+      // de array escapado (tag com vírgula quebraria a query de outro jeito).
+      if (tagsExclude.length > 0) q = q.filter("tags", "not.ov", toPostgrestArrayLiteral(tagsExclude)) as Query;
       return q;
     }
 

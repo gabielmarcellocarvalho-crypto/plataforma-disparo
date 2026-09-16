@@ -9,6 +9,7 @@ import { buildCampaignEmailHtml } from "@/lib/email-template";
 export function EmailPreview({
   from,
   subject,
+  preheader,
   bodyText,
   ctaLabel,
   ctaUrl,
@@ -18,6 +19,7 @@ export function EmailPreview({
 }: {
   from: string | null;
   subject: string;
+  preheader: string;
   bodyText: string;
   ctaLabel: string;
   ctaUrl: string;
@@ -36,6 +38,7 @@ export function EmailPreview({
   const html = buildCampaignEmailHtml({
     from: from || "Sua empresa <contato@seudominio.com.br>",
     bodyText: bodyText.trim() || "Escreva o corpo do e-mail pra ver o preview aqui.",
+    preheader,
     unsubscribeUrl: "#",
     cta: ctaLabel.trim() && ctaUrl.trim() ? { label: ctaLabel.trim(), url: ctaUrl.trim() } : null,
     brandColor,
@@ -52,7 +55,10 @@ export function EmailPreview({
       <div className="border border-border rounded-md overflow-hidden bg-bg">
         <div className="px-3 py-2 border-b border-border bg-surface">
           <p className="text-[11px] text-text-muted">Assunto</p>
-          <p className="text-xs font-semibold truncate">{subject.trim() || "(sem assunto)"}</p>
+          <p className="text-xs font-semibold truncate">
+            {subject.trim() || "(sem assunto)"}
+            {preheader.trim() && <span className="font-normal text-text-muted"> — {preheader.trim()}</span>}
+          </p>
         </div>
         <iframe
           title="Preview do e-mail"

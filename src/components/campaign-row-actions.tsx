@@ -4,15 +4,30 @@ import { useEffect, useState, useTransition } from "react";
 import { activateCampaign, pauseCampaign, searchWorkspaceContacts, type ContactSearchResult } from "@/app/actions/campaigns";
 
 export type StageOption = { value: string; label: string };
+export type TagOption = { tag: string; count: number };
 
 type SendMode = "todos" | "limite" | "contato";
 
-export function CampaignRowActions({ id, status, stages }: { id: string; status: string; stages: StageOption[] }) {
+export function CampaignRowActions({
+  id,
+  status,
+  stages,
+  tags = [],
+}: {
+  id: string;
+  status: string;
+  stages: StageOption[];
+  tags?: TagOption[];
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [selectedStages, setSelectedStages] = useState<Set<string>>(new Set());
   const [sinceDays, setSinceDays] = useState("");
+  // Segmentação por tag: incluir = tem alguma dessas; excluir = não tem nenhuma dessas (é como se
+  // evita remandar pra quem já recebeu a etapa anterior).
+  const [tagsInclude, setTagsInclude] = useState<Set<string>>(new Set());
+  const [tagsExclude, setTagsExclude] = useState<Set<string>>(new Set());
 
   const [sendMode, setSendMode] = useState<SendMode>("todos");
   const [limit, setLimit] = useState("");
@@ -53,6 +68,26 @@ export function CampaignRowActions({ id, status, stages }: { id: string; status:
     });
   }
 
+  // Uma tag nunca fica marcada nos dois lados ao mesmo tempo — "incluir e excluir Associado" não
+  // devolveria ninguém, e o usuário só descobriria isso no erro de "nenhum contato encontrado".
+  function toggleTag(tag: string, lado: "include" | "exclude") {
+    const [alvo, setAlvo, oposto, setOposto] =
+      lado === "include"
+        ? ([tagsInclude, setTagsInclude, tagsExclude, setTagsExclude] as const)
+        : ([tagsExclude, setTagsExclude, tagsInclude, setTagsInclude] as const);
+    const next = new Set(alvo);
+    if (next.has(tag)) next.delete(tag);
+    else {
+      next.add(tag);
+      if (oposto.has(tag)) {
+        const limpo = new Set(oposto);
+        limpo.delete(tag);
+        setOposto(limpo);
+      }
+    }
+    setAlvo(next);
+  }
+
   function handleConfirm() {
     setError(null);
     if (sendMode === "contato" && !selectedContact) {
@@ -62,6 +97,8 @@ export function CampaignRowActions({ id, status, stages }: { id: string; status:
     startTransition(async () => {
       const result = await activateCampaign(id, {
         stages: Array.from(selectedStages),
+        tagsInclude: Array.from(tagsInclude),
+        tagsExclude: Array.from(tagsExclude),
         sinceDays: sinceDays.trim() ? Number(sinceDays) : null,
         contactId: sendMode === "contato" ? selectedContact!.id : null,
         limit: sendMode === "limite" && limit.trim() ? Number(limit) : null,
@@ -168,6 +205,48 @@ export function CampaignRowActions({ id, status, stages }: { id: string; status:
               )}
             </>
           )}
+        </div>
+      )}
+
+      {tags.length > 0 && (
+        <div className={`w-full ${filtersDisabled ? "opacity-40 pointer-events-none" : ""}`}>
+          <span className="text-xs font-semibold block mb-1.5">Grupos (tags)</span>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+            {tags.map((t) => (
+              <div key={t.tag} className="flex items-center justify-between gap-2">
+                <span className="text-xs truncate" title={t.tag}>
+                  {t.tag} <span className="text-text-muted">({t.count})</span>
+                </span>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleTag(t.tag, "include")}
+                    aria-pressed={tagsInclude.has(t.tag)}
+                    title="Mandar só pra quem tem essa tag"
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border cursor-pointer ${
+                      tagsInclude.has(t.tag) ? "bg-success-soft border-success text-success" : "border-border text-text-muted"
+                    }`}
+                  >
+                    incluir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleTag(t.tag, "exclude")}
+                    aria-pressed={tagsExclude.has(t.tag)}
+                    title="Não mandar pra quem tem essa tag"
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border cursor-pointer ${
+                      tagsExclude.has(t.tag) ? "bg-danger-soft border-danger text-danger" : "border-border text-text-muted"
+                    }`}
+                  >
+                    excluir
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-text-muted mt-1">
+            Incluir = tem alguma das marcadas. Excluir = não tem nenhuma das marcadas. Nada marcado = base inteira.
+          </p>
         </div>
       )}
 

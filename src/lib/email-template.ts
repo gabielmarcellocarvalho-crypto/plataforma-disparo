@@ -8,6 +8,9 @@ export type EmailCta = { label: string; url: string };
 export type CampaignEmailContent = {
   from: string;
   bodyText: string;
+  // Linha que Gmail/Outlook mostram em cinza ao lado do assunto na lista de e-mails. Sem ela o
+  // cliente puxa a primeira linha do corpo — nos templates reais, "Olá, Fulano,".
+  preheader?: string | null;
   unsubscribeUrl: string;
   cta?: EmailCta | null;
   brandColor?: string | null;
@@ -129,7 +132,7 @@ export function renderEmailBody(bodyText: string, color: string): string {
 }
 
 export function buildCampaignEmailHtml(content: CampaignEmailContent): string {
-  const { from, bodyText, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl } = content;
+  const { from, bodyText, preheader, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl } = content;
   const color = brandColor || DEFAULT_BRAND_COLOR;
   const senderName = escapeHtml(fromDisplayName(from));
   const body = renderEmailBody(bodyText, color);
@@ -156,9 +159,19 @@ export function buildCampaignEmailHtml(content: CampaignEmailContent): string {
       </td></tr>`
       : "";
 
+  // Bloco invisível no topo do body: é o que o cliente de e-mail lê como preview. O padding de
+  // caracteres invisíveis (&zwnj;&nbsp;) empurra o resto do corpo pra fora da linha de preview —
+  // sem ele, o Gmail emenda o preheader com "Olá, Fulano," logo depois.
+  const preheaderBlock = preheader?.trim()
+    ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;height:0;width:0;">${escapeHtml(
+        preheader.trim()
+      )}${"&zwnj;&nbsp;".repeat(60)}</div>`
+    : "";
+
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:32px 16px;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+    ${preheaderBlock}
     <table role="presentation" width="100%" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
       ${bannerBlock}
       <tr>

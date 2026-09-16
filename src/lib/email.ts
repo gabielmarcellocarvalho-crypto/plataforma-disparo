@@ -24,6 +24,7 @@ export type SendCampaignEmailInput = {
   to: string;
   subject: string;
   bodyText: string;
+  preheader?: string | null;
   unsubscribeUrl: string;
   cta?: EmailCta | null;
   brandColor?: string | null;
@@ -35,7 +36,7 @@ export type SendCampaignEmailInput = {
 // passado errado uma vez (o disparo em massa mandava `undefined` ali e ninguém percebia).
 export async function sendCampaignEmail(input: SendCampaignEmailInput): Promise<void> {
   if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY não configurada.");
-  const { from, to, subject, bodyText, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl } = input;
+  const { from, to, subject, bodyText, preheader, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl } = input;
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -45,7 +46,7 @@ export async function sendCampaignEmail(input: SendCampaignEmailInput): Promise<
       to,
       subject,
       text: buildCampaignEmailText(bodyText, cta),
-      html: buildCampaignEmailHtml({ from, bodyText, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl }),
+      html: buildCampaignEmailHtml({ from, bodyText, preheader, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl }),
       // List-Unsubscribe (RFC 8058) — Gmail/Outlook/Yahoo mostram um botão nativo de cancelar
       // inscrição usando isso, sem precisar abrir o link no navegador. Exigido pelas políticas de
       // remetente em massa da Gmail/Yahoo desde 2024 — sem isso, risco maior de cair em spam.

@@ -8,6 +8,7 @@ import { ContactsFilterBar } from "@/components/contacts-filter-bar";
 import { PAGE_SIZES } from "@/lib/contacts-pagination";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { listBranches, listTeamMembers } from "@/app/actions/team";
+import { listWorkspaceTags } from "@/app/actions/contacts";
 
 // Server Actions herdam o maxDuration da página que os chama. Sem isso, importContacts (que faz
 // vários upserts em lote pra planilhas grandes) fica no limite padrão da Vercel — curto demais pra
@@ -25,9 +26,10 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
   const page = Math.max(1, parseInt(sp.page || "1", 10) || 1);
   const offset = (page - 1) * size;
 
-  const [fieldDefs, teamMembers, branches] = workspace
-    ? await Promise.all([listCustomFieldDefs(), listTeamMembers(), listBranches()])
-    : [[], [], []];
+  const [fieldDefs, teamMembers, branches, workspaceTags] = workspace
+    ? await Promise.all([listCustomFieldDefs(), listTeamMembers(), listBranches(), listWorkspaceTags()])
+    : [[], [], [], []];
+  const tagNames = workspaceTags.map((t) => t.tag);
 
   // Busca textual — vírgula e parêntese quebram a sintaxe do `or` do PostgREST, e `%` viraria
   // curinga solto; fora isso o termo vai como o usuário digitou.
@@ -88,8 +90,8 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
         </div>
         <div className="flex items-center gap-3">
           <PageSizeSelect size={size} />
-          <ImportContactsForm fieldDefs={fieldDefs} />
-          <AddContactForm />
+          <ImportContactsForm fieldDefs={fieldDefs} availableTags={tagNames} />
+          <AddContactForm availableTags={tagNames} />
         </div>
       </div>
 
@@ -109,7 +111,7 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
           )}
         </div>
       ) : (
-        <ContactsTable rows={rows} fieldDefs={fieldDefs} teamMembers={teamMembers} branches={branches} />
+        <ContactsTable rows={rows} fieldDefs={fieldDefs} teamMembers={teamMembers} branches={branches} availableTags={tagNames} />
       )}
 
       <ContactsPageNav page={page} totalPages={totalPages} />

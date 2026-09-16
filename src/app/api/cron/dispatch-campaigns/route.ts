@@ -9,6 +9,8 @@ import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { runOffHoursCatchup } from "@/lib/agent-catchup";
 import { runEmailSequences } from "@/lib/email-sequence";
 import { secureEqual } from "@/lib/secure-compare";
+import { applyContactVars, firstName } from "@/lib/message-vars";
+import { mergeTags, normalizeTags } from "@/lib/contact-tags";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -50,17 +52,11 @@ function brtDateKey() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
-function firstName(name: string | null): string {
-  const first = (name || "").trim().split(/\s+/)[0];
-  if (!first) return "";
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-}
-
 function pickMessage(templates: unknown, name: string | null): string | null {
   const list = Array.isArray(templates) ? (templates as unknown[]).filter((t): t is string => typeof t === "string" && t.trim().length > 0) : [];
   if (list.length === 0) return null;
   const template = list[Math.floor(Math.random() * list.length)];
-  return template.replaceAll("{nome}", firstName(name));
+  return applyContactVars(template, name);
 }
 
 export async function GET(req: Request) {
@@ -77,7 +73,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
@@ -129,7 +125,7 @@ export async function GET(req: Request) {
 
     const { data: recipient } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage)")
+      .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags)")
       .eq("campaign_id", campaign.id)
       .eq("status", "pendente")
       .order("created_at", { ascending: true })
@@ -143,7 +139,7 @@ export async function GET(req: Request) {
     }
 
     const contact = recipient.contacts as unknown as
-      | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string }
+      | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null }
       | null;
 
     const isEmail = campaign.channel === "email";
@@ -260,8 +256,9 @@ export async function GET(req: Request) {
         await sendCampaignEmail({
           from: emailFrom!,
           to: contact.email!,
-          subject: campaign.subject || campaign.name,
+          subject: applyContactVars(campaign.subject || campaign.name, contact.name),
           bodyText: text as string,
+          preheader: campaign.preheader ? applyContactVars(campaign.preheader as string, contact.name) : null,
           unsubscribeUrl: unsubscribeUrl(origin, contact.id),
           cta: ctaToken ? { label: campaign.cta_label as string, url: `${origin}/api/e/${ctaToken}` } : null,
           brandColor: emailBrandColor,
@@ -316,6 +313,15 @@ export async function GET(req: Request) {
       // agrupamento sem agente depende de contact.whatsapp_instance_id) — a conversa existia no banco,
       // mas nunca aparecia na tela porque não tinha instância pra resolver.
       if (blastInstance && campaign.mode !== "agent") contactUpdates.whatsapp_instance_id = blastInstance.id;
+      // Herança de tag: quem recebeu a campanha fica marcado com as tags dela (ex.: "Aquecimento",
+      // "Abertura"), que é o que permite segmentar a PRÓXIMA campanha por "já passou por essa etapa"
+      // sem ninguém marcar contato na mão. União, nunca substituição — as tags próprias do lead
+      // (importação, marcação manual) continuam lá.
+      const campaignTags = normalizeTags(campaign.tags);
+      if (campaignTags.length > 0) {
+        const merged = mergeTags(contact.tags, campaignTags);
+        if (merged.length !== normalizeTags(contact.tags).length) contactUpdates.tags = merged;
+      }
       if (Object.keys(contactUpdates).length > 0) {
         await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
       }

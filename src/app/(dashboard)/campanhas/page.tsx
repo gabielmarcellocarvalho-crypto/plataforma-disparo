@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
+import { listWorkspaceTags } from "@/app/actions/contacts";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
@@ -35,6 +36,11 @@ export default async function CampanhasPage() {
     : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
 
   const rows = campaigns ?? [];
+
+  // Tags existentes na base — viram as opções de segmentação na ativação do disparo ("mandar só pra
+  // quem tem a tag Associado") e as sugestões ao marcar a campanha.
+  const workspaceTags = workspace ? await listWorkspaceTags() : [];
+  const tagOptions = workspaceTags.map((t) => ({ tag: t.tag, count: t.contacts_count }));
 
   // Mesma fonte de fases/labels do CRM — se o cliente renomear ou esconder uma fase lá, o filtro de
   // segmentação da campanha reflete na hora, sem precisar duplicar configuração.
@@ -85,6 +91,7 @@ export default async function CampanhasPage() {
         <CreateCampaignForm
           agents={agents || []}
           whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as WhatsappChannel, department: i.department }))}
+          availableTags={tagOptions.map((t) => t.tag)}
           emailFrom={workspaceRow?.email_from ?? null}
           brandColor={workspaceRow?.brand_color ?? null}
           logoUrl={workspaceRow?.logo_url ?? null}
@@ -126,7 +133,7 @@ export default async function CampanhasPage() {
                       {count.pendente} pendente · {count.enviado} enviado · {count.falhou} falhou
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <CampaignRowActions id={c.id} status={c.status} stages={stageOptions} />
+                      <CampaignRowActions id={c.id} status={c.status} stages={stageOptions} tags={tagOptions} />
                     </td>
                   </tr>
                 );

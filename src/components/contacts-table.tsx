@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { deleteContacts } from "@/app/actions/contacts";
+import { addTagsToContacts, deleteContacts } from "@/app/actions/contacts";
+import { TagPicker } from "@/components/tag-picker";
 import { formatFieldValue, type CustomFieldDef } from "@/lib/custom-fields";
 import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 
@@ -42,11 +43,13 @@ export function ContactsTable({
   fieldDefs = [],
   teamMembers = [],
   branches = [],
+  availableTags = [],
 }: {
   rows: ContactRow[];
   fieldDefs?: CustomFieldDef[];
   teamMembers?: TeamMemberRow[];
   branches?: BranchRow[];
+  availableTags?: string[];
 }) {
   const router = useRouter();
   const columns = useMemo(() => fieldDefs.filter((d) => d.show_in_table), [fieldDefs]);
@@ -54,6 +57,8 @@ export function ContactsTable({
   const branchNameById = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  const [bulkTags, setBulkTags] = useState<string[]>([]);
+  const [tagResult, setTagResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -97,8 +102,45 @@ export function ContactsTable({
     });
   }
 
+  function handleBulkTag() {
+    setError(null);
+    setTagResult(null);
+    const ids = Array.from(selected);
+    startTransition(async () => {
+      const r = await addTagsToContacts(ids, bulkTags);
+      if (r.error) {
+        setError(r.error);
+        return;
+      }
+      setTagResult(`${r.updated ?? 0} contato(s) marcados.`);
+      setBulkTags([]);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="flex flex-col gap-3">
+      {selected.size > 0 && !confirming && (
+        <div className="flex items-start justify-between flex-wrap gap-3 bg-surface border border-border rounded-lg px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-bold">Marcar os {selected.size} selecionados com uma tag</span>
+            <span className="text-[11px] text-text-muted">Vira grupo pra segmentar o disparo. Soma às tags que cada um já tem.</span>
+            <TagPicker value={bulkTags} onChange={setBulkTags} suggestions={availableTags} compact />
+          </div>
+          <div className="flex items-center gap-2">
+            {tagResult && <span className="text-[11px] text-success font-semibold">{tagResult}</span>}
+            <button
+              type="button"
+              onClick={handleBulkTag}
+              disabled={pending || bulkTags.length === 0}
+              className="text-xs font-bold text-white bg-primary-strong px-3 py-1.5 rounded-md cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {pending ? "Marcando…" : "Aplicar tag"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {selected.size > 0 && (
         <div className="flex items-center justify-between flex-wrap gap-3 bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
           <div className="flex flex-col">

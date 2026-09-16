@@ -14,6 +14,7 @@ import {
 import { isContactStage, STAGE_ORDER, HIDEABLE_STAGES, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
 import { normalizeCity } from "@/lib/territories";
 import { buildCustomFields } from "@/lib/custom-fields";
+import { mergeTags, normalizeTags } from "@/lib/contact-tags";
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 
@@ -35,6 +36,9 @@ export async function addContact(_prevState: ActionResult, formData: FormData): 
   const name = String(formData.get("name") || "").trim();
   const phoneRaw = String(formData.get("phone") || "").trim();
   const email = String(formData.get("email") || "").trim();
+  // Tags marcadas no formulário — é o que faz o lead já nascer dentro de um grupo segmentável no
+  // disparo, sem precisar abrir o lead depois pra marcar.
+  const tags = normalizeTags(String(formData.get("tags") || ""));
 
   const phone = phoneRaw ? normalizePhone(phoneRaw) : null;
   if (phoneRaw && !phone) return { error: "Telefone inválido." };
@@ -47,6 +51,7 @@ export async function addContact(_prevState: ActionResult, formData: FormData): 
     name: name || null,
     phone,
     email: email || null,
+    tags,
     whatsapp_instance_id: whatsappInstanceId,
   });
 
@@ -114,6 +119,9 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
 
   const sheetName = String(formData.get("sheet") || "");
   const modo = String(formData.get("mode") || "ignorar") === "atualizar" ? "atualizar" : "ignorar";
+  // Tags aplicadas a TODO mundo dessa importação ("Lista ENACAL 2026", "Associado") — o jeito de a
+  // planilha virar um grupo segmentável no disparo sem depender de coluna na planilha.
+  const importTags = normalizeTags(String(formData.get("tags") || ""));
 
   let mapping: Record<string, ImportTarget>;
   try {
@@ -238,19 +246,19 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
   // No modo "atualizar", o custom_fields do lead que já existe é MESCLADO com o da planilha em vez
   // de substituído: a planilha costuma trazer só algumas colunas, e sobrescrever apagaria o que foi
   // preenchido na plataforma depois.
-  const existentes = new Map<string, { id: string; custom_fields: Record<string, unknown> | null }>();
+  const existentes = new Map<string, { id: string; custom_fields: Record<string, unknown> | null; tags: string[] | null }>();
   if (modo === "atualizar") {
     let offset = 0;
     for (;;) {
       const { data } = await supabase
         .from("contacts")
-        .select("id, phone, custom_fields")
+        .select("id, phone, custom_fields, tags")
         .eq("workspace_id", workspace.id)
         .not("phone", "is", null)
         .order("id", { ascending: true })
         .range(offset, offset + 999);
       if (!data || data.length === 0) break;
-      for (const c of data) if (c.phone) existentes.set(c.phone, { id: c.id, custom_fields: c.custom_fields });
+      for (const c of data) if (c.phone) existentes.set(c.phone, { id: c.id, custom_fields: c.custom_fields, tags: c.tags });
       if (data.length < 1000) break;
       offset += 1000;
     }
@@ -271,6 +279,9 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
       phone: l.phone,
       email,
       custom_fields: custom,
+      // União com o que o lead já tinha: reimportar a mesma planilha com outra tag acrescenta, não
+      // troca — mesma regra da herança de tag da campanha.
+      tags: mergeTags(jaExiste?.tags, importTags),
       team_member_id: l.team_member_id,
       branch_id: l.branch_id,
       lost_reason: l.lost_reason,
@@ -461,6 +472,7 @@ export type ContactDetail = {
   team_member_id: string | null;
   branch_id: string | null;
   lost_reason: string | null;
+  tags: string[] | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -474,7 +486,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
     supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, companies(name)"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, tags, companies(name)"
       )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
@@ -616,4 +628,68 @@ export async function deleteContacts(ids: string[]): Promise<ActionResult & { de
     revalidatePath(path);
   }
   return { error: null, ok: true, deleted };
+}
+
+export type WorkspaceTag = { tag: string; contacts_count: number };
+
+// Tags que já existem no workspace, com quantos contatos cada uma tem. Alimenta todo seletor de tag
+// (adicionar contato, importar, segmentar disparo) — a lista sai do banco, não de um cadastro à
+// parte, então tag criada na importação já aparece na segmentação da campanha seguinte.
+export async function listWorkspaceTags(): Promise<WorkspaceTag[]> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return [];
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("workspace_tags", { ws_id: workspace.id });
+  if (error) {
+    console.error("listWorkspaceTags:", error);
+    return [];
+  }
+  return (data as WorkspaceTag[]) || [];
+}
+
+// Troca as tags de um lead pela lista recebida (o seletor manda o estado inteiro, não um diff).
+export async function updateContactTags(contactId: string, tags: string[]): Promise<ActionResult> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("contacts")
+    .update({ tags: normalizeTags(tags) })
+    .eq("id", contactId)
+    .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível salvar as tags." };
+
+  revalidatePath("/contatos");
+  revalidatePath("/crm");
+  return { error: null, ok: true };
+}
+
+// Marcação em massa: seleciona N leads na tabela de Contatos e aplica as mesmas tags a todos. União
+// com o que cada um já tem — nunca substitui, senão marcar "Associado" apagaria as outras tags.
+export async function addTagsToContacts(ids: string[], tags: string[]): Promise<ActionResult & { updated?: number }> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+  const novas = normalizeTags(tags);
+  if (ids.length === 0 || novas.length === 0) return { error: "Escolha ao menos um contato e uma tag." };
+
+  const supabase = await createClient();
+  const { data: atuais, error: readErr } = await supabase
+    .from("contacts")
+    .select("id, tags")
+    .eq("workspace_id", workspace.id)
+    .in("id", ids);
+  if (readErr) return { error: "Não foi possível ler os contatos." };
+
+  let updated = 0;
+  for (const c of atuais || []) {
+    const merged = mergeTags(c.tags, novas);
+    if (merged.length === normalizeTags(c.tags).length) continue; // já tinha todas — não gasta update
+    const { error } = await supabase.from("contacts").update({ tags: merged }).eq("id", c.id).eq("workspace_id", workspace.id);
+    if (!error) updated++;
+  }
+
+  revalidatePath("/contatos");
+  revalidatePath("/crm");
+  return { error: null, ok: true, updated };
 }
