@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { buildCampaignEmailHtml } from "@/lib/email-template";
 
 // Preview do e-mail na própria tela de criação da campanha. Usa o MESMO gerador de HTML do envio
@@ -16,6 +16,7 @@ export function EmailPreview({
   brandColor,
   logoUrl,
   bannerFile,
+  showBrandHeader = true,
 }: {
   from: string | null;
   subject: string;
@@ -26,14 +27,29 @@ export function EmailPreview({
   brandColor: string | null;
   logoUrl: string | null;
   bannerFile: File | null;
+  showBrandHeader?: boolean;
 }) {
-  // O banner ainda não subiu pro storage enquanto a pessoa escreve — o preview usa a URL local do
-  // arquivo escolhido. useMemo (e não estado dentro de efeito) pra não renderizar um quadro com o
-  // banner antigo antes de trocar; o efeito só serve pra revogar a URL anterior.
-  const bannerPreview = useMemo(() => (bannerFile ? URL.createObjectURL(bannerFile) : null), [bannerFile]);
-  useEffect(() => () => {
-    if (bannerPreview) URL.revokeObjectURL(bannerPreview);
-  }, [bannerPreview]);
+  // O banner ainda não subiu pro storage enquanto a pessoa escreve, então o preview mostra o arquivo
+  // local. Tem que ser data: URL, e NÃO URL.createObjectURL: o iframe abaixo roda em sandbox (origem
+  // opaca) e um blob: pertence à origem da PÁGINA — o iframe não consegue carregar e o banner
+  // simplesmente não aparecia. data: é autocontido e atravessa o sandbox.
+  // Guarda o par arquivo+conteúdo: comparar o arquivo na hora de renderizar evita mostrar o banner
+  // ANTERIOR por um quadro quando a pessoa troca a imagem, e dispensa limpar o estado dentro do
+  // efeito (setState síncrono em efeito encadeia render à toa).
+  const [banner, setBanner] = useState<{ file: File; url: string } | null>(null);
+  useEffect(() => {
+    if (!bannerFile) return;
+    let cancelado = false;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (!cancelado && typeof reader.result === "string") setBanner({ file: bannerFile, url: reader.result });
+    };
+    reader.readAsDataURL(bannerFile);
+    return () => {
+      cancelado = true;
+    };
+  }, [bannerFile]);
+  const bannerDataUrl = bannerFile && banner?.file === bannerFile ? banner.url : null;
 
   const html = buildCampaignEmailHtml({
     from: from || "Sua empresa <contato@seudominio.com.br>",
@@ -43,8 +59,14 @@ export function EmailPreview({
     cta: ctaLabel.trim() && ctaUrl.trim() ? { label: ctaLabel.trim(), url: ctaUrl.trim() } : null,
     brandColor,
     logoUrl,
-    bannerUrl: bannerPreview,
+    bannerUrl: bannerDataUrl,
+    showBrandHeader,
   });
+
+  // <base target="_blank"> + allow-popups: sem isso, clicar no CTA dentro do preview é bloqueado
+  // pelo navegador (frame em sandbox não navega a janela de cima) e parece erro do link, quando o
+  // link está certo. Testar o CTA antes de disparar é metade da utilidade do preview.
+  const htmlNavegavel = html.replace("<html>", '<html><head><base target="_blank"></head>');
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -62,8 +84,8 @@ export function EmailPreview({
         </div>
         <iframe
           title="Preview do e-mail"
-          srcDoc={html}
-          sandbox=""
+          srcDoc={htmlNavegavel}
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
           className="w-full h-80 bg-white block"
         />
       </div>

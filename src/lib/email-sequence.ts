@@ -39,7 +39,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
   const { data: campaigns } = await supabase
     .from("campaigns")
-    .select("id, workspace_id, name, subject, sequence_steps, cta_phone, cta_message, banner_url, preheader, tags, ramp_config")
+    .select("id, workspace_id, name, subject, sequence_steps, cta_phone, cta_message, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config")
     .eq("status", "ativa")
     .eq("channel", "email")
     .eq("mode", "sequence");
@@ -119,8 +119,9 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
           bodyText: body,
           unsubscribeUrl: unsubUrl,
           cta: { label: step.ctaLabel, url: ctaUrl },
-          brandColor,
+          brandColor: campaign.accent_color || brandColor,
           logoUrl,
+          showBrandHeader: campaign.show_brand_header !== false,
           // Banner é da campanha, não do passo: os e-mails da sequência saem com a mesma arte de topo.
           bannerUrl: campaign.banner_url || null,
           preheader: campaign.preheader ? applyContactVars(campaign.preheader, contact.name) : null,

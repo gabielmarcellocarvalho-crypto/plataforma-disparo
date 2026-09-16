@@ -16,6 +16,9 @@ export type CampaignEmailContent = {
   brandColor?: string | null;
   logoUrl?: string | null;
   bannerUrl?: string | null;
+  // false = e-mail sem a faixa de cabeçalho (logo/nome do remetente). Com banner próprio, essa faixa
+  // normalmente sobra; e workspace sem logo ganhava uma barra com o nome do remetente que ninguém pediu.
+  showBrandHeader?: boolean;
 };
 
 // Cor de marca padrão (roxo da própria plataforma) — usada quando o workspace do cliente não tem
@@ -132,7 +135,7 @@ export function renderEmailBody(bodyText: string, color: string): string {
 }
 
 export function buildCampaignEmailHtml(content: CampaignEmailContent): string {
-  const { from, bodyText, preheader, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl } = content;
+  const { from, bodyText, preheader, unsubscribeUrl, cta, brandColor, logoUrl, bannerUrl, showBrandHeader = true } = content;
   const color = brandColor || DEFAULT_BRAND_COLOR;
   const senderName = escapeHtml(fromDisplayName(from));
   const body = renderEmailBody(bodyText, color);
@@ -148,6 +151,13 @@ export function buildCampaignEmailHtml(content: CampaignEmailContent): string {
   const headerContent = logo
     ? `<img src="${logo}" alt="${senderName}" height="32" style="height:32px;width:auto;display:block;">`
     : `<span style="font-size:15px;font-weight:700;color:${color};">${senderName}</span>`;
+  const headerBlock = showBrandHeader
+    ? `<tr>
+        <td style="padding:20px 28px;${banner ? "border-bottom:1px solid #eee;" : `border-bottom:2px solid ${color};`}">
+          ${headerContent}
+        </td>
+      </tr>`
+    : "";
 
   const ctaUrl = cta ? safeUrl(cta.url) : null;
   const ctaBlock =
@@ -174,13 +184,9 @@ export function buildCampaignEmailHtml(content: CampaignEmailContent): string {
     ${preheaderBlock}
     <table role="presentation" width="100%" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
       ${bannerBlock}
+      ${headerBlock}
       <tr>
-        <td style="padding:20px 28px;${banner ? "border-bottom:1px solid #eee;" : `border-bottom:2px solid ${color};`}">
-          ${headerContent}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:28px 28px 4px;">${body}</td>
+        <td style="padding:${showBrandHeader || banner ? "28px" : "32px"} 28px 4px;">${body}</td>
       </tr>
       ${ctaBlock}
       <tr>
