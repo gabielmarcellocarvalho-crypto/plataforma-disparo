@@ -35,6 +35,13 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const ctaLabel = String(formData.get("cta_label") || "").trim() || null;
   const ctaUrl = String(formData.get("cta_url") || "").trim() || null;
   const preheader = String(formData.get("preheader") || "").trim() || null;
+  // Identidade visual da campanha (migration 0074) — sem isso, todo e-mail saía com a faixa de
+  // cabeçalho e a cor do workspace, ou com o roxo da plataforma quando o workspace não tinha cor.
+  const showBrandHeader = String(formData.get("show_brand_header") || "1") !== "0";
+  const accentRaw = String(formData.get("accent_color") || "").trim();
+  const accentColor = /^#[0-9a-f]{6}$/i.test(accentRaw) ? accentRaw : null;
+  // "auto" = o motor calcula o intervalo a partir da cota do dia e da janela (ver dispatch-pacing.ts).
+  const delayMode = String(formData.get("delay_mode") || "manual") === "auto" ? "auto" : "manual";
   // Tags que esta campanha carimba em quem receber (ex.: "Aquecimento", "Abertura") — é o que torna
   // "quem já passou por essa etapa" um filtro na próxima campanha.
   const campaignTags = normalizeTags(String(formData.get("tags") || ""));
@@ -234,12 +241,15 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       cta_url: channel === "email" && mode === "blast" ? ctaUrl : null,
       banner_url: bannerUrl,
       preheader: channel === "email" ? preheader : null,
+      show_brand_header: showBrandHeader,
+      accent_color: channel === "email" ? accentColor : null,
       tags: campaignTags,
       // ramp = cota diária crescente (anti-ban) — configurável na tela agora; padrão é a mesma faixa
       // já validada no piloto (50 no dia 1, 80 no dia 2... estabiliza em 300/dia a partir do 6º dia).
       // Em modo sequência não há ramp (é 1 e-mail por contato por passo, sem cota diária de novos
       // disparos) — só os dias da semana e a janela de horário importam.
       ramp_config: {
+        delayMode,
         delaySeconds: [delayMin, delayMax],
         hourStart,
         hourEnd,

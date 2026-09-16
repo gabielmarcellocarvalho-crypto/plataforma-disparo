@@ -11,6 +11,7 @@ import { runEmailSequences } from "@/lib/email-sequence";
 import { secureEqual } from "@/lib/secure-compare";
 import { applyContactVars, firstName } from "@/lib/message-vars";
 import { mergeTags, normalizeTags } from "@/lib/contact-tags";
+import { autoDelaySeconds, MAX_ENVIOS_POR_TICK, TICK_SEGUNDOS } from "@/lib/dispatch-pacing";
 
 // Motor de disparo em massa (WhatsApp, Evolution API). O cron nativo da Vercel no plano Hobby só
 // roda 1x/dia, insuficiente pra um delay de 60-180s entre mensagens — por isso esse endpoint é
@@ -22,6 +23,7 @@ export const maxDuration = 60;
 
 const DEFAULT_RAMP = [50, 80, 120, 170, 230, 300];
 const DEFAULT_DELAY: [number, number] = [60, 180];
+
 const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6];
 
 type RampConfig = {
@@ -30,6 +32,10 @@ type RampConfig = {
   hourEnd?: number;
   days?: number[];
   ramp?: number[];
+  // "auto" = o delay sai da cota do dia dividida pela janela de horário (ver dispatch-pacing.ts);
+  // "manual" = usa delaySeconds como está. Campanha antiga não tem o campo e continua manual, pra
+  // não mudar o ritmo de nada que já está rodando em cliente.
+  delayMode?: "auto" | "manual";
 };
 
 const WEEKDAY_NUM: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -73,7 +79,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
@@ -85,7 +91,6 @@ export async function GET(req: Request) {
 
   for (const campaign of campaigns || []) {
     const cfg = (campaign.ramp_config || {}) as RampConfig;
-    const [delayMin, delayMax] = cfg.delaySeconds?.length === 2 ? cfg.delaySeconds : DEFAULT_DELAY;
     const hourStart = cfg.hourStart ?? 9;
     const hourEnd = cfg.hourEnd ?? 20;
     const days = cfg.days?.length ? cfg.days : DEFAULT_DAYS;
@@ -110,6 +115,17 @@ export async function GET(req: Request) {
     }
     const quota = ramp[Math.min(dayIndex, ramp.length - 1)];
 
+    // Delay entre um disparo e o próximo. No modo automático ele é consequência da cota: a cota do
+    // DIA de hoje espalhada pela janela de horário — pedir 300/dia numa janela de 8h com 180s fixos
+    // era impossível de cumprir (só caberiam 160), e a campanha ficava eternamente atrasada sem
+    // ninguém entender por quê.
+    const [delayMin, delayMax] =
+      cfg.delayMode === "auto"
+        ? autoDelaySeconds(quota, hourStart, hourEnd, campaign.channel === "email" ? "email" : "whatsapp")
+        : cfg.delaySeconds?.length === 2
+          ? cfg.delaySeconds
+          : DEFAULT_DELAY;
+
     const { count: sentTodayCount } = await supabase
       .from("campaign_recipients")
       .select("id", { count: "exact", head: true })
@@ -123,228 +139,267 @@ export async function GET(req: Request) {
       continue;
     }
 
-    const { data: recipient } = await supabase
-      .from("campaign_recipients")
-      .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags)")
-      .eq("campaign_id", campaign.id)
-      .eq("status", "pendente")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+    // Quantos disparos cabem NESTE tick. O cron externo bate a cada 60s e, até aqui, cada invocação
+    // mandava no máximo 1 por campanha — teto de ~660/dia numa janela de 11h, por mais alta que fosse
+    // a cota configurada. Pro WhatsApp isso nunca foi limite (o delay anti-ban é sempre maior que 60s,
+    // então a conta abaixo dá 1 e o comportamento fica idêntico ao de antes); pro e-mail, era o que
+    // impedia qualquer volume de verdade.
+    const delayMedio = (delayMin + delayMax) / 2;
+    const enviosNesteTick = Math.max(1, Math.min(MAX_ENVIOS_POR_TICK, Math.floor(TICK_SEGUNDOS / delayMedio)));
+    let enviadosNoTick = 0;
+    // Tentativas (sucesso OU falha) — é o que dita o ritmo. Só o sucesso conta pra cota do dia, mas
+    // uma falha também consumiu uma vaga de envio: sem contar aqui, uma sequência de falhas faria a
+    // campanha andar mais rápido que o configurado assim que voltasse a dar certo.
+    let processadosNoTick = 0;
+    let pararCampanha = false;
 
-    if (!recipient) {
-      await supabase.from("campaigns").update({ status: "concluida" }).eq("id", campaign.id);
-      completed++;
-      continue;
-    }
+    for (let n = 0; n < enviosNesteTick && !pararCampanha; n++) {
+      // Cota do dia: conta o que já saiu antes deste tick mais o que saiu dentro dele.
+      if ((sentTodayCount ?? 0) + enviadosNoTick >= quota) break;
 
-    const contact = recipient.contacts as unknown as
-      | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null }
-      | null;
-
-    const isEmail = campaign.channel === "email";
-
-    if (!contact || (isEmail ? !contact.email || contact.opt_out_email : !contact.phone || contact.opt_out_whatsapp)) {
-      await supabase
+      const { data: recipient } = await supabase
         .from("campaign_recipients")
-        .update({ status: "invalido", error_message: isEmail ? "Sem e-mail válido ou optou por sair." : "Sem telefone válido ou optou por sair." })
-        .eq("id", recipient.id);
-      continue;
-    }
+        .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags)")
+        .eq("campaign_id", campaign.id)
+        .eq("status", "pendente")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-    // Modo agente sempre usa o número próprio do agente (Evolution). Modo blast resolve o número
-    // pela instância escolhida na campanha (whatsapp_instance_id) — se a campanha não escolheu
-    // nenhuma (criada antes dessa opção existir, ou workspace com só 1 número), cai no único número
-    // conectado do workspace; se o workspace tem mais de 1 e a campanha não escolheu, não dá pra
-    // adivinhar qual disparar, então pula. Não se aplica a campanha de e-mail.
-    let blastInstance: {
-      id: string;
-      channel: string;
-      instance_name: string | null;
-      phone_number_id: string | null;
-      dialog360_api_key: string | null;
-    } | null = null;
-    if (!isEmail && campaign.mode !== "agent") {
-      if (campaign.whatsapp_instance_id) {
-        const { data } = await supabase
-          .from("whatsapp_instances")
-          .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
-          .eq("id", campaign.whatsapp_instance_id)
-          .maybeSingle();
-        blastInstance = data;
-      } else {
-        const { data } = await supabase
-          .from("whatsapp_instances")
-          .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
-          .eq("workspace_id", campaign.workspace_id);
-        if (data && data.length === 1) blastInstance = data[0];
-        else if (data && data.length > 1) {
-          skipped.push(`${campaign.id}:multiplos-numeros-sem-escolha`);
-          continue;
-        }
+      if (!recipient) {
+        await supabase.from("campaigns").update({ status: "concluida" }).eq("id", campaign.id);
+        completed++;
+        break;
       }
-    }
 
-    const isDialog360Blast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
-    const isMetacloudBlast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "metacloud";
-    const isOfficialBlast = !isEmail && campaign.mode !== "agent" && isOfficialWhatsappChannel(blastInstance?.channel || "");
+      const contact = recipient.contacts as unknown as
+        | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null }
+        | null;
 
-    // API oficial é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
-    // disparo — isso é conversa viva, não campanha); Evolution/agente/e-mail usam o texto livre configurado.
-    const text = isOfficialBlast ? null : pickMessage(campaign.message_templates, contact.name);
-    if (!isOfficialBlast && !text) {
-      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
-      continue;
-    }
-    if (isOfficialBlast && !campaign.dialog360_template_name) {
-      await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem template configurado." }).eq("id", recipient.id);
-      continue;
-    }
+      const isEmail = campaign.channel === "email";
 
-    const instanceName =
-      isEmail
-        ? null
-        : campaign.mode === "agent"
-          ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
-          : blastInstance?.channel === "evolution"
-            ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
-            : null;
-
-    // E-mail precisa do remetente verificado do workspace (cada cliente pode ter domínio próprio no
-    // Resend) — sem isso configurado, falha com mensagem clara em vez de tentar mandar de qualquer jeito.
-    let emailFrom: string | null = null;
-    let emailBrandColor: string | null = null;
-    let emailLogoUrl: string | null = null;
-    if (isEmail) {
-      const { data: ws } = await supabase.from("workspaces").select("email_from, brand_color, logo_url").eq("id", campaign.workspace_id).maybeSingle();
-      emailFrom = ws?.email_from || null;
-      emailBrandColor = ws?.brand_color || null;
-      emailLogoUrl = ws?.logo_url || null;
-      if (!emailFrom) {
-        skipped.push(`${campaign.id}:sem-remetente-email`);
-        continue;
-      }
-    } else if (isDialog360Blast) {
-      if (!blastInstance!.dialog360_api_key || !blastInstance!.phone_number_id) {
-        skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
-        continue;
-      }
-    } else if (isMetacloudBlast) {
-      if (!blastInstance!.phone_number_id) {
-        skipped.push(`${campaign.id}:metacloud-sem-credenciais`);
-        continue;
-      }
-    } else if (!instanceName) {
-      skipped.push(`${campaign.id}:sem-instancia`);
-      continue;
-    }
-
-    const nextDelaySeconds = delayMin + Math.random() * (delayMax - delayMin);
-
-    // Conteúdo gravado no histórico da conversa (Conversas/CRM) — pro template, guarda uma referência
-    // legível já que o corpo real fica só na Meta, não temos o texto renderizado aqui.
-    const loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
-
-    try {
-      if (isEmail) {
-        const origin = new URL(req.url).origin;
-        // CTA do disparo único passa pelo mesmo /api/e/<token> da sequência: o clique marca o lead
-        // como interessado e entra na taxa de clique da Visão geral. O token é gerado aqui e a linha
-        // em email_clicks só é inserida depois do envio confirmado (mesma regra da sequência: nada de
-        // contar clique possível num e-mail que não saiu).
-        const ctaToken = campaign.cta_label && campaign.cta_url ? crypto.randomUUID() : null;
-        await sendCampaignEmail({
-          from: emailFrom!,
-          to: contact.email!,
-          subject: applyContactVars(campaign.subject || campaign.name, contact.name),
-          bodyText: text as string,
-          preheader: campaign.preheader ? applyContactVars(campaign.preheader as string, contact.name) : null,
-          unsubscribeUrl: unsubscribeUrl(origin, contact.id),
-          cta: ctaToken ? { label: campaign.cta_label as string, url: `${origin}/api/e/${ctaToken}` } : null,
-          brandColor: emailBrandColor,
-          logoUrl: emailLogoUrl,
-          bannerUrl: (campaign.banner_url as string | null) || null,
-        });
-        if (ctaToken) {
-          await supabase.from("email_clicks").insert({
-            workspace_id: campaign.workspace_id,
-            campaign_id: campaign.id,
-            contact_id: contact.id,
-            step: 0, // 0 = disparo único (a sequência numera os passos a partir de 1)
-            token: ctaToken,
-            sent_at: new Date().toISOString(),
-          });
-        }
-      } else if (isDialog360Blast) {
-        const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
-        await sendDialog360Template(
-          blastInstance!.dialog360_api_key!,
-          contact.phone!,
-          campaign.dialog360_template_name!,
-          campaign.dialog360_template_lang || "pt_BR",
-          bodyParams
-        );
-      } else if (isMetacloudBlast) {
-        const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
-        await sendMetaCloudTemplate(
-          blastInstance!.phone_number_id!,
-          contact.phone!,
-          campaign.dialog360_template_name!,
-          campaign.dialog360_template_lang || "pt_BR",
-          bodyParams
-        );
-      } else {
-        await sendText(instanceName!, contact.phone!, text as string);
-      }
-      await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
-      await supabase.from("messages").insert({
-        workspace_id: campaign.workspace_id,
-        contact_id: contact.id,
-        agent_id: campaign.mode === "agent" ? campaign.agent_id : null,
-        role: "assistant",
-        content: loggedContent,
-      });
-      const contactUpdates: Record<string, unknown> = {};
-      if (contact.stage === "nao_abordado") {
-        contactUpdates.stage = "abordado";
-        contactUpdates.stage_changed_at = new Date().toISOString();
-      }
-      // Sem isso, Conversas não tem como saber a qual número atribuir a resposta desse contato (o
-      // agrupamento sem agente depende de contact.whatsapp_instance_id) — a conversa existia no banco,
-      // mas nunca aparecia na tela porque não tinha instância pra resolver.
-      if (blastInstance && campaign.mode !== "agent") contactUpdates.whatsapp_instance_id = blastInstance.id;
-      // Herança de tag: quem recebeu a campanha fica marcado com as tags dela (ex.: "Aquecimento",
-      // "Abertura"), que é o que permite segmentar a PRÓXIMA campanha por "já passou por essa etapa"
-      // sem ninguém marcar contato na mão. União, nunca substituição — as tags próprias do lead
-      // (importação, marcação manual) continuam lá.
-      const campaignTags = normalizeTags(campaign.tags);
-      if (campaignTags.length > 0) {
-        const merged = mergeTags(contact.tags, campaignTags);
-        if (merged.length !== normalizeTags(contact.tags).length) contactUpdates.tags = merged;
-      }
-      if (Object.keys(contactUpdates).length > 0) {
-        await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
-      }
-      sent++;
-    } catch (err) {
-      // 429 do Resend = cota da CONTA inteira estourada (1 chave só, compartilhada por todo mundo),
-      // não um problema desse destinatário — não marca "falhou" (permanente, nunca mais tentaria de
-      // novo), deixa como "pendente" pra ser pego de novo no próximo tick quando a cota renovar.
-      if (err instanceof ResendError && err.status === 429) {
-        skipped.push(`${campaign.id}:cota-resend`);
-      } else {
+      if (!contact || (isEmail ? !contact.email || contact.opt_out_email : !contact.phone || contact.opt_out_whatsapp)) {
         await supabase
           .from("campaign_recipients")
-          .update({ status: "falhou", error_message: (err as Error).message.slice(0, 300) })
+          .update({ status: "invalido", error_message: isEmail ? "Sem e-mail válido ou optou por sair." : "Sem telefone válido ou optou por sair." })
           .eq("id", recipient.id);
-        failed++;
+        continue;
+      }
+
+      // Modo agente sempre usa o número próprio do agente (Evolution). Modo blast resolve o número
+      // pela instância escolhida na campanha (whatsapp_instance_id) — se a campanha não escolheu
+      // nenhuma (criada antes dessa opção existir, ou workspace com só 1 número), cai no único número
+      // conectado do workspace; se o workspace tem mais de 1 e a campanha não escolheu, não dá pra
+      // adivinhar qual disparar, então pula. Não se aplica a campanha de e-mail.
+      let blastInstance: {
+        id: string;
+        channel: string;
+        instance_name: string | null;
+        phone_number_id: string | null;
+        dialog360_api_key: string | null;
+      } | null = null;
+      if (!isEmail && campaign.mode !== "agent") {
+        if (campaign.whatsapp_instance_id) {
+          const { data } = await supabase
+            .from("whatsapp_instances")
+            .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
+            .eq("id", campaign.whatsapp_instance_id)
+            .maybeSingle();
+          blastInstance = data;
+        } else {
+          const { data } = await supabase
+            .from("whatsapp_instances")
+            .select("id, channel, instance_name, phone_number_id, dialog360_api_key")
+            .eq("workspace_id", campaign.workspace_id);
+          if (data && data.length === 1) blastInstance = data[0];
+          else if (data && data.length > 1) {
+            skipped.push(`${campaign.id}:multiplos-numeros-sem-escolha`);
+            pararCampanha = true;
+            break;
+          }
+        }
+      }
+
+      const isDialog360Blast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "360dialog";
+      const isMetacloudBlast = !isEmail && campaign.mode !== "agent" && blastInstance?.channel === "metacloud";
+      const isOfficialBlast = !isEmail && campaign.mode !== "agent" && isOfficialWhatsappChannel(blastInstance?.channel || "");
+
+      // API oficial é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
+      // disparo — isso é conversa viva, não campanha); Evolution/agente/e-mail usam o texto livre configurado.
+      const text = isOfficialBlast ? null : pickMessage(campaign.message_templates, contact.name);
+      if (!isOfficialBlast && !text) {
+        await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
+        pararCampanha = true;
+        break;
+      }
+      if (isOfficialBlast && !campaign.dialog360_template_name) {
+        await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem template configurado." }).eq("id", recipient.id);
+        pararCampanha = true;
+        break;
+      }
+
+      const instanceName =
+        isEmail
+          ? null
+          : campaign.mode === "agent"
+            ? (campaign.agents as unknown as { evolution_instance_name: string } | null)?.evolution_instance_name
+            : blastInstance?.channel === "evolution"
+              ? (blastInstance.instance_name ?? instanceNameFor(campaign.workspace_id))
+              : null;
+
+      // E-mail precisa do remetente verificado do workspace (cada cliente pode ter domínio próprio no
+      // Resend) — sem isso configurado, falha com mensagem clara em vez de tentar mandar de qualquer jeito.
+      let emailFrom: string | null = null;
+      let emailBrandColor: string | null = null;
+      let emailLogoUrl: string | null = null;
+      if (isEmail) {
+        const { data: ws } = await supabase.from("workspaces").select("email_from, brand_color, logo_url").eq("id", campaign.workspace_id).maybeSingle();
+        emailFrom = ws?.email_from || null;
+        emailBrandColor = ws?.brand_color || null;
+        emailLogoUrl = ws?.logo_url || null;
+        if (!emailFrom) {
+          skipped.push(`${campaign.id}:sem-remetente-email`);
+          pararCampanha = true;
+          break;
+        }
+      } else if (isDialog360Blast) {
+        if (!blastInstance!.dialog360_api_key || !blastInstance!.phone_number_id) {
+          skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
+          pararCampanha = true;
+          break;
+        }
+      } else if (isMetacloudBlast) {
+        if (!blastInstance!.phone_number_id) {
+          skipped.push(`${campaign.id}:metacloud-sem-credenciais`);
+          pararCampanha = true;
+          break;
+        }
+      } else if (!instanceName) {
+        skipped.push(`${campaign.id}:sem-instancia`);
+        pararCampanha = true;
+        break;
+      }
+
+
+      // Conteúdo gravado no histórico da conversa (Conversas/CRM) — pro template, guarda uma referência
+      // legível já que o corpo real fica só na Meta, não temos o texto renderizado aqui.
+      const loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
+
+      try {
+        if (isEmail) {
+          const origin = new URL(req.url).origin;
+          // CTA do disparo único passa pelo mesmo /api/e/<token> da sequência: o clique marca o lead
+          // como interessado e entra na taxa de clique da Visão geral. O token é gerado aqui e a linha
+          // em email_clicks só é inserida depois do envio confirmado (mesma regra da sequência: nada de
+          // contar clique possível num e-mail que não saiu).
+          const ctaToken = campaign.cta_label && campaign.cta_url ? crypto.randomUUID() : null;
+          await sendCampaignEmail({
+            from: emailFrom!,
+            to: contact.email!,
+            subject: applyContactVars(campaign.subject || campaign.name, contact.name),
+            bodyText: text as string,
+            preheader: campaign.preheader ? applyContactVars(campaign.preheader as string, contact.name) : null,
+            unsubscribeUrl: unsubscribeUrl(origin, contact.id),
+            cta: ctaToken ? { label: campaign.cta_label as string, url: `${origin}/api/e/${ctaToken}` } : null,
+            // Cor da campanha tem precedência sobre a do workspace; sem nenhuma das duas, o gerador
+            // cai no padrão dele.
+            brandColor: (campaign.accent_color as string | null) || emailBrandColor,
+            logoUrl: emailLogoUrl,
+            showBrandHeader: campaign.show_brand_header !== false,
+            bannerUrl: (campaign.banner_url as string | null) || null,
+          });
+          if (ctaToken) {
+            await supabase.from("email_clicks").insert({
+              workspace_id: campaign.workspace_id,
+              campaign_id: campaign.id,
+              contact_id: contact.id,
+              step: 0, // 0 = disparo único (a sequência numera os passos a partir de 1)
+              token: ctaToken,
+              sent_at: new Date().toISOString(),
+            });
+          }
+        } else if (isDialog360Blast) {
+          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
+          await sendDialog360Template(
+            blastInstance!.dialog360_api_key!,
+            contact.phone!,
+            campaign.dialog360_template_name!,
+            campaign.dialog360_template_lang || "pt_BR",
+            bodyParams
+          );
+        } else if (isMetacloudBlast) {
+          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
+          await sendMetaCloudTemplate(
+            blastInstance!.phone_number_id!,
+            contact.phone!,
+            campaign.dialog360_template_name!,
+            campaign.dialog360_template_lang || "pt_BR",
+            bodyParams
+          );
+        } else {
+          await sendText(instanceName!, contact.phone!, text as string);
+        }
+        await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
+        await supabase.from("messages").insert({
+          workspace_id: campaign.workspace_id,
+          contact_id: contact.id,
+          agent_id: campaign.mode === "agent" ? campaign.agent_id : null,
+          role: "assistant",
+          content: loggedContent,
+        });
+        const contactUpdates: Record<string, unknown> = {};
+        if (contact.stage === "nao_abordado") {
+          contactUpdates.stage = "abordado";
+          contactUpdates.stage_changed_at = new Date().toISOString();
+        }
+        // Sem isso, Conversas não tem como saber a qual número atribuir a resposta desse contato (o
+        // agrupamento sem agente depende de contact.whatsapp_instance_id) — a conversa existia no banco,
+        // mas nunca aparecia na tela porque não tinha instância pra resolver.
+        if (blastInstance && campaign.mode !== "agent") contactUpdates.whatsapp_instance_id = blastInstance.id;
+        // Herança de tag: quem recebeu a campanha fica marcado com as tags dela (ex.: "Aquecimento",
+        // "Abertura"), que é o que permite segmentar a PRÓXIMA campanha por "já passou por essa etapa"
+        // sem ninguém marcar contato na mão. União, nunca substituição — as tags próprias do lead
+        // (importação, marcação manual) continuam lá.
+        const campaignTags = normalizeTags(campaign.tags);
+        if (campaignTags.length > 0) {
+          const merged = mergeTags(contact.tags, campaignTags);
+          if (merged.length !== normalizeTags(contact.tags).length) contactUpdates.tags = merged;
+        }
+        if (Object.keys(contactUpdates).length > 0) {
+          await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
+        }
+        sent++;
+      enviadosNoTick++;
+      processadosNoTick++;
+      } catch (err) {
+        // 429 do Resend = cota da CONTA inteira estourada (1 chave só, compartilhada por todo mundo),
+        // não um problema desse destinatário — não marca "falhou" (permanente, nunca mais tentaria de
+        // novo), deixa como "pendente" pra ser pego de novo no próximo tick quando a cota renovar.
+        if (err instanceof ResendError && err.status === 429) {
+          skipped.push(`${campaign.id}:cota-resend`);
+        } else {
+          await supabase
+            .from("campaign_recipients")
+            .update({ status: "falhou", error_message: (err as Error).message.slice(0, 300) })
+            .eq("id", recipient.id);
+          failed++;
+          processadosNoTick++;
+        }
       }
     }
 
-    await supabase
-      .from("campaigns")
-      .update({ next_dispatch_at: new Date(now.getTime() + nextDelaySeconds * 1000).toISOString() })
-      .eq("id", campaign.id);
+    // Só empurra o próximo disparo pra frente se algo saiu de fato: campanha barrada por configuração
+    // (sem remetente, sem número) não deve ainda ganhar delay por cima do problema.
+    if (processadosNoTick > 0) {
+      // Intervalo até o próximo disparo, multiplicado pelo que saiu agora — assim o ritmo médio
+      // continua sendo o configurado mesmo quando o tick manda vários de uma vez. Faixa aleatória
+      // em vez de valor fixo: cadência exata entre mensagens é assinatura de robô.
+      const nextDelaySeconds = delayMin + Math.random() * (delayMax - delayMin);
+      await supabase
+        .from("campaigns")
+        .update({ next_dispatch_at: new Date(now.getTime() + nextDelaySeconds * processadosNoTick * 1000).toISOString() })
+        .eq("id", campaign.id);
+    }
   }
 
   // Retomada automática de contatos que ficaram sem resposta por terem escrito fora do horário —

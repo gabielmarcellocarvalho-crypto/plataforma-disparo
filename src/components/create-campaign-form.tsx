@@ -6,6 +6,7 @@ import { listWhatsappTemplates } from "@/app/actions/whatsapp";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 import { EmailPreview } from "@/components/email-preview";
 import { TagPicker } from "@/components/tag-picker";
+import { RAMP_PRESETS, describePacing, rampPreset } from "@/lib/dispatch-pacing";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
@@ -66,8 +67,25 @@ export function CreateCampaignForm({
   const [preheader, setPreheader] = useState("");
   // Tags que a campanha carimba em quem receber — vale pros dois canais.
   const [campaignTags, setCampaignTags] = useState<string[]>([]);
+  // Ritmo: a rampa escolhida por caixa define a cota diária, e a cota + janela definem o intervalo
+  // entre disparos (ver dispatch-pacing.ts). "personalizada" devolve o controle manual de antes.
+  const [rampKey, setRampKey] = useState("conservadora");
+  const [rampCustom, setRampCustom] = useState("50,80,120,170,230,300");
+  const [hourStart, setHourStart] = useState(9);
+  const [hourEnd, setHourEnd] = useState(20);
+  // Identidade visual do e-mail: opcional por campanha, em vez de imposta pelo workspace.
+  const [showBrandHeader, setShowBrandHeader] = useState(true);
+  const [accentColor, setAccentColor] = useState("");
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
+  const rampAtual =
+    rampKey === "personalizada"
+      ? rampCustom
+          .split(",")
+          .map((v) => parseInt(v.trim(), 10))
+          .filter((v) => Number.isFinite(v) && v > 0)
+      : rampPreset(channel, rampKey)?.ramp ?? [50];
+  const rampSegura = rampAtual.length > 0 ? rampAtual : [50];
 
   // Templates aprovados (360dialog ou Meta direta) pro número escolhido — buscado direto na API, não
   // digitado à mão. Recarrega toda vez que o número selecionado muda (cada número tem sua própria conta).
@@ -235,6 +253,39 @@ export function CreateCampaignForm({
                   className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary file:mr-3 file:border-0 file:bg-bg file:text-xs file:font-bold file:px-2.5 file:py-1.5 file:rounded file:cursor-pointer"
                 />
                 <p className="text-xs text-text-muted">PNG, JPG ou WEBP até 2MB. Ideal 1040×420 (aparece com 520px de largura na caixa de entrada).</p>
+              </div>
+
+              <div className="flex flex-col gap-2 border border-border rounded-md p-3">
+                <span className="text-sm font-semibold">Identidade do e-mail</span>
+                <input type="hidden" name="show_brand_header" value={showBrandHeader ? "1" : "0"} />
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={showBrandHeader} onChange={(e) => setShowBrandHeader(e.target.checked)} className="cursor-pointer" />
+                  Mostrar faixa de cabeçalho {logoUrl ? "com a logo do workspace" : "com o nome do remetente"}
+                </label>
+                <p className="text-[11px] text-text-muted -mt-1">
+                  {logoUrl
+                    ? "Com banner próprio, essa faixa costuma sobrar — desmarque pra deixar só o banner."
+                    : "Esse workspace não tem logo em Configurações, então a faixa sai só com o nome do remetente."}
+                </p>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="accent_color" className="text-xs font-semibold text-text-muted">
+                    Cor do botão e dos links
+                  </label>
+                  <input
+                    id="accent_color"
+                    name="accent_color"
+                    type="color"
+                    value={accentColor || brandColor || "#7C3AED"}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    className="w-10 h-8 border border-border rounded cursor-pointer bg-surface"
+                  />
+                  {accentColor && (
+                    <button type="button" onClick={() => setAccentColor("")} className="text-[11px] font-semibold text-text-muted hover:text-text cursor-pointer">
+                      usar a cor do workspace
+                    </button>
+                  )}
+                  {!accentColor && !brandColor && <span className="text-[11px] text-text-muted">padrão da plataforma</span>}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -565,8 +616,9 @@ export function CreateCampaignForm({
               bodyText={emailBody}
               ctaLabel={emailCtaLabel}
               ctaUrl={emailCtaUrl}
-              brandColor={brandColor}
-              logoUrl={logoUrl}
+              brandColor={accentColor || brandColor}
+              logoUrl={showBrandHeader ? logoUrl : null}
+              showBrandHeader={showBrandHeader}
               bannerFile={bannerFile}
             />
           )}
@@ -598,32 +650,120 @@ export function CreateCampaignForm({
           ) : (
             <div className="flex flex-col gap-3">
               <input type="hidden" name="blast_days" value={JSON.stringify(blastDays)} />
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-text-muted">Ritmo do disparo</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {RAMP_PRESETS[channel].map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => setRampKey(p.key)}
+                      aria-pressed={rampKey === p.key}
+                      className={`text-left border rounded-md p-2.5 cursor-pointer transition-colors ${
+                        rampKey === p.key ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{p.label}</div>
+                      <div className="text-[11px] text-text-muted mt-0.5">{p.hint}</div>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setRampKey("personalizada")}
+                    aria-pressed={rampKey === "personalizada"}
+                    className={`text-left border rounded-md p-2.5 cursor-pointer transition-colors col-span-2 ${
+                      rampKey === "personalizada" ? "border-primary bg-primary-faint" : "border-border hover:bg-bg"
+                    }`}
+                  >
+                    <div className="text-xs font-bold">Personalizada</div>
+                    <div className="text-[11px] text-text-muted mt-0.5">Escrever os degraus e o intervalo na mão.</div>
+                  </button>
+                </div>
+                <input type="hidden" name="ramp" value={rampSegura.join(",")} />
+                <input type="hidden" name="delay_mode" value={rampKey === "personalizada" ? "manual" : "auto"} />
+                <p className="text-[11px] text-text-muted bg-bg border border-border rounded-md px-2.5 py-2">
+                  <span className="font-bold">Dia 1:</span> {describePacing(rampSegura[0], hourStart, hourEnd, channel)}
+                  {rampSegura.length > 1 && (
+                    <>
+                      <br />
+                      <span className="font-bold">Cota máxima:</span>{" "}
+                      {describePacing(rampSegura[rampSegura.length - 1], hourStart, hourEnd, channel)}
+                    </>
+                  )}
+                </p>
+                {rampKey !== "personalizada" && (
+                  <p className="text-[11px] text-text-muted">
+                    O intervalo entre um disparo e o próximo sai da cota do dia dividida pela janela de horário — não precisa
+                    (nem adianta) definir na mão.
+                  </p>
+                )}
+              </div>
+
+              {rampKey === "personalizada" && (
+                <div className="flex flex-col gap-3 border border-border rounded-md p-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="ramp_custom" className="text-xs font-semibold text-text-muted">
+                      Rampa diária (disparos novos por dia, separados por vírgula)
+                    </label>
+                    <input
+                      id="ramp_custom"
+                      value={rampCustom}
+                      onChange={(e) => setRampCustom(e.target.value)}
+                      placeholder="50,80,120,170,230,300"
+                      className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                    />
+                    <p className="text-[11px] text-text-muted">
+                      1º valor = cota do dia 1 da campanha, 2º = dia 2, e assim por diante — o último valor se repete depois.
+                      Cada número tem que ser igual ou maior que o anterior.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
+                        Delay mín. (s)
+                      </label>
+                      <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
+                        Delay máx. (s)
+                      </label>
+                      <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="delay_min" className="text-xs font-semibold text-text-muted">
-                    Delay mín. (s)
-                  </label>
-                  <input id="delay_min" name="delay_min" type="number" defaultValue={60} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="delay_max" className="text-xs font-semibold text-text-muted">
-                    Delay máx. (s)
-                  </label>
-                  <input id="delay_max" name="delay_max" type="number" defaultValue={180} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
-                </div>
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="hour_start" className="text-xs font-semibold text-text-muted">
                     Janela início (h)
                   </label>
-                  <input id="hour_start" name="hour_start" type="number" defaultValue={9} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                  <input
+                    id="hour_start"
+                    name="hour_start"
+                    type="number"
+                    value={hourStart}
+                    onChange={(e) => setHourStart(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="hour_end" className="text-xs font-semibold text-text-muted">
                     Janela fim (h)
                   </label>
-                  <input id="hour_end" name="hour_end" type="number" defaultValue={20} className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary" />
+                  <input
+                    id="hour_end"
+                    name="hour_end"
+                    type="number"
+                    value={hourEnd}
+                    onChange={(e) => setHourEnd(Math.max(1, Math.min(24, Number(e.target.value) || 1)))}
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                  />
                 </div>
               </div>
+
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold text-text-muted">Dias de envio</span>
                 <div className="flex gap-1.5">
@@ -640,24 +780,6 @@ export function CreateCampaignForm({
                     </button>
                   ))}
                 </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="ramp" className="text-xs font-semibold text-text-muted">
-                  Rampa diária (disparos novos por dia, separados por vírgula)
-                </label>
-                <input
-                  id="ramp"
-                  name="ramp"
-                  type="text"
-                  defaultValue="50,80,120,170,230,300"
-                  placeholder="50,80,120,170,230,300"
-                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
-                />
-                <p className="text-[11px] text-text-muted">
-                  1º valor = cota do dia 1 da campanha, 2º = dia 2, e assim por diante — o último valor se repete depois. Cada
-                  número tem que ser igual ou maior que o anterior (protege a nota de qualidade do número, evita subir volume
-                  rápido demais). O padrão já é a faixa validada no piloto — só mude se souber o que está fazendo.
-                </p>
               </div>
             </div>
           )}
