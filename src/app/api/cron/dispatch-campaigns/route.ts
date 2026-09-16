@@ -372,11 +372,19 @@ export async function GET(req: Request) {
       enviadosNoTick++;
       processadosNoTick++;
       } catch (err) {
-        // 429 do Resend = cota da CONTA inteira estourada (1 chave só, compartilhada por todo mundo),
-        // não um problema desse destinatário — não marca "falhou" (permanente, nunca mais tentaria de
-        // novo), deixa como "pendente" pra ser pego de novo no próximo tick quando a cota renovar.
-        if (err instanceof ResendError && err.status === 429) {
-          skipped.push(`${campaign.id}:cota-resend`);
+        // Erro do Resend que NÃO é sobre este destinatário, e sim sobre a conta/configuração da
+        // campanha — marcar "falhou" aqui seria queimar contato bom por um problema que nem chegou
+        // perto dele. Fica "pendente" e volta no próximo tick, quando o problema estiver resolvido.
+        //   429 = cota da conta estourada (1 chave só, compartilhada por todos os workspaces).
+        //   403 = domínio do remetente não verificado. Sem isso, uma campanha ativada antes da
+        //         verificação do DNS ia marcando a lista inteira como "falhou", uma a cada intervalo,
+        //         sem ninguém perceber — e "falhou" nunca é tentado de novo.
+        //   422 = remetente malformado (ex.: "<email>" sem nome), mesmo caso: é configuração.
+        if (err instanceof ResendError && (err.status === 429 || err.status === 403 || err.status === 422)) {
+          skipped.push(`${campaign.id}:resend-${err.status}`);
+          // Problema de configuração não se resolve no próximo destinatário: para a campanha neste
+          // tick em vez de repetir a mesma chamada condenada 10 vezes seguidas.
+          if (err.status !== 429) pararCampanha = true;
         } else {
           await supabase
             .from("campaign_recipients")
