@@ -13,7 +13,11 @@ const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(re
 // Resposta roda em background após o 200 já ter sido devolvido pra Evolution — mas ainda dentro
 // da mesma invocação serverless, incluindo o delay humanizado + a chamada da Anthropic. Aumenta o
 // limite padrão da Vercel pra caber isso com folga.
-export const maxDuration = 30;
+//
+// 60s é o teto do plano Hobby. O delay humanizado do agente (MAX_REPLY_DELAY_SECONDS, em
+// actions/agents.ts) é limitado a 40s justamente pra sobrar ~20s pro LLM responder e a mensagem sair —
+// os dois números andam juntos, mexer em um sem o outro deixa lead sem resposta.
+export const maxDuration = 60;
 
 type EvolutionMessage = {
   message?: {

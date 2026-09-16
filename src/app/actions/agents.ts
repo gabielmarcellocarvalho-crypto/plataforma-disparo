@@ -365,11 +365,13 @@ export async function deleteAgentKnowledge(id: string): Promise<{ error: string 
   return { error: null };
 }
 
-// Teto coerente com maxDuration=30 dos webhooks (src/app/api/webhook/whatsapp/route.ts,
-// .../dialog360/route.ts) — o delay roda ANTES da chamada ao LLM e do envio, dentro da mesma
-// invocação; um delay perto de 30s não deixaria folga nenhuma pro resto do fluxo, e a Vercel encerra a
-// function no meio, deixando a mensagem do cliente sem resposta silenciosamente.
-const MAX_REPLY_DELAY_SECONDS = 20;
+// Teto coerente com maxDuration=60 dos webhooks (src/app/api/webhook/whatsapp/route.ts,
+// .../dialog360/route.ts) — o delay roda ANTES da chamada ao LLM e do envio, dentro da MESMA
+// invocação. Os 20s de folga entre 40 e 60 são pro modelo responder e a mensagem sair; um delay
+// colado no limite faz a Vercel encerrar a function no meio e a mensagem do cliente fica sem resposta,
+// silenciosamente. 60s é o teto do plano Hobby, então 40s é o máximo possível sem mudar o desenho
+// (delay maior que isso exige o webhook só AGENDAR a resposta e o cron responder depois).
+const MAX_REPLY_DELAY_SECONDS = 40;
 
 export async function updateAgentDelay(agentId: string, minSeconds: number, maxSeconds: number): Promise<{ error: string | null }> {
   await requireStaff();
