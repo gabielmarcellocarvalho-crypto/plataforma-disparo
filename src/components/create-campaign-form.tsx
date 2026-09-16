@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import { createCampaign, type ActionResult } from "@/app/actions/campaigns";
 import { listWhatsappTemplates } from "@/app/actions/whatsapp";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
+import { EmailPreview } from "@/components/email-preview";
 
 const INITIAL_STATE: ActionResult = { error: null };
 
@@ -29,7 +30,20 @@ function newStep(dayOffset: number): SequenceStep & { key: number } {
   return { key: stepKeySeq, dayOffset, subject: "", body: "", ctaLabel: "Saiba mais" };
 }
 
-export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { agents?: AgentOption[]; whatsappInstances?: WhatsappInstanceOption[] }) {
+export function CreateCampaignForm({
+  agents = [],
+  whatsappInstances = [],
+  emailFrom = null,
+  brandColor = null,
+  logoUrl = null,
+}: {
+  agents?: AgentOption[];
+  whatsappInstances?: WhatsappInstanceOption[];
+  // Identidade visual do e-mail, pro preview mostrar o mesmo cabeçalho/cor que o envio vai usar.
+  emailFrom?: string | null;
+  brandColor?: string | null;
+  logoUrl?: string | null;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [channel, setChannel] = useState<"whatsapp" | "email">("whatsapp");
   const [mode, setMode] = useState<"blast" | "agent" | "sequence">("blast");
@@ -40,6 +54,12 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
   const [sequenceDays, setSequenceDays] = useState<number[]>([2, 3, 4]);
   const [blastDays, setBlastDays] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [instanceId, setInstanceId] = useState(whatsappInstances[0]?.id || "");
+  // Disparo único de e-mail: assunto/corpo/CTA/banner são controlados porque alimentam o preview.
+  const [subject, setSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailCtaLabel, setEmailCtaLabel] = useState("");
+  const [emailCtaUrl, setEmailCtaUrl] = useState("");
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [state, formAction, pending] = useActionState(createCampaign, INITIAL_STATE);
   const selectedInstance = whatsappInstances.find((i) => i.id === instanceId) || null;
 
@@ -165,18 +185,69 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
           )}
 
           {channel === "email" && mode === "blast" && (
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="subject" className="text-sm font-semibold">
-                Assunto
-              </label>
-              <input
-                id="subject"
-                name="subject"
-                required
-                placeholder="Assunto do e-mail"
-                className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
-              />
-            </div>
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="subject" className="text-sm font-semibold">
+                  Assunto
+                </label>
+                <input
+                  id="subject"
+                  name="subject"
+                  required
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Assunto do e-mail"
+                  className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="banner" className="text-sm font-semibold">
+                  Banner do topo <span className="font-normal text-text-muted">(opcional)</span>
+                </label>
+                <input
+                  id="banner"
+                  name="banner"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => setBannerFile(e.target.files?.[0] ?? null)}
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary file:mr-3 file:border-0 file:bg-bg file:text-xs file:font-bold file:px-2.5 file:py-1.5 file:rounded file:cursor-pointer"
+                />
+                <p className="text-xs text-text-muted">PNG, JPG ou WEBP até 2MB. Ideal 1040×420 (aparece com 520px de largura na caixa de entrada).</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="cta_label" className="text-xs font-semibold text-text-muted">
+                    Texto do botão (opcional)
+                  </label>
+                  <input
+                    id="cta_label"
+                    name="cta_label"
+                    value={emailCtaLabel}
+                    onChange={(e) => setEmailCtaLabel(e.target.value)}
+                    placeholder="Quero saber mais"
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="cta_url" className="text-xs font-semibold text-text-muted">
+                    Link do botão
+                  </label>
+                  <input
+                    id="cta_url"
+                    name="cta_url"
+                    value={emailCtaUrl}
+                    onChange={(e) => setEmailCtaUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+                  />
+                </div>
+                <p className="text-xs text-text-muted col-span-2 -mt-1">
+                  O clique passa pela plataforma antes de redirecionar: entra na taxa de clique da Visão geral e marca o contato como interessado.
+                </p>
+              </div>
+            </>
           )}
 
           {channel === "email" && mode === "sequence" && (
@@ -433,24 +504,49 @@ export function CreateCampaignForm({ agents = [], whatsappInstances = [] }: { ag
           {!isDialog360Blast && mode !== "sequence" && (
             <div className="flex flex-col gap-1.5">
               <label htmlFor="templates" className="text-sm font-semibold">
-                {mode === "agent" ? "Mensagem de abertura" : "Mensagem(ns)"}
+                {channel === "email" ? "Corpo do e-mail" : mode === "agent" ? "Mensagem de abertura" : "Mensagem(ns)"}
               </label>
               <textarea
                 id="templates"
                 name="templates"
-                rows={5}
+                rows={channel === "email" ? 8 : 5}
                 required
+                value={channel === "email" ? emailBody : undefined}
+                onChange={channel === "email" ? (e) => setEmailBody(e.target.value) : undefined}
                 placeholder={
-                  mode === "agent"
-                    ? "Primeira mensagem que o agente manda pra puxar assunto. Uma variação por linha. Use {nome} pro primeiro nome."
-                    : "Uma variação por linha. Use {nome} pro primeiro nome."
+                  channel === "email"
+                    ? "Escreva o e-mail inteiro aqui. Linha em branco separa parágrafo.\n\n## Título da seção\n- item de lista\n**negrito**  [link](https://exemplo.com)\n\nUse {nome} pro primeiro nome."
+                    : mode === "agent"
+                      ? "Primeira mensagem que o agente manda pra puxar assunto. Uma variação por linha. Use {nome} pro primeiro nome."
+                      : "Uma variação por linha. Use {nome} pro primeiro nome."
                 }
                 className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary font-mono"
               />
-              {mode === "agent" && (
-                <p className="text-xs text-text-muted">Depois dessa mensagem, o agente responde sozinho seguindo o prompt configurado na aba Agentes.</p>
+              {channel === "email" ? (
+                <p className="text-xs text-text-muted">
+                  Formatação: <code className="font-mono">## título</code>, <code className="font-mono">- lista</code>,{" "}
+                  <code className="font-mono">**negrito**</code>, <code className="font-mono">[texto](link)</code> e{" "}
+                  <code className="font-mono">![](url-da-imagem)</code>.
+                </p>
+              ) : (
+                mode === "agent" && (
+                  <p className="text-xs text-text-muted">Depois dessa mensagem, o agente responde sozinho seguindo o prompt configurado na aba Agentes.</p>
+                )
               )}
             </div>
+          )}
+
+          {channel === "email" && mode === "blast" && (
+            <EmailPreview
+              from={emailFrom}
+              subject={subject}
+              bodyText={emailBody}
+              ctaLabel={emailCtaLabel}
+              ctaUrl={emailCtaUrl}
+              brandColor={brandColor}
+              logoUrl={logoUrl}
+              bannerFile={bannerFile}
+            />
           )}
 
           {mode === "sequence" ? (

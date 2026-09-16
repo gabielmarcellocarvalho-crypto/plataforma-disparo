@@ -77,7 +77,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
@@ -251,16 +251,33 @@ export async function GET(req: Request) {
 
     try {
       if (isEmail) {
-        await sendCampaignEmail(
-          emailFrom!,
-          contact.email!,
-          campaign.subject || campaign.name,
-          text as string,
-          unsubscribeUrl(new URL(req.url).origin, contact.id),
-          undefined,
-          emailBrandColor,
-          emailLogoUrl
-        );
+        const origin = new URL(req.url).origin;
+        // CTA do disparo único passa pelo mesmo /api/e/<token> da sequência: o clique marca o lead
+        // como interessado e entra na taxa de clique da Visão geral. O token é gerado aqui e a linha
+        // em email_clicks só é inserida depois do envio confirmado (mesma regra da sequência: nada de
+        // contar clique possível num e-mail que não saiu).
+        const ctaToken = campaign.cta_label && campaign.cta_url ? crypto.randomUUID() : null;
+        await sendCampaignEmail({
+          from: emailFrom!,
+          to: contact.email!,
+          subject: campaign.subject || campaign.name,
+          bodyText: text as string,
+          unsubscribeUrl: unsubscribeUrl(origin, contact.id),
+          cta: ctaToken ? { label: campaign.cta_label as string, url: `${origin}/api/e/${ctaToken}` } : null,
+          brandColor: emailBrandColor,
+          logoUrl: emailLogoUrl,
+          bannerUrl: (campaign.banner_url as string | null) || null,
+        });
+        if (ctaToken) {
+          await supabase.from("email_clicks").insert({
+            workspace_id: campaign.workspace_id,
+            campaign_id: campaign.id,
+            contact_id: contact.id,
+            step: 0, // 0 = disparo único (a sequência numera os passos a partir de 1)
+            token: ctaToken,
+            sent_at: new Date().toISOString(),
+          });
+        }
       } else if (isDialog360Blast) {
         const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
         await sendDialog360Template(

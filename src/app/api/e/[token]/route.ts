@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 
-// Link de CTA dos e-mails de sequência — registra o clique (1ª vez só), marca o contato como lead
+// Link de CTA dos e-mails de campanha — registra o clique (1ª vez só), marca o contato como lead
 // quente e para a sequência dele (não manda mais os próximos passos, já converteu), e redireciona
-// pro WhatsApp configurado na campanha com uma mensagem inicial pronta.
+// pro destino do CTA: o link livre da campanha (disparo único) ou o WhatsApp configurado (sequência,
+// que sempre aponta pro número da campanha).
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = createAdminClient();
@@ -19,8 +20,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     return new NextResponse("Link inválido ou expirado.", { status: 404 });
   }
 
-  const { data: campaign } = await supabase.from("campaigns").select("cta_phone, cta_message").eq("id", click.campaign_id).maybeSingle();
-  if (!campaign?.cta_phone) {
+  const { data: campaign } = await supabase.from("campaigns").select("cta_phone, cta_message, cta_url").eq("id", click.campaign_id).maybeSingle();
+  if (!campaign?.cta_url && !campaign?.cta_phone) {
     return new NextResponse("Esse link não está configurado corretamente.", { status: 500 });
   }
 
@@ -46,6 +47,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     }
     await supabase.from("contacts").update(updates).eq("id", click.contact_id);
   }
+
+  // cta_url tem precedência: é o destino escolhido no disparo único. Sequência não preenche essa
+  // coluna, então continua caindo no wa.me de sempre.
+  if (campaign.cta_url) return NextResponse.redirect(campaign.cta_url);
 
   const message = campaign.cta_message || "Olá! Vim pelo e-mail e gostaria de saber mais.";
   const waUrl = `https://wa.me/${campaign.cta_phone}?text=${encodeURIComponent(message)}`;

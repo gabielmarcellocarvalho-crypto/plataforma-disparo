@@ -162,6 +162,15 @@ export type Dialog360WebhookBody = {
           text?: { body?: string };
           audio?: { id?: string; mime_type?: string };
           image?: { id?: string; mime_type?: string; caption?: string };
+          // Clique em botão de quick reply de um TEMPLATE (type "button") ou de uma mensagem
+          // interativa (type "interactive"). São formatos diferentes pro mesmo gesto: a pessoa
+          // tocou num botão que a gente mandou.
+          button?: { text?: string; payload?: string };
+          interactive?: {
+            type?: string;
+            button_reply?: { id?: string; title?: string };
+            list_reply?: { id?: string; title?: string };
+          };
         }>;
         statuses?: Array<{ id?: string; status?: string; recipient_id?: string; timestamp?: string }>;
       };
@@ -200,7 +209,14 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
         if (!m.from) continue;
         const contactName = nameByWaId.get(m.from) ?? null;
         const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null };
-        if (m.type === "text" && m.text?.body) {
+        // Clique em botão vira TEXTO da conversa, com o rótulo que a pessoa viu na tela. Antes caía
+        // em "other" → "arquivo não suportado": o lead clicava no CTA do template e o agente recebia
+        // um arquivo que não existe, em vez da resposta dele. Pro resto do sistema (agente, CRM,
+        // histórico) não há diferença entre digitar "Quero saber mais" e tocar no botão com esse texto.
+        const buttonText = m.button?.text || m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || null;
+        if (buttonText) {
+          out.push({ ...base, type: "text", text: buttonText, mediaId: null, mimeType: null });
+        } else if (m.type === "text" && m.text?.body) {
           out.push({ ...base, type: "text", text: m.text.body, mediaId: null, mimeType: null });
         } else if (m.type === "audio" && m.audio?.id) {
           out.push({ ...base, type: "audio", text: null, mediaId: m.audio.id, mimeType: m.audio.mime_type || null });

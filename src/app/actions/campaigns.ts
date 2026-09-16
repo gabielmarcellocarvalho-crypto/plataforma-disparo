@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { isContactStage } from "@/lib/crm-stages";
 import { listDialog360Templates } from "@/lib/dialog360";
@@ -28,6 +29,10 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const hourStart = parseInt(String(formData.get("hour_start") || "9"), 10);
   const hourEnd = parseInt(String(formData.get("hour_end") || "20"), 10);
   const ctaPhone = String(formData.get("cta_phone") || "").trim() || null;
+  // CTA do disparo único de e-mail: rótulo + link livre (a sequência usa cta_phone/cta_message, que
+  // sempre apontam pro WhatsApp — são coisas diferentes e não se misturam).
+  const ctaLabel = String(formData.get("cta_label") || "").trim() || null;
+  const ctaUrl = String(formData.get("cta_url") || "").trim() || null;
   const ctaMessage = String(formData.get("cta_message") || "").trim() || null;
   const sequenceDaysRaw = String(formData.get("sequence_days") || "[]");
   const sequenceStepsRaw = String(formData.get("sequence_steps") || "[]");
@@ -41,6 +46,12 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   if (mode === "agent" && !agentId) return { error: "Escolha qual agente vai conduzir essa campanha." };
   if (mode === "sequence" && channel !== "email") return { error: "Modo sequência só está disponível pro canal e-mail." };
   if (channel === "email" && mode === "blast" && !subject) return { error: "Informe o assunto do e-mail." };
+  // Um sem o outro renderiza botão quebrado (rótulo sem destino, ou destino sem rótulo) — ou vêm os
+  // dois, ou nenhum. http/https só: o mesmo link vai virar href na caixa de entrada de todo mundo.
+  if (channel === "email" && mode === "blast" && (ctaLabel || ctaUrl)) {
+    if (!ctaLabel || !ctaUrl) return { error: "Pra usar o botão, preencha o texto e o link dele." };
+    if (!/^https?:\/\//i.test(ctaUrl)) return { error: "O link do botão precisa começar com http:// ou https://." };
+  }
 
   // Sequência: cada e-mail tem assunto/corpo/CTA próprios, ordenados por dia relativo à entrada do
   // contato (Dia 1, Dia 5...) — o motor de envio (email-sequence.ts) depende dessa ordem crescente
@@ -91,10 +102,20 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     }
   }
 
-  const templates = templatesRaw
-    .split("\n")
-    .map((t) => t.trim())
-    .filter(Boolean);
+  // WhatsApp: cada linha é uma VARIAÇÃO da mensagem, sorteada por contato (anti-ban — 300 pessoas
+  // recebendo texto idêntico é padrão de bloqueio). E-mail não tem esse problema e tem o contrário:
+  // o corpo precisa de várias linhas pra ser um e-mail de verdade (título, parágrafo, lista). Por
+  // isso, no e-mail o textarea inteiro é UM corpo só, com as quebras preservadas — antes ele virava
+  // uma variação por linha e o disparo saía com uma frase solta sorteada.
+  const templates =
+    channel === "email"
+      ? templatesRaw.trim()
+        ? [templatesRaw.trim()]
+        : []
+      : templatesRaw
+          .split("\n")
+          .map((t) => t.trim())
+          .filter(Boolean);
 
   // Rampa diária crescente (anti-spam/anti-ban): quantos disparos NOVOS o cron libera por dia de
   // campanha (dia 1 = ramp[0], dia 2 = ramp[1]...), até estabilizar no último valor. Não se aplica a
@@ -167,6 +188,26 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
     return { error: "Escreva pelo menos uma mensagem." };
   }
 
+  // Banner de topo do e-mail. Vai pro mesmo bucket público da logo do workspace (workspace-logos),
+  // em prefixo próprio — criar bucket novo exigiria passo manual no painel do Supabase, e o conteúdo
+  // é da mesma natureza: imagem pública que vai embutida num e-mail enviado pra fora.
+  let bannerUrl: string | null = null;
+  const bannerFile = formData.get("banner");
+  if (channel === "email" && bannerFile instanceof File && bannerFile.size > 0) {
+    if (bannerFile.size > 2 * 1024 * 1024) return { error: "Banner muito grande (máx. 2MB)." };
+    if (!["image/png", "image/jpeg", "image/webp"].includes(bannerFile.type)) {
+      return { error: "Banner inválido — use PNG, JPG ou WEBP (GIF e SVG não são renderizados por boa parte dos clientes de e-mail)." };
+    }
+    const admin = createAdminClient();
+    const ext = (bannerFile.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
+    const path = `banners/${workspace.id}/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await admin.storage
+      .from("workspace-logos")
+      .upload(path, Buffer.from(await bannerFile.arrayBuffer()), { contentType: bannerFile.type, upsert: false });
+    if (upErr) return { error: "Não foi possível subir o banner." };
+    bannerUrl = admin.storage.from("workspace-logos").getPublicUrl(path).data.publicUrl;
+  }
+
   const { data: campaign, error } = await supabase
     .from("campaigns")
     .insert({
@@ -184,6 +225,9 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       sequence_steps: mode === "sequence" ? sequenceSteps : [],
       cta_phone: mode === "sequence" ? ctaPhone : null,
       cta_message: mode === "sequence" ? ctaMessage : null,
+      cta_label: channel === "email" && mode === "blast" ? ctaLabel : null,
+      cta_url: channel === "email" && mode === "blast" ? ctaUrl : null,
+      banner_url: bannerUrl,
       // ramp = cota diária crescente (anti-ban) — configurável na tela agora; padrão é a mesma faixa
       // já validada no piloto (50 no dia 1, 80 no dia 2... estabiliza em 300/dia a partir do 6º dia).
       // Em modo sequência não há ramp (é 1 e-mail por contato por passo, sem cota diária de novos

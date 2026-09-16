@@ -29,7 +29,7 @@ export default async function CampanhasPage() {
           .select("id, name, connection_status")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
-        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspace.id).maybeSingle(),
+        supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, email_from, brand_color, logo_url").eq("id", workspace.id).maybeSingle(),
         supabase.from("whatsapp_instances").select("id, channel, department").eq("workspace_id", workspace.id).order("created_at"),
       ])
     : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
@@ -85,6 +85,9 @@ export default async function CampanhasPage() {
         <CreateCampaignForm
           agents={agents || []}
           whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as WhatsappChannel, department: i.department }))}
+          emailFrom={workspaceRow?.email_from ?? null}
+          brandColor={workspaceRow?.brand_color ?? null}
+          logoUrl={workspaceRow?.logo_url ?? null}
         />
       </div>
 
