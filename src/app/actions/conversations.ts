@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, sendMedia } from "@/lib/evolution";
 import { sendDialog360Text, sendDialog360Media } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
+import { agentSendText, agentSendMedia } from "@/lib/agent-channel";
+import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 
 const MAX_MANUAL_FILE_BYTES = 20 * 1024 * 1024; // 20MB — folga sobre o limite do bucket (25MB) e do WhatsApp
@@ -17,6 +19,17 @@ function mediaKindFromMime(mime: string): "image" | "audio" | "document" {
 }
 
 export type ActionResult = { error: string | null; ok?: boolean };
+
+// "Falha ao enviar" sozinho não diz à equipe o que fazer. O motivo mais comum em número oficial é a
+// janela de 24h da Meta (erro 131047): passou um dia da última mensagem do cliente e só template
+// entra. Quem está com a conversa aberta na tela precisa saber que o problema não é a plataforma.
+function mensagemDeFalha(e: unknown): string {
+  const detalhe = e instanceof Error ? e.message : String(e);
+  if (detalhe.includes("131047") || /re-?engagement/i.test(detalhe)) {
+    return "Passaram mais de 24h desde a última mensagem do contato — a Meta só aceita template agora. Use um disparo com template pra reabrir a conversa.";
+  }
+  return `Falha ao enviar pelo WhatsApp: ${detalhe.slice(0, 300)}`;
+}
 
 // Humano assume a conversa manualmente — agente para de responder esse contato até "devolver".
 export async function takeOverConversation(contactId: string): Promise<ActionResult> {
@@ -75,16 +88,22 @@ export async function sendManualMessage(contactId: string, agentId: string, text
   const supabase = await createClient();
   const [{ data: contact }, { data: agent }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id, needs_attention").eq("id", contactId).maybeSingle(),
-    supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle(),
+    supabase.from("agents").select("evolution_instance_name, whatsapp_instance_id").eq("id", agentId).maybeSingle(),
   ]);
   if (!contact || !agent) return { error: "Conversa não encontrada." };
   if (!contact.needs_attention) return { error: "Assuma a conversa antes de mandar mensagem manual." };
   if (!contact.phone) return { error: "Contato sem telefone." };
 
+  // O agente pode falar por Evolution OU por número oficial (360dialog/metacloud) — mesma resolução
+  // que o agente de IA usa. Mandar direto pelo Evolution aqui quebrava toda conversa de agente em
+  // número oficial, que é exatamente onde a equipe mais assume a conversa na mão.
+  const channel = await resolveAgentChannel(createAdminClient(), agent);
+  if (!channel) return { error: "Esse agente não tem número de WhatsApp configurado." };
+
   try {
-    await sendText(agent.evolution_instance_name, contact.phone, trimmed);
-  } catch {
-    return { error: "Falha ao enviar pelo WhatsApp." };
+    await agentSendText(channel, contact.phone, trimmed);
+  } catch (e) {
+    return { error: mensagemDeFalha(e) };
   }
 
   await supabase.from("messages").insert({
@@ -109,22 +128,25 @@ export async function sendManualMedia(contactId: string, agentId: string, formDa
   const supabase = await createClient();
   const [{ data: contact }, { data: agent }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id, needs_attention").eq("id", contactId).maybeSingle(),
-    supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle(),
+    supabase.from("agents").select("evolution_instance_name, whatsapp_instance_id").eq("id", agentId).maybeSingle(),
   ]);
   if (!contact || !agent) return { error: "Conversa não encontrada." };
   if (!contact.needs_attention) return { error: "Assuma a conversa antes de mandar mensagem manual." };
   if (!contact.phone) return { error: "Contato sem telefone." };
 
   const admin = createAdminClient();
+  const channel = await resolveAgentChannel(admin, agent);
+  if (!channel) return { error: "Esse agente não tem número de WhatsApp configurado." };
+
   const kind = mediaKindFromMime(file.type);
   const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
   const mediaUrl = await uploadConversationMedia(admin, contact.workspace_id, contactId, base64, file.type || "application/octet-stream");
   if (!mediaUrl) return { error: "Falha ao subir o arquivo." };
 
   try {
-    await sendMedia(agent.evolution_instance_name, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });
-  } catch {
-    return { error: "Falha ao enviar pelo WhatsApp." };
+    await agentSendMedia(channel, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });
+  } catch (e) {
+    return { error: mensagemDeFalha(e) };
   }
 
   await supabase.from("messages").insert({
@@ -167,8 +189,8 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
       if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
       await sendText(instance.instance_name, contact.phone, trimmed);
     }
-  } catch {
-    return { error: "Falha ao enviar pelo WhatsApp." };
+  } catch (e) {
+    return { error: mensagemDeFalha(e) };
   }
 
   await supabase.from("messages").insert({
@@ -216,8 +238,8 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, f
       if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
       await sendMedia(instance.instance_name, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });
     }
-  } catch {
-    return { error: "Falha ao enviar pelo WhatsApp." };
+  } catch (e) {
+    return { error: mensagemDeFalha(e) };
   }
 
   await supabase.from("messages").insert({
