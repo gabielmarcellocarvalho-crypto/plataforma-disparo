@@ -15,6 +15,7 @@ import { sortStages, stageForSignal } from "@/lib/pipelines";
 import { PipelinesEditor } from "@/components/pipelines-editor";
 import { useRouter } from "next/navigation";
 import { SORT_OPTIONS, sortContacts, type SortKey } from "@/lib/crm-sorting";
+import { buildCrmCsv, downloadCsv, exportFileName } from "@/lib/crm-export";
 import type { ContactActivity } from "@/lib/contact-activity";
 import { isTaskOverdue } from "@/lib/tasks";
 
@@ -400,6 +401,7 @@ export function CrmBoard({
   const [pipelinesEditorOpen, setPipelinesEditorOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("recentes");
   const [modoLista, setModoLista] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Map não atravessa a fronteira Server → Client Component, então a atividade chega como par de
   // arrays e é remontada aqui, uma vez só.
@@ -640,6 +642,22 @@ export function CrmBoard({
     return pipelineStages.find((e) => e.id === colunaDe(c))?.name ?? "—";
   };
 
+  // Exporta pra planilha o que está na tela: uma fase específica (a coluna do board) ou o funil
+  // inteiro. Sai daqui, do cliente, e não de uma action, porque a lista já está filtrada e ordenada
+  // em memória — repetir a consulta no servidor só abriria espaço pra planilha divergir do board.
+  function handleExport(coluna: { label: string; cards: Contact[] } | null) {
+    const leads = coluna ? coluna.cards : listaOrdenada;
+    if (leads.length === 0) return;
+
+    const csv = buildCrmCsv(leads, fieldDefs, {
+      stageName: (c) => nomeDaEtapa(c as Contact),
+      teamName: (id) => (id ? teamNameById.get(id) ?? "" : ""),
+      branchName: (id) => (id ? branches.find((b) => b.id === id)?.name ?? "" : ""),
+    });
+    downloadCsv(exportFileName(activePipeline?.name ?? "pipeline", coluna?.label ?? null), csv);
+    setExportOpen(false);
+  }
+
   const propertyFilterCount =
     (dateFrom && dateTo ? 1 : 0) +
     (stageFilter ? 1 : 0) +
@@ -697,13 +715,70 @@ export function CrmBoard({
             </button>
           )}
 
+          {/* Exportar: a fase é a unidade de trabalho de quem usa a planilha (o vendedor quer a lista
+              de agendados, não a base inteira), então cada coluna do board é uma opção própria. */}
+          <div className="relative ml-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setExportOpen((v) => !v);
+                setFieldsEditorOpen(false);
+                setLabelsEditorOpen(false);
+                setPipelinesEditorOpen(false);
+              }}
+              aria-expanded={exportOpen}
+              className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              exportar
+            </button>
+
+            {exportOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} aria-hidden />
+                <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-border bg-surface shadow-lg p-1">
+                  <p className="px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+                    Exportar para planilha
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleExport(null)}
+                    disabled={listaOrdenada.length === 0}
+                    className="w-full text-left text-xs font-bold px-3 py-2 rounded cursor-pointer text-text hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between gap-2"
+                  >
+                    <span>Todas as fases</span>
+                    <span className="text-text-muted font-normal">{listaOrdenada.length}</span>
+                  </button>
+                  <div className="my-1 border-t border-border" />
+                  {colunas.map((coluna) => (
+                    <button
+                      key={coluna.key}
+                      type="button"
+                      onClick={() => handleExport(coluna)}
+                      disabled={coluna.cards.length === 0}
+                      className="w-full text-left text-xs font-bold px-3 py-2 rounded cursor-pointer text-text hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{coluna.label}</span>
+                      <span className="text-text-muted font-normal">{coluna.cards.length}</span>
+                    </button>
+                  ))}
+                  <p className="px-3 py-2 text-[11px] leading-snug text-text-muted">
+                    Sai o que está filtrado na tela, com nome, telefone, e-mail e os campos do lead.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => {
               setFieldsEditorOpen((v) => !v);
               setLabelsEditorOpen(false);
             }}
-            className="ml-auto text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
+            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" />
