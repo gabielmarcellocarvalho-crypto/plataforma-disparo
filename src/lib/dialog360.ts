@@ -186,6 +186,10 @@ export type Dialog360IncomingMessage = {
   from: string;
   contactName: string | null;
   type: "text" | "audio" | "image" | "other";
+  // Tipo cru da Meta ("sticker", "reaction", "video", "document"...) quando `type` é "other". Sem
+  // isso, figurinha e vídeo chegam indistinguíveis no webhook, e uma figurinha acaba tratada como
+  // arquivo que o agente não conseguiu ler.
+  rawType: string | null;
   text: string | null; // corpo (texto) ou legenda (imagem) — null pra áudio/outros
   mediaId: string | null;
   mimeType: string | null;
@@ -208,7 +212,7 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
       for (const m of value.messages || []) {
         if (!m.from) continue;
         const contactName = nameByWaId.get(m.from) ?? null;
-        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null };
+        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null, rawType: m.type || null };
         // Clique em botão vira TEXTO da conversa, com o rótulo que a pessoa viu na tela. Antes caía
         // em "other" → "arquivo não suportado": o lead clicava no CTA do template e o agente recebia
         // um arquivo que não existe, em vez da resposta dele. Pro resto do sistema (agente, CRM,

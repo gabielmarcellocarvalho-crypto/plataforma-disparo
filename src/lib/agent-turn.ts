@@ -55,6 +55,11 @@ export type ResolvedIncoming = {
   // Id da mensagem no provedor (Evolution key.id / wamid da Meta) — usado só pra dedup de retry/replay
   // de webhook (messages.external_id); null quando o canal não fornece isso.
   externalId?: string | null;
+  // Tipo não processado que NÃO é motivo pra tirar o agente da conversa: figurinha e reação são
+  // reação social ("👍"), não pedido. Antes caíam no mesmo balde de vídeo/documento e cada figurinha
+  // do lead parava o agente e exigia um humano — numa base de milhares, isso é a conversa toda
+  // travando por um emoji. Registra no histórico, marca o aviso leve e segue com o agente ativo.
+  ignorable?: boolean;
 };
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
@@ -178,7 +183,8 @@ export async function runAgentTurn(
   pushName: string | null,
   resolved: ResolvedIncoming
 ) {
-  const CONTACT_COLUMNS = "id, name, custom_fields, opt_out_whatsapp, needs_attention, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
+  const CONTACT_COLUMNS =
+    "id, name, custom_fields, opt_out_whatsapp, needs_attention, flagged_reason, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -247,7 +253,7 @@ export async function runAgentTurn(
     }
   }
 
-  const { text, images, unsupported, media, externalId } = resolved;
+  const { text, images, unsupported, media, externalId, ignorable } = resolved;
 
   // Idempotência: retry/replay do provedor (reconexão da Evolution, retry da Meta) reenviando o MESMO
   // messageId/wamid não deve gerar 2ª resposta do agente nem cobrar a API 2x pela mesma mensagem —
@@ -278,6 +284,20 @@ export async function runAgentTurn(
         media_type: mediaUrl ? media!.kind : null,
         external_id: externalId || null,
       });
+
+      if (ignorable) {
+        // Aviso leve (flagged_reason): aparece em "Pontos de atenção" pra alguém dar uma olhada, mas
+        // não passa a conversa pro humano — o agente continua respondendo a próxima mensagem normal.
+        // Não sobrescreve um aviso que já exista: o motivo anterior é mais informativo que "figurinha".
+        if (!contact.flagged_reason) {
+          await supabase
+            .from("contacts")
+            .update({ flagged_reason: `Enviou ${unsupported} — o agente reconheceu e não respondeu.` })
+            .eq("id", contact.id);
+        }
+        return;
+      }
+
       await supabase
         .from("contacts")
         .update({ needs_attention: true, attention_reason: `Enviou ${unsupported}, o agente não conseguiu processar automaticamente.` })

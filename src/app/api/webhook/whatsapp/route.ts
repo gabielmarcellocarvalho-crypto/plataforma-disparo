@@ -27,6 +27,8 @@ type EvolutionMessage = {
     imageMessage?: { mimetype?: string; caption?: string };
     videoMessage?: unknown;
     documentMessage?: unknown;
+    stickerMessage?: unknown;
+    reactionMessage?: unknown;
   };
   key?: { remoteJid?: string; fromMe?: boolean; id?: string };
   pushName?: string;
@@ -88,6 +90,11 @@ async function resolveIncoming(instanceName: string, data: EvolutionMessage): Pr
     }
     return { text: null, images: [], unsupported: "imagem", media: null, externalId };
   }
+
+  // Figurinha/reação: o lead está reagindo, não pedindo nada. Registra no histórico e deixa o aviso
+  // leve, mas sem passar a conversa pro humano — ver `ignorable` em agent-turn.ts.
+  if (msg?.stickerMessage) return { text: null, images: [], unsupported: "figurinha", media: null, externalId, ignorable: true };
+  if (msg?.reactionMessage) return { text: null, images: [], unsupported: "reação", media: null, externalId, ignorable: true };
 
   if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo", media: null, externalId };
   if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null, externalId };
