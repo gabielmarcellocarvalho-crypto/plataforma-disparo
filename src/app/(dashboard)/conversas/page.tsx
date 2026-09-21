@@ -76,7 +76,8 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
   return all;
 }
 
-export default async function ConversasPage() {
+export default async function ConversasPage({ searchParams }: { searchParams: Promise<{ contact?: string }> }) {
+  const { contact: contactParam } = await searchParams;
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
@@ -88,7 +89,7 @@ export default async function ConversasPage() {
     );
   }
 
-  const [{ data: agents }, { data: instances }, messages, { data: workspaceRow }, tickets] = await Promise.all([
+  const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
@@ -101,6 +102,22 @@ export default async function ConversasPage() {
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
     getConversationTickets(workspace.id),
   ]);
+
+  // Vindo do CRM (?contact=<id>): a conversa desse lead precisa existir aqui mesmo que ela não esteja
+  // entre as mensagens recentes. Numa base grande (a Valec passou de 11 mil mensagens), a conversa de
+  // quem foi abordado há alguns dias cai fora da janela de MESSAGE_LIMIT — e clicar no lead abria a
+  // conversa de outra pessoa (a primeira da lista) ou tela vazia, sem nenhum aviso.
+  const messages = [...recentMessages];
+  if (contactParam && !messages.some((m) => m.contact_id === contactParam)) {
+    const { data: doLead } = await supabase
+      .from("messages")
+      .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
+      .eq("workspace_id", workspace.id)
+      .eq("contact_id", contactParam)
+      .order("created_at", { ascending: false })
+      .range(0, PAGE_SIZE - 1);
+    if (doLead) messages.push(...doLead);
+  }
 
   const ticketByKey = new Map(tickets.map((t) => [t.conversation_key, t]));
 

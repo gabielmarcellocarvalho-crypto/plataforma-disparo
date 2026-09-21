@@ -170,13 +170,17 @@ export function ConversationsPanel({
   const [ticketFilter, setTicketFilter] = useState<TicketStatus | "">("");
 
   // Vindo do CRM (?contact=<id>), abre direto a conversa dessa pessoa; senão, a mais recente.
+  // Pedido um contato que não tem conversa, NÃO cai na primeira da lista: abrir a conversa de outra
+  // pessoa quando se clicou num lead específico é pior que não abrir nada — quem está atendendo lê o
+  // histórico achando que é do lead que clicou.
   const [selectedKey, setSelectedKey] = useState<string | null>(() => {
     if (contactParam) {
       const found = conversations.find((c) => c.contact.id === contactParam);
-      if (found) return keyOf(found);
+      return found ? keyOf(found) : null;
     }
     return conversations[0] ? keyOf(conversations[0]) : null;
   });
+  const leadSemConversa = Boolean(contactParam) && !conversations.some((c) => c.contact.id === contactParam);
   // Em telas < md as duas colunas (lista/chat) não cabem lado a lado — esse estado decide qual das
   // duas aparece (irrelevante em telas >= md, onde as duas ficam sempre visíveis).
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
@@ -562,7 +566,11 @@ export function ConversationsPanel({
 
       <div className={`flex-col min-h-0 ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
         {!selected ? (
-          <div className="flex-1 grid place-items-center text-text-muted text-sm">Selecione uma conversa</div>
+          <div className="flex-1 grid place-items-center text-text-muted text-sm px-6 text-center">
+            {leadSemConversa
+              ? "Esse lead ainda não tem mensagens trocadas — nada pra mostrar aqui."
+              : "Selecione uma conversa"}
+          </div>
         ) : (
           <>
             <div className="flex items-center gap-3.5 px-5 py-4 border-b border-border flex-wrap">
