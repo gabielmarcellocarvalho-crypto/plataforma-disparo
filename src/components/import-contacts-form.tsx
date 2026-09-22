@@ -3,8 +3,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { inspectImportFile, importContacts, type ImportResult } from "@/app/actions/contacts";
+import { createCustomFieldDef } from "@/app/actions/custom-fields";
 import type { ImportTarget, SheetPreview } from "@/lib/import-contacts";
-import type { CustomFieldDef } from "@/lib/custom-fields";
+import { normalizeFieldKey, type CustomFieldDef } from "@/lib/custom-fields";
 import { TagPicker } from "@/components/tag-picker";
 
 type Preview = SheetPreview & { suggestion: Record<string, ImportTarget> };
@@ -20,8 +21,18 @@ const ALVOS_PADRAO: { key: ImportTarget; label: string }[] = [
   { key: "motivo_perda", label: "Motivo da perda" },
 ];
 
-export function ImportContactsForm({ fieldDefs = [], availableTags = [] }: { fieldDefs?: CustomFieldDef[]; availableTags?: string[] }) {
+// Valor sentinela do select: nao e um destino, e "quero criar um campo novo agora".
+const NOVO_CAMPO = "__novo_campo__";
+
+export function ImportContactsForm({ fieldDefs: defsIniciais = [], availableTags = [] }: { fieldDefs?: CustomFieldDef[]; availableTags?: string[] }) {
   const router = useRouter();
+  // Campo criado aqui entra na lista sem recarregar a pagina — recarregar perderia o arquivo
+  // escolhido e o de/para ja preenchido.
+  const [fieldDefs, setFieldDefs] = useState(defsIniciais);
+  // Coluna da planilha cujo destino vai virar um campo novo (null = ninguem criando agora).
+  const [criandoPara, setCriandoPara] = useState<string | null>(null);
+  const [novoCampoLabel, setNovoCampoLabel] = useState("");
+  const [erroCampo, setErroCampo] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mapping, setMapping] = useState<Record<string, ImportTarget>>({});
@@ -83,10 +94,50 @@ export function ImportContactsForm({ fieldDefs = [], availableTags = [] }: { fie
     setErro(null);
   }
 
-  const alvos: { key: ImportTarget; label: string }[] = [
+  const alvos: { key: string; label: string }[] = [
     ...ALVOS_PADRAO,
-    ...fieldDefs.map((d) => ({ key: `campo:${d.key}` as ImportTarget, label: d.label })),
+    ...fieldDefs.map((d) => ({ key: `campo:${d.key}`, label: d.label })),
+    { key: NOVO_CAMPO, label: "+ criar campo novo…" },
   ];
+
+  // Cria o campo personalizado sem sair do de/para e ja aponta a coluna pra ele. E o caso comum
+  // de planilha de cliente: a coluna "Faturamento" existe no arquivo e nao existe no workspace, e
+  // antes era preciso abandonar a importacao, criar o campo em Pipeline > campos do lead e comecar
+  // tudo de novo.
+  function criarCampo(coluna: string) {
+    const label = novoCampoLabel.trim();
+    setErroCampo(null);
+    if (!label) {
+      setErroCampo("De um nome ao campo.");
+      return;
+    }
+
+    const key = normalizeFieldKey(label);
+    const existente = fieldDefs.find((d) => d.key === key);
+    if (existente) {
+      // Ja existe campo com esse nome: usa o que existe em vez de falhar. Dois campos com o mesmo
+      // rotulo seriam indistinguiveis na tela e na planilha exportada.
+      setMapping((m) => ({ ...m, [coluna]: `campo:${existente.key}` as ImportTarget }));
+      setCriandoPara(null);
+      setNovoCampoLabel("");
+      return;
+    }
+
+    startTransition(async () => {
+      const r = await createCustomFieldDef({ label, type: "texto", options: [], required: false, showInTable: true, showInCard: false });
+      if (r.error || !r.id) {
+        setErroCampo(r.error || "Nao foi possivel criar o campo.");
+        return;
+      }
+      setFieldDefs((f) => [
+        ...f,
+        { id: r.id as string, key, label, type: "texto", options: [], required: false, show_in_table: true, show_in_card: false, position: f.length },
+      ]);
+      setMapping((m) => ({ ...m, [coluna]: `campo:${key}` as ImportTarget }));
+      setCriandoPara(null);
+      setNovoCampoLabel("");
+    });
+  }
   const temDestino = Object.values(mapping).some((t) => t === "telefone" || t === "email");
 
   return (
@@ -189,8 +240,18 @@ export function ImportContactsForm({ fieldDefs = [], availableTags = [] }: { fie
                         </td>
                         <td className="px-3 py-2">
                           <select
-                            value={alvo}
-                            onChange={(e) => setMapping((m) => ({ ...m, [h]: e.target.value as ImportTarget }))}
+                            value={criandoPara === h ? NOVO_CAMPO : alvo}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === NOVO_CAMPO) {
+                                setErroCampo(null);
+                                setNovoCampoLabel(h);
+                                setCriandoPara(h);
+                                return;
+                              }
+                              setCriandoPara((c) => (c === h ? null : c));
+                              setMapping((m) => ({ ...m, [h]: v as ImportTarget }));
+                            }}
                             className={`w-full border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary bg-surface cursor-pointer ${
                               alvo === "ignorar" ? "border-border text-text-muted" : "border-primary-soft text-text"
                             }`}
@@ -201,6 +262,50 @@ export function ImportContactsForm({ fieldDefs = [], availableTags = [] }: { fie
                               </option>
                             ))}
                           </select>
+
+                          {criandoPara === h && (
+                            <div className="flex flex-col gap-1 mt-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  autoFocus
+                                  value={novoCampoLabel}
+                                  onChange={(e) => setNovoCampoLabel(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      criarCampo(h);
+                                    }
+                                    if (e.key === "Escape") setCriandoPara(null);
+                                  }}
+                                  maxLength={40}
+                                  placeholder="Nome do campo (ex.: Faturamento)"
+                                  className="flex-1 border border-primary-soft rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => criarCampo(h)}
+                                  disabled={pending}
+                                  className="text-xs font-bold px-2.5 py-1.5 rounded-md bg-primary-strong text-white cursor-pointer disabled:opacity-50"
+                                >
+                                  criar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCriandoPara(null)}
+                                  className="text-xs font-bold px-1.5 py-1.5 text-text-muted cursor-pointer"
+                                >
+                                  cancelar
+                                </button>
+                              </div>
+                              {erroCampo ? (
+                                <span className="text-[11px] text-danger">{erroCampo}</span>
+                              ) : (
+                                <span className="text-[11px] text-text-muted">
+                                  Vira um campo de texto do lead, visivel na tabela de contatos e na exportacao.
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
