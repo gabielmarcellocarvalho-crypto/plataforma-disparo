@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
 import { listWorkspaceTags } from "@/app/actions/contacts";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
@@ -92,6 +93,7 @@ export default async function CampanhasPage() {
           agents={agents || []}
           whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as WhatsappChannel, department: i.department }))}
           availableTags={tagOptions.map((t) => t.tag)}
+          fieldDefs={await listCustomFieldDefs()}
           emailFrom={workspaceRow?.email_from ?? null}
           brandColor={workspaceRow?.brand_color ?? null}
           logoUrl={workspaceRow?.logo_url ?? null}

@@ -71,7 +71,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: recipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags, custom_fields)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .lte("next_step_at", now.toISOString()) // NULL não passa aqui — ver query separada abaixo pro 1º envio
@@ -79,7 +79,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
 
     const { data: freshRecipients } = await supabase
       .from("campaign_recipients")
-      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags)")
+      .select("id, contact_id, sequence_step, contacts(id, name, email, opt_out_email, stage, tags, custom_fields)")
       .eq("campaign_id", campaign.id)
       .is("stopped_reason", null)
       .is("next_step_at", null) // ainda não recebeu nenhum passo — 1º envio (Dia 1)
@@ -92,7 +92,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
         skipped++;
         continue;
       }
-      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean; stage: string; tags: string[] | null } | null;
+      const contact = r.contacts as unknown as { id: string; name: string | null; email: string | null; opt_out_email: boolean; stage: string; tags: string[] | null; custom_fields: Record<string, unknown> | null } | null;
       const stepIndex = r.sequence_step;
       if (!contact || stepIndex >= steps.length) continue;
 
@@ -108,14 +108,14 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
       // tentativa: uma falha (ex.: cota do Resend estourada) não infla o número de "enviados".
       const token = crypto.randomUUID();
       const ctaUrl = `${siteOrigin}/api/e/${token}`;
-      const body = applyContactVars(step.body, contact.name);
+      const body = applyContactVars(step.body, contact.name, contact.custom_fields);
       const unsubUrl = unsubscribeUrl(siteOrigin, contact.id);
 
       try {
         await sendCampaignEmail({
           from: emailFrom,
           to: contact.email,
-          subject: applyContactVars(step.subject, contact.name),
+          subject: applyContactVars(step.subject, contact.name, contact.custom_fields),
           bodyText: body,
           unsubscribeUrl: unsubUrl,
           cta: { label: step.ctaLabel, url: ctaUrl },
@@ -124,7 +124,7 @@ export async function runEmailSequences(supabase: AdminClient, siteOrigin: strin
           showBrandHeader: campaign.show_brand_header !== false,
           // Banner é da campanha, não do passo: os e-mails da sequência saem com a mesma arte de topo.
           bannerUrl: campaign.banner_url || null,
-          preheader: campaign.preheader ? applyContactVars(campaign.preheader, contact.name) : null,
+          preheader: campaign.preheader ? applyContactVars(campaign.preheader, contact.name, contact.custom_fields) : null,
         });
 
         await supabase.from("email_clicks").insert({

@@ -58,11 +58,11 @@ function brtDateKey() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
-function pickMessage(templates: unknown, name: string | null): string | null {
+function pickMessage(templates: unknown, name: string | null, campos: Record<string, unknown> | null): string | null {
   const list = Array.isArray(templates) ? (templates as unknown[]).filter((t): t is string => typeof t === "string" && t.trim().length > 0) : [];
   if (list.length === 0) return null;
   const template = list[Math.floor(Math.random() * list.length)];
-  return applyContactVars(template, name);
+  return applyContactVars(template, name, campos);
 }
 
 export async function GET(req: Request) {
@@ -159,7 +159,7 @@ export async function GET(req: Request) {
 
       const { data: recipient } = await supabase
         .from("campaign_recipients")
-        .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags)")
+        .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags, custom_fields)")
         .eq("campaign_id", campaign.id)
         .eq("status", "pendente")
         .order("created_at", { ascending: true })
@@ -173,7 +173,7 @@ export async function GET(req: Request) {
       }
 
       const contact = recipient.contacts as unknown as
-        | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null }
+        | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null; custom_fields: Record<string, unknown> | null }
         | null;
 
       const isEmail = campaign.channel === "email";
@@ -226,7 +226,7 @@ export async function GET(req: Request) {
 
       // API oficial é sempre template (não tem conceito de "responder dentro de 24h" numa campanha de
       // disparo — isso é conversa viva, não campanha); Evolution/agente/e-mail usam o texto livre configurado.
-      const text = isOfficialBlast ? null : pickMessage(campaign.message_templates, contact.name);
+      const text = isOfficialBlast ? null : pickMessage(campaign.message_templates, contact.name, contact.custom_fields);
       if (!isOfficialBlast && !text) {
         await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Campanha sem mensagem." }).eq("id", recipient.id);
         pararCampanha = true;
@@ -296,9 +296,9 @@ export async function GET(req: Request) {
           await sendCampaignEmail({
             from: emailFrom!,
             to: contact.email!,
-            subject: applyContactVars(campaign.subject || campaign.name, contact.name),
+            subject: applyContactVars(campaign.subject || campaign.name, contact.name, contact.custom_fields),
             bodyText: text as string,
-            preheader: campaign.preheader ? applyContactVars(campaign.preheader as string, contact.name) : null,
+            preheader: campaign.preheader ? applyContactVars(campaign.preheader as string, contact.name, contact.custom_fields) : null,
             unsubscribeUrl: unsubscribeUrl(origin, contact.id),
             cta: ctaToken ? { label: campaign.cta_label as string, url: `${origin}/api/e/${ctaToken}` } : null,
             // Cor da campanha tem precedência sobre a do workspace; sem nenhuma das duas, o gerador

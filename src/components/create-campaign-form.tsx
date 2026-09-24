@@ -39,16 +39,20 @@ export function CreateCampaignForm({
   brandColor = null,
   logoUrl = null,
   availableTags = [],
+  fieldDefs = [],
 }: {
   agents?: AgentOption[];
   whatsappInstances?: WhatsappInstanceOption[];
   availableTags?: string[];
+  // Campos personalizados do workspace — viram variáveis de personalização do texto.
+  fieldDefs?: { key: string; label: string }[];
   // Identidade visual do e-mail, pro preview mostrar o mesmo cabeçalho/cor que o envio vai usar.
   emailFrom?: string | null;
   brandColor?: string | null;
   logoUrl?: string | null;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const templatesRef = useRef<HTMLTextAreaElement>(null);
   const [channel, setChannel] = useState<"whatsapp" | "email">("whatsapp");
   const [mode, setMode] = useState<"blast" | "agent" | "sequence">("blast");
   const [agentId, setAgentId] = useState(agents[0]?.id || "");
@@ -140,6 +144,25 @@ export function CreateCampaignForm({
       setTemplateKey(result.templates[0] ? `${result.templates[0].name}|${result.templates[0].language}` : "");
     });
   }, [selectedInstance?.id, selectedInstance?.channel]);
+
+  // Clicar na variável escreve no ponto onde o cursor está — digitar o nome do campo na mão é
+  // onde o erro acontece (acento, espaço, maiúscula), e variável que não casa sai vazia.
+  function inserirVariavel(chave: string) {
+    const el = templatesRef.current;
+    const token = `{${chave}}`;
+    if (!el) {
+      if (channel === "email") setEmailBody((b) => b + token);
+      return;
+    }
+    const ini = el.selectionStart ?? el.value.length;
+    const fim = el.selectionEnd ?? el.value.length;
+    const novoTexto = el.value.slice(0, ini) + token + el.value.slice(fim);
+    if (channel === "email") setEmailBody(novoTexto);
+    else el.value = novoTexto;
+    el.focus();
+    const pos = ini + token.length;
+    requestAnimationFrame(() => el.setSelectionRange(pos, pos));
+  }
 
   return (
     <>
@@ -581,6 +604,7 @@ export function CreateCampaignForm({
               <textarea
                 id="templates"
                 name="templates"
+                ref={templatesRef}
                 rows={channel === "email" ? 8 : 5}
                 required
                 value={channel === "email" ? emailBody : undefined}
@@ -594,6 +618,32 @@ export function CreateCampaignForm({
                 }
                 className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary font-mono"
               />
+              {/* Variáveis disponíveis: sem essa lista, quem escreve a mensagem não tem como saber
+                  o nome exato do campo importado — e variável errada sai como texto vazio. */}
+              <div className="flex flex-wrap items-center gap-1 text-[11px] text-text-muted">
+                <span className="font-semibold">Personalização:</span>
+                <button
+                  type="button"
+                  onClick={() => inserirVariavel("nome")}
+                  className="font-mono border border-border rounded px-1.5 py-0.5 cursor-pointer hover:border-primary-soft hover:text-primary-strong"
+                >
+                  {"{nome}"}
+                </button>
+                {fieldDefs.map((d) => (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => inserirVariavel(d.key)}
+                    className="font-mono border border-border rounded px-1.5 py-0.5 cursor-pointer hover:border-primary-soft hover:text-primary-strong"
+                  >
+                    {`{${d.key}}`}
+                  </button>
+                ))}
+                <span>
+                  — campo vazio no lead não manda a variável crua; use{" "}
+                  <code className="font-mono">{"{campo|texto padrão}"}</code> pra definir o que entra no lugar.
+                </span>
+              </div>
               {channel === "email" ? (
                 <p className="text-xs text-text-muted">
                   Formatação: <code className="font-mono">## título</code>, <code className="font-mono">- lista</code>,{" "}
