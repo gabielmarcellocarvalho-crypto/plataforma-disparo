@@ -56,8 +56,27 @@ export type SheetPreview = {
   error?: string;
 };
 
+// CSV é texto puro, e o arquivo não diz em que codificação ele foi salvo. Lido como buffer, o
+// SheetJS assume a codepage do sistema (Windows-1252) e um arquivo UTF-8 — o padrão de quem exporta
+// do Google Sheets ou de qualquer sistema web — vira "Ãrea de atuaÃ§Ã£o". Quando o conteúdo é UTF-8
+// válido, decodificamos aqui e passamos texto pro SheetJS, que então não precisa adivinhar nada.
+// Planilha binária (.xlsx/.xls) já carrega a codificação dentro do formato: essa passa direto.
+function decodeCsvIfUtf8(buffer: Buffer): string | null {
+  // xlsx/xls começam com assinatura própria (PK.. de zip, ou o cabeçalho OLE2 do Excel antigo).
+  const assinaturaBinaria = buffer.length > 4 && (buffer[0] === 0x50 || buffer[0] === 0xd0);
+  if (assinaturaBinaria) return null;
+
+  const texto = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+  // U+FFFD = byte que não é UTF-8 válido. Aí o arquivo é mesmo latin-1/Windows-1252 e o SheetJS
+  // acerta mais que a gente forçando UTF-8 por cima.
+  if (texto.includes("�")) return null;
+  // BOM no começo viraria parte do nome da primeira coluna ("﻿Nome").
+  return texto.charCodeAt(0) === 0xfeff ? texto.slice(1) : texto;
+}
+
 function readRows(buffer: Buffer, sheetName?: string) {
-  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const csvUtf8 = decodeCsvIfUtf8(buffer);
+  const wb = csvUtf8 !== null ? XLSX.read(csvUtf8, { type: "string", cellDates: true }) : XLSX.read(buffer, { type: "buffer", cellDates: true });
   const nome = sheetName && wb.SheetNames.includes(sheetName) ? sheetName : wb.SheetNames[0];
   const grade = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, defval: null, raw: true, blankrows: false });
   return { sheets: wb.SheetNames, sheet: nome, grade };
