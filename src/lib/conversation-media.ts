@@ -15,6 +15,23 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/aac": "aac",
 };
 
+// Tipos que o bucket "conversation-media" aceita (allowlist configurada no próprio bucket, no Supabase).
+// Espelhada aqui pra recusar antes de subir, com mensagem clara, em vez de o Storage devolver 4xx.
+export const CONVERSATION_MEDIA_MIMES = new Set([...Object.keys(EXT_BY_MIME), "application/pdf"]);
+
+// WhatsApp (e o MediaRecorder do navegador) manda áudio como "audio/ogg; codecs=opus", com parâmetro —
+// o bucket compara mime type exato contra a allowlist, então precisa normalizar pra "tipo/subtipo".
+export function normalizeMimetype(raw: string): string {
+  return raw.split(";")[0].trim().toLowerCase();
+}
+
+// Caminho do arquivo no bucket: sempre sob <workspace>/<contato>/ — é esse prefixo que o envio manual
+// confere antes de mandar um arquivo pro WhatsApp de alguém.
+export function conversationMediaPath(workspaceId: string, contactId: string, mimetype: string): string {
+  const ext = EXT_BY_MIME[mimetype] || mimetype.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "bin";
+  return `${workspaceId}/${contactId}/${crypto.randomUUID()}.${ext}`;
+}
+
 // Sobe áudio/imagem recebido do contato pro bucket público "conversation-media", pra a tela de
 // Conversas conseguir tocar/mostrar depois (antes disso a mídia só era usada na hora — transcrição ou
 // visão pontual — e descartada). Best-effort: se falhar, a conversa continua funcionando normalmente,
@@ -26,11 +43,8 @@ export async function uploadConversationMedia(
   base64: string,
   rawMimetype: string
 ): Promise<string | null> {
-  // WhatsApp manda áudio como "audio/ogg; codecs=opus" (com parâmetro) — o bucket compara mime type
-  // exato contra a allowlist, então precisa normalizar (só "tipo/subtipo") antes de subir/checar extensão.
-  const mimetype = rawMimetype.split(";")[0].trim().toLowerCase();
-  const ext = EXT_BY_MIME[mimetype] || mimetype.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "bin";
-  const path = `${workspaceId}/${contactId}/${crypto.randomUUID()}.${ext}`;
+  const mimetype = normalizeMimetype(rawMimetype);
+  const path = conversationMediaPath(workspaceId, contactId, mimetype);
   const buffer = Buffer.from(base64, "base64");
   const { error } = await supabase.storage.from("conversation-media").upload(path, buffer, { contentType: mimetype, upsert: false });
   if (error) {

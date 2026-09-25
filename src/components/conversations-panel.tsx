@@ -12,13 +12,18 @@ import {
   sendInstanceMessage,
   sendInstanceMedia,
   clearInstanceConversationHistory,
+  prepareManualUpload,
 } from "@/app/actions/conversations";
+import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
 import { setConversationStatus, setConversationResponsible } from "@/app/actions/conversation-tickets";
 import type { TicketStatus } from "@/lib/conversation-tickets";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { STAGE_ORDER } from "@/lib/crm-stages";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+
+// Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir 50MB à toa.
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 const TICKET_STATUS_LABELS: Record<TicketStatus, string> = { aberto: "Aberto", pendente: "Pendente", resolvido: "Resolvido" };
 const TICKET_STATUS_BADGE: Record<TicketStatus, string> = {
@@ -310,16 +315,39 @@ export function ConversationsPanel({
     });
   }
 
+  // O arquivo sobe direto do navegador pro Storage (URL assinada) e o servidor só recebe o caminho —
+  // passar os bytes pelo server action estourava o teto de ~4,5MB da Vercel e derrubava a tela.
   function handleSendFile(file: File) {
     if (!selected) return;
     setError(null);
-    const formData = new FormData();
-    formData.append("file", file);
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setError("Arquivo maior que 20MB.");
+      return;
+    }
     startTransition(async () => {
-      const result = selected.agent
-        ? await sendManualMedia(selected.contact.id, selected.agent.id, formData)
-        : await sendInstanceMedia(selected.contact.id, selected.instance!.id, formData);
-      if (result.error) setError(result.error);
+      try {
+        const prep = await prepareManualUpload(selected.contact.id, file.name, file.type, file.size);
+        if (prep.error || !prep.path || !prep.token) {
+          setError(prep.error || "Não foi possível preparar o envio do arquivo.");
+          return;
+        }
+        const { error: uploadError } = await createBrowserSupabase()
+          .storage.from("conversation-media")
+          .uploadToSignedUrl(prep.path, prep.token, file, { contentType: file.type.split(";")[0] });
+        if (uploadError) {
+          setError(`Falha ao subir o arquivo: ${uploadError.message}`);
+          return;
+        }
+        const upload = { path: prep.path, fileName: file.name, mimeType: file.type };
+        const result = selected.agent
+          ? await sendManualMedia(selected.contact.id, selected.agent.id, upload)
+          : await sendInstanceMedia(selected.contact.id, selected.instance!.id, upload);
+        if (result.error) setError(result.error);
+      } catch {
+        // Queda de rede ou resposta inesperada do servidor: mostra o erro no composer em vez de
+        // deixar a exceção subir e trocar a tela inteira pela página de erro.
+        setError("Não foi possível enviar o arquivo. Verifique a conexão e tente de novo.");
+      }
     });
   }
 

@@ -8,7 +8,7 @@ import { sendDialog360Text, sendDialog360Media } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
 import { agentSendText, agentSendMedia } from "@/lib/agent-channel";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
-import { uploadConversationMedia } from "@/lib/conversation-media";
+import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype } from "@/lib/conversation-media";
 
 const MAX_MANUAL_FILE_BYTES = 20 * 1024 * 1024; // 20MB — folga sobre o limite do bucket (25MB) e do WhatsApp
 
@@ -118,13 +118,59 @@ export async function sendManualMessage(contactId: string, agentId: string, text
   return { error: null, ok: true };
 }
 
+// Arquivo que o navegador já subiu direto pro Storage (via prepareManualUpload) — o envio manual só
+// recebe o caminho, nunca os bytes.
+export type ManualUpload = { path: string; fileName: string; mimeType: string };
+
+// O arquivo NÃO passa pelo server action: na Vercel, o corpo de qualquer requisição à função é cortado
+// em ~4,5MB antes do nosso código rodar (o bodySizeLimit do next.config não vence esse teto), e o
+// navegador recebia um 413 que derrubava a tela inteira ("This page couldn't load"). Aqui só se gera
+// uma URL assinada de upload; o navegador sobe o arquivo direto pro bucket e depois chama o envio.
+export async function prepareManualUpload(
+  contactId: string,
+  fileName: string,
+  rawMimeType: string,
+  size: number
+): Promise<{ error: string | null; path?: string; token?: string }> {
+  if (!size) return { error: "Selecione um arquivo." };
+  if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 20MB." };
+  const mimeType = normalizeMimetype(rawMimeType || "");
+  if (!CONVERSATION_MEDIA_MIMES.has(mimeType)) {
+    return { error: `Tipo de arquivo não suportado (${fileName}). Envie imagem, áudio ou PDF.` };
+  }
+
+  // Cliente com a sessão do usuário: a RLS garante que ele só prepara upload pra contato do próprio workspace.
+  const supabase = await createClient();
+  const { data: contact } = await supabase.from("contacts").select("id, workspace_id").eq("id", contactId).maybeSingle();
+  if (!contact) return { error: "Conversa não encontrada." };
+
+  const admin = createAdminClient();
+  const path = conversationMediaPath(contact.workspace_id, contactId, mimeType);
+  const { data, error } = await admin.storage.from("conversation-media").createSignedUploadUrl(path);
+  if (error || !data) return { error: "Não foi possível preparar o envio do arquivo." };
+  return { error: null, path: data.path, token: data.token };
+}
+
+// Confere que o arquivo é DESTE contato (prefixo <workspace>/<contato>/) antes de mandar pro WhatsApp —
+// sem isso, um caminho forjado mandaria arquivo de outro cliente pra qualquer número.
+function resolveUploadedMedia(
+  admin: ReturnType<typeof createAdminClient>,
+  workspaceId: string,
+  contactId: string,
+  upload: ManualUpload
+): { error: string } | { url: string; kind: "image" | "audio" | "document"; fileName: string } {
+  const prefix = `${workspaceId}/${contactId}/`;
+  if (!upload?.path || !upload.path.startsWith(prefix) || upload.path.includes("..")) {
+    return { error: "Arquivo inválido." };
+  }
+  const { data } = admin.storage.from("conversation-media").getPublicUrl(upload.path);
+  const fileName = String(upload.fileName || "arquivo").slice(0, 200);
+  return { url: data.publicUrl, kind: mediaKindFromMime(normalizeMimetype(upload.mimeType || "")), fileName };
+}
+
 // Envia áudio gravado ou arquivo anexado manualmente (equipe respondendo ao vivo) numa conversa com
 // agente de IA — mesma trava de sendManualMessage (só com a conversa assumida).
-export async function sendManualMedia(contactId: string, agentId: string, formData: FormData): Promise<ActionResult> {
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo." };
-  if (file.size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 20MB." };
-
+export async function sendManualMedia(contactId: string, agentId: string, upload: ManualUpload): Promise<ActionResult> {
   const supabase = await createClient();
   const [{ data: contact }, { data: agent }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id, needs_attention").eq("id", contactId).maybeSingle(),
@@ -138,13 +184,11 @@ export async function sendManualMedia(contactId: string, agentId: string, formDa
   const channel = await resolveAgentChannel(admin, agent);
   if (!channel) return { error: "Esse agente não tem número de WhatsApp configurado." };
 
-  const kind = mediaKindFromMime(file.type);
-  const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
-  const mediaUrl = await uploadConversationMedia(admin, contact.workspace_id, contactId, base64, file.type || "application/octet-stream");
-  if (!mediaUrl) return { error: "Falha ao subir o arquivo." };
+  const media = resolveUploadedMedia(admin, contact.workspace_id, contactId, upload);
+  if ("error" in media) return { error: media.error };
 
   try {
-    await agentSendMedia(channel, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });
+    await agentSendMedia(channel, contact.phone, media.url, { mediatype: media.kind, fileName: media.fileName });
   } catch (e) {
     return { error: mensagemDeFalha(e) };
   }
@@ -154,9 +198,9 @@ export async function sendManualMedia(contactId: string, agentId: string, formDa
     contact_id: contactId,
     agent_id: agentId,
     role: "assistant",
-    content: `[arquivo enviado: ${file.name}]`,
-    media_url: mediaUrl,
-    media_type: kind,
+    content: `[arquivo enviado: ${media.fileName}]`,
+    media_url: media.url,
+    media_type: media.kind,
   });
 
   revalidatePath("/conversas");
@@ -208,11 +252,7 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
 // Equivalente a sendManualMedia, mas pro fluxo sem agente (disparo avulso) — mesma escolha de canal
 // (Evolution, 360dialog ou Meta direta) que sendInstanceMessage já faz pra texto. API oficial só
 // entrega mídia dentro da janela de 24h (mesma regra de texto livre); fora da janela, a Meta rejeita.
-export async function sendInstanceMedia(contactId: string, instanceId: string, formData: FormData): Promise<ActionResult> {
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo." };
-  if (file.size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 20MB." };
-
+export async function sendInstanceMedia(contactId: string, instanceId: string, upload: ManualUpload): Promise<ActionResult> {
   const supabase = await createClient();
   const [{ data: contact }, { data: instance }] = await Promise.all([
     supabase.from("contacts").select("id, phone, workspace_id").eq("id", contactId).maybeSingle(),
@@ -222,21 +262,20 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, f
   if (!contact.phone) return { error: "Contato sem telefone." };
 
   const admin = createAdminClient();
-  const kind = mediaKindFromMime(file.type);
-  const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
-  const mediaUrl = await uploadConversationMedia(admin, contact.workspace_id, contactId, base64, file.type || "application/octet-stream");
-  if (!mediaUrl) return { error: "Falha ao subir o arquivo." };
+  const media = resolveUploadedMedia(admin, contact.workspace_id, contactId, upload);
+  if ("error" in media) return { error: media.error };
+  const { url: mediaUrl, kind, fileName } = media;
 
   try {
     if (instance.channel === "360dialog") {
       if (!instance.dialog360_api_key) return { error: "Esse número ainda não tem a API key do 360dialog configurada." };
-      await sendDialog360Media(instance.dialog360_api_key, contact.phone, kind, mediaUrl);
+      await sendDialog360Media(instance.dialog360_api_key, contact.phone, kind, mediaUrl, undefined, fileName);
     } else if (instance.channel === "metacloud") {
       if (!instance.phone_number_id) return { error: "Esse número ainda não tem o phone_number_id da Meta configurado." };
-      await sendMetaCloudMedia(instance.phone_number_id, contact.phone, kind, mediaUrl);
+      await sendMetaCloudMedia(instance.phone_number_id, contact.phone, kind, mediaUrl, undefined, fileName);
     } else {
       if (!instance.instance_name) return { error: "Esse número ainda não tem a instância Evolution configurada." };
-      await sendMedia(instance.instance_name, contact.phone, mediaUrl, { mediatype: kind, fileName: file.name });
+      await sendMedia(instance.instance_name, contact.phone, mediaUrl, { mediatype: kind, fileName });
     }
   } catch (e) {
     return { error: mensagemDeFalha(e) };
@@ -247,7 +286,7 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, f
     contact_id: contactId,
     agent_id: null,
     role: "assistant",
-    content: `[arquivo enviado: ${file.name}]`,
+    content: `[arquivo enviado: ${fileName}]`,
     media_url: mediaUrl,
     media_type: kind,
   });

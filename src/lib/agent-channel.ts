@@ -24,8 +24,8 @@ export async function agentSendMedia(
   opts: { mediatype: "image" | "audio" | "document"; caption?: string; fileName?: string }
 ): Promise<void> {
   if (channel.kind === "evolution") return void (await sendMedia(channel.instanceName, to, link, opts));
-  if (channel.kind === "360dialog") return void (await sendDialog360Media(channel.apiKey, to, opts.mediatype, link, opts.caption));
-  await sendMetaCloudMedia(channel.phoneNumberId, to, opts.mediatype, link, opts.caption);
+  if (channel.kind === "360dialog") return void (await sendDialog360Media(channel.apiKey, to, opts.mediatype, link, opts.caption, opts.fileName));
+  await sendMetaCloudMedia(channel.phoneNumberId, to, opts.mediatype, link, opts.caption, opts.fileName);
 }
 
 // Busca de foto de perfil e leitura de áudio/imagem recebidos (getMediaBase64) só existem hoje pro

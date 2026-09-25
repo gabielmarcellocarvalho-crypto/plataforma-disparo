@@ -65,14 +65,20 @@ export async function sendDialog360Media(
   to: string,
   kind: "image" | "audio" | "document",
   link: string,
-  caption?: string
+  caption?: string,
+  fileName?: string
 ): Promise<SendResult> {
   return post(apiKey, "/messages", {
     messaging_product: "whatsapp",
     recipient_type: "individual",
     to,
     type: kind,
-    [kind]: { link, ...(kind !== "audio" && caption ? { caption } : {}) },
+    // Documento sem filename chega no WhatsApp do contato como "Sem título" / "Untitled".
+    [kind]: {
+      link,
+      ...(kind !== "audio" && caption ? { caption } : {}),
+      ...(kind === "document" && fileName ? { filename: fileName } : {}),
+    },
   });
 }
 
