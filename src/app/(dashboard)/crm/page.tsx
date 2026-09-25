@@ -32,6 +32,7 @@ type ContactRow = {
   lost_reason: string | null;
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
+  tags: string[] | null;
 };
 
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
@@ -41,7 +42,7 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
     const { data } = await supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id, tags"
       )
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })

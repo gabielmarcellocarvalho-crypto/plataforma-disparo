@@ -41,6 +41,7 @@ export function CrmLeadDrawer({
   teamMembers = [],
   branches = [],
   lostReasons = [],
+  onPatched,
 }: {
   contactId: string | null;
   onClose: () => void;
@@ -50,6 +51,9 @@ export function CrmLeadDrawer({
   teamMembers?: TeamMemberRow[];
   branches?: BranchRow[];
   lostReasons?: string[];
+  // Avisa quem abriu o painel (o Pipeline guarda a própria cópia dos leads) pra o card refletir a
+  // mudança na hora, sem esperar recarregar a página.
+  onPatched?: (id: string, patch: { tags?: string[]; team_member_id?: string | null; branch_id?: string | null }) => void;
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -115,6 +119,7 @@ export function CrmLeadDrawer({
   function handleTagsChange(next: string[]) {
     setTags(next);
     if (!contactId) return;
+    onPatched?.(contactId, { tags: next });
     startTransition(async () => {
       const r = await updateContactTags(contactId, next);
       if (r.error) setError(r.error);
@@ -160,6 +165,7 @@ export function CrmLeadDrawer({
 
     setTeamMemberId(member);
     setBranchId(branch);
+    onPatched?.(contactId, { team_member_id: member || null, branch_id: branch || null });
     startTransition(async () => {
       const result = await updateContactAssignment(contactId, { teamMemberId: member || null, branchId: branch || null });
       if (result.error) setError(result.error);

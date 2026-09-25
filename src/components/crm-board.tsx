@@ -36,6 +36,7 @@ type Contact = {
   lost_reason: string | null;
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
+  tags: string[] | null;
 };
 
 type FieldFilter = { key: string; value: string };
@@ -61,6 +62,10 @@ const STAGE_ACCENT: Record<ContactStage, string> = {
   concluido: "bg-success",
   descartado: "bg-danger",
 };
+
+// Um lead pode ter até 30 tags; no card cabem poucas sem virar parede. O resto vai pro "+N", com a
+// lista completa no hover e no painel do lead.
+const CARD_MAX_TAGS = 3;
 
 function initials(name: string | null, phone: string | null, email: string | null) {
   const source = (name || phone || email || "?").trim();
@@ -303,6 +308,7 @@ function ContactCard({
       : Object.entries(contact.custom_fields || {})
           .slice(0, 3)
           .map(([k, v]) => [k, Array.isArray(v) ? readMultiValue(v).join(", ") : String(v)] as const);
+  const tags = contact.tags ?? [];
   const stage = contact.stage as ContactStage;
   const ageInStage = daysSince(contact.stage_changed_at);
   const stale = ageInStage >= STALE_AFTER_DAYS && stage !== "concluido" && stage !== "descartado";
@@ -344,6 +350,21 @@ function ContactCard({
         )}
       </div>
 
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {tags.slice(0, CARD_MAX_TAGS).map((tag) => (
+            <span key={tag} className="text-[10px] font-bold rounded-full bg-primary-soft text-primary-strong px-2 py-0.5 truncate max-w-[130px]" title={tag}>
+              {tag}
+            </span>
+          ))}
+          {tags.length > CARD_MAX_TAGS && (
+            <span className="text-[10px] font-bold rounded-full bg-surface-2 border border-border text-text-muted px-1.5 py-0.5" title={tags.slice(CARD_MAX_TAGS).join(", ")}>
+              +{tags.length - CARD_MAX_TAGS}
+            </span>
+          )}
+        </div>
+      )}
+
       {fields.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {fields.map(([key, value]) => (
@@ -355,7 +376,14 @@ function ContactCard({
       )}
 
       <div className="text-[10.5px] text-text-muted flex items-center justify-between gap-2 border-t border-border pt-1.5 mt-0.5">
-        <span className="truncate">{responsibleName ? responsibleName : `entrou ${formatDateShort(contact.created_at)}`}</span>
+        {responsibleName ? (
+          <span className="inline-flex items-center gap-1 min-w-0 font-semibold text-text" title={`Responsável: ${responsibleName}`}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-muted" aria-hidden><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+            <span className="truncate">{responsibleName}</span>
+          </span>
+        ) : (
+          <span className="truncate">entrou {formatDateShort(contact.created_at)}</span>
+        )}
         {!stale && <span className="shrink-0">{ageInStage === 0 ? "hoje" : `há ${ageInStage}d`}</span>}
       </div>
     </div>
@@ -457,6 +485,9 @@ export function CrmBoard({
     return [...todos].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [lostReasons, items]);
   const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
+  // Coluna de etiquetas só aparece na lista quando a base usa tag — workspace que nunca marcou
+  // nenhuma não ganha uma coluna inteira de travessões.
+  const temTags = useMemo(() => items.some((c) => c.tags && c.tags.length > 0), [items]);
 
   // Campo COM definição usa a lista de opções cadastrada (aparece mesmo com zero lead preenchido, e
   // na ordem que o cliente definiu). Campo sem definição — herança do formato livre antigo e do que
@@ -1081,6 +1112,7 @@ export function CrmBoard({
                 <th className="px-3 py-2.5">Lead</th>
                 <th className="px-3 py-2.5">Etapa</th>
                 {teamMembers.length > 0 && <th className="px-3 py-2.5">Responsável</th>}
+                {temTags && <th className="px-3 py-2.5">Etiquetas</th>}
                 <th className="px-3 py-2.5 whitespace-nowrap">Próxima tarefa</th>
                 <th className="px-3 py-2.5 text-right whitespace-nowrap">Interações</th>
                 <th className="px-3 py-2.5 whitespace-nowrap">Parado há</th>
@@ -1114,6 +1146,24 @@ export function CrmBoard({
                     {teamMembers.length > 0 && (
                       <td className="px-3 py-2.5 text-text-muted truncate max-w-[160px]">
                         {(c.team_member_id && teamNameById.get(c.team_member_id)) || "—"}
+                      </td>
+                    )}
+                    {temTags && (
+                      <td className="px-3 py-2.5">
+                        {c.tags && c.tags.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 max-w-[240px]" title={c.tags.join(", ")}>
+                            {c.tags.slice(0, CARD_MAX_TAGS).map((tag) => (
+                              <span key={tag} className="text-[10px] font-bold rounded-full bg-primary-soft text-primary-strong px-2 py-0.5 truncate max-w-[110px]">
+                                {tag}
+                              </span>
+                            ))}
+                            {c.tags.length > CARD_MAX_TAGS && (
+                              <span className="text-[10px] font-bold text-text-muted py-0.5">+{c.tags.length - CARD_MAX_TAGS}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-text-muted">—</span>
+                        )}
                       </td>
                     )}
                     <td className={`px-3 py-2.5 whitespace-nowrap ${atrasada ? "text-danger font-semibold" : "text-text-muted"}`}>
@@ -1195,6 +1245,7 @@ export function CrmBoard({
         teamMembers={teamMembers}
         branches={branches}
         lostReasons={lostReasons}
+        onPatched={(id, patch) => setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))}
       />
     </div>
   );
