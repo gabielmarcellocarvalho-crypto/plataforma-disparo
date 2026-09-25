@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   takeOverConversation,
@@ -107,8 +107,48 @@ function Avatar({ photoUrl, name, phone, size }: { photoUrl: string | null; name
   );
 }
 
+// Fuso fixo: a página também é renderizada no servidor (UTC na Vercel), e sem isso a hora e o "dia" de
+// uma mensagem perto da meia-noite saíam diferentes no servidor e no navegador.
+const TZ = "America/Sao_Paulo";
+
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
+}
+
+// Chave do dia civil (AAAA-MM-DD) no fuso de Brasília — é o que decide onde entra o separador de data.
+function dayKey(date: Date) {
+  return date.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+
+// Diferença em dias de calendário entre hoje e a data (0 = hoje, 1 = ontem).
+function daysAgo(iso: string) {
+  const [y1, m1, d1] = dayKey(new Date()).split("-").map(Number);
+  const [y2, m2, d2] = dayKey(new Date(iso)).split("-").map(Number);
+  return Math.round((Date.UTC(y1, m1 - 1, d1) - Date.UTC(y2, m2 - 1, d2)) / 86_400_000);
+}
+
+// Separador no meio da conversa, no estilo do WhatsApp: Hoje / Ontem / dia da semana / data completa.
+function formatDaySeparator(iso: string) {
+  const diff = daysAgo(iso);
+  if (diff === 0) return "Hoje";
+  if (diff === 1) return "Ontem";
+  const d = new Date(iso);
+  if (diff > 1 && diff < 7) {
+    const weekday = d.toLocaleDateString("pt-BR", { weekday: "long", timeZone: TZ });
+    return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  }
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", timeZone: TZ });
+}
+
+// Horário da última mensagem na lista de conversas: hora se foi hoje, senão o dia (como no WhatsApp) —
+// só a hora fazia uma conversa de semana passada parecer de agora há pouco.
+function formatListTime(iso: string) {
+  const diff = daysAgo(iso);
+  if (diff === 0) return formatTime(iso);
+  if (diff === 1) return "Ontem";
+  const d = new Date(iso);
+  if (diff > 1 && diff < 7) return d.toLocaleDateString("pt-BR", { weekday: "short", timeZone: TZ }).replace(".", "");
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", timeZone: TZ });
 }
 
 // Placeholders sintéticos que o backend grava quando não há texto de verdade pra acompanhar a mídia
@@ -577,7 +617,7 @@ export function ConversationsPanel({
                       >
                         {TICKET_STATUS_LABELS[c.ticket_status]}
                       </span>
-                      {last && <time className="text-xs text-text-muted shrink-0">{formatTime(last.created_at)}</time>}
+                      {last && <time className="text-xs text-text-muted shrink-0" dateTime={last.created_at}>{formatListTime(last.created_at)}</time>}
                     </div>
                     <p className="text-sm text-text-muted truncate mt-1">
                       {c.contact.needs_attention
@@ -757,18 +797,27 @@ export function ConversationsPanel({
             )}
 
             <div className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-2.5 bg-bg/40">
-              {orderedMessages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`max-w-[75%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
-                    m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
-                  }`}
-                >
-                  {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} />}
-                  {!MEDIA_ONLY_PLACEHOLDER.test(m.content) && m.content}
-                  <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
-                </div>
-              ))}
+              {orderedMessages.map((m, i) => {
+                const newDay = i === 0 || dayKey(new Date(m.created_at)) !== dayKey(new Date(orderedMessages[i - 1].created_at));
+                return (
+                  <Fragment key={m.id}>
+                    {newDay && (
+                      <div className="self-center my-1.5 text-xs font-semibold text-text-muted bg-surface border border-border rounded-full px-3 py-1 shadow-sm">
+                        {formatDaySeparator(m.created_at)}
+                      </div>
+                    )}
+                    <div
+                      className={`max-w-[75%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
+                        m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
+                      }`}
+                    >
+                      {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} />}
+                      {!MEDIA_ONLY_PLACEHOLDER.test(m.content) && m.content}
+                      <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
+                    </div>
+                  </Fragment>
+                );
+              })}
             </div>
 
             <form
