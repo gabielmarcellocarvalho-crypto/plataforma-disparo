@@ -5,6 +5,9 @@ import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { AgentEditView } from "@/components/agent-edit-view";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { listConnections } from "@/lib/calendar/connections";
+import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
@@ -58,6 +61,20 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
   // Campos do workspace — o agente escolhe o que coletar entre eles, em vez de inventar chave
   // própria: é isso que faz o dado coletado na conversa cair no mesmo campo que o CRM filtra e soma.
   const fieldDefs = await listCustomFieldDefs();
+
+  // Pessoas da Equipe que podem receber reunião desse agente, com o status da agenda de cada uma
+  // (conexão lida pelo servidor — calendar_connections não é legível pelo usuário, tem o token).
+  const [{ data: teamRows }, connections] = await Promise.all([
+    supabase.from("team_members").select("id, name, role").eq("workspace_id", agent.workspace_id).eq("active", true).order("name"),
+    listConnections(createAdminClient(), agent.workspace_id).catch(() => []),
+  ]);
+  const connByMember = new Map(connections.map((c) => [c.team_member_id, c.status]));
+  const schedulingClosers: SchedulingCloserOption[] = (teamRows ?? []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    role: m.role,
+    status: connByMember.get(m.id) ?? "desconectado",
+  }));
 
   // Candidatos a receber a conversa: os outros agentes do mesmo workspace. "Tem número" decide se o
   // modo "outro número" é viável — sem número conectado, o agente que assume não consegue se apresentar.
@@ -119,6 +136,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       </Link>
       <AgentEditView
         fieldDefs={fieldDefs}
+        schedulingClosers={schedulingClosers}
         availableInstances={availableInstances}
         handoffOptions={handoffOptions}
         agent={agent}

@@ -68,7 +68,25 @@ export type AgentConfig = {
   // cron move o contato pra "descartado" sozinho). Roda fora da geração normal do prompt (não é texto
   // injetado no system_prompt); é configuração operacional lida direto pelo cron.
   followUp: { enabled: boolean; intervalDays: number; maxCount: number };
+  // Agendamento de reunião na agenda do closer (Integrações → Google Agenda). Desligado por padrão:
+  // sem isso ligado, o agente nem recebe as ferramentas de agenda. Duração e horário não ficam aqui —
+  // vêm dos próprios eventos "Marque aqui" que o closer cria.
+  scheduling: SchedulingConfig;
 };
+
+export type SchedulingConfig = {
+  enabled: boolean;
+  // Pessoas da Equipe (team_members) que recebem reunião desse agente, na ordem de desempate do rodízio.
+  closerIds: string[];
+  // Título do evento que marca um horário disponível na agenda do closer.
+  slotTitle: string;
+  // Não oferece horário que começa antes disso.
+  minNoticeHours: number;
+  // Até quantos dias à frente oferecer.
+  daysAhead: number;
+};
+
+export const SCHEDULING_DEFAULTS: SchedulingConfig = { enabled: false, closerIds: [], slotTitle: "Marque aqui", minNoticeHours: 2, daysAhead: 7 };
 
 export type AgentModeDef = {
   key: Exclude<AgentMode, "">;
@@ -159,6 +177,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   maxBubbles: MAX_BUBBLES_DEFAULT,
   bubbleCharLimit: BUBBLE_CHAR_LIMIT_DEFAULT,
   followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT },
+  scheduling: { ...SCHEDULING_DEFAULTS },
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -212,6 +231,21 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     maxBubbles: clampBubbles(r.maxBubbles),
     bubbleCharLimit: clampBubbleCharLimit(r.bubbleCharLimit),
     followUp: normalizeFollowUp(r.followUp),
+    scheduling: normalizeScheduling(r.scheduling),
+  };
+}
+
+export function normalizeScheduling(raw: unknown): SchedulingConfig {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, def: number, min: number, max: number) =>
+    typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.floor(v))) : def;
+  const title = typeof f.slotTitle === "string" ? f.slotTitle.trim().slice(0, 60) : "";
+  return {
+    enabled: Boolean(f.enabled),
+    closerIds: Array.isArray(f.closerIds) ? [...new Set((f.closerIds as unknown[]).map((v) => String(v ?? "")).filter(Boolean))] : [],
+    slotTitle: title || SCHEDULING_DEFAULTS.slotTitle,
+    minNoticeHours: num(f.minNoticeHours, SCHEDULING_DEFAULTS.minNoticeHours, 0, 72),
+    daysAhead: num(f.daysAhead, SCHEDULING_DEFAULTS.daysAhead, 1, 30),
   };
 }
 

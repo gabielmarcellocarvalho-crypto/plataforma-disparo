@@ -32,11 +32,15 @@ type GeminiContentPart = { type: "text"; text: string } | { type: "image"; data:
 type GeminiStep = { type: "user_input" | "model_output"; content: GeminiContentPart[] };
 
 function toGeminiTool(tool: Anthropic.Tool) {
+  // Ferramenta sem parâmetro nenhum (ex.: ver_horarios_disponiveis) vai sem `parameters`: o Gemini é
+  // mais exigente que a Anthropic com esquema de objeto vazio.
+  const props = (tool.input_schema as { properties?: Record<string, unknown> }).properties;
+  const hasParams = props && Object.keys(props).length > 0;
   return {
     type: "function" as const,
     name: tool.name,
     description: tool.description,
-    parameters: tool.input_schema,
+    ...(hasParams ? { parameters: tool.input_schema } : {}),
   };
 }
 

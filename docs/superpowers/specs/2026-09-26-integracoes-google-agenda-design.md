@@ -154,9 +154,9 @@ Se o lead já tem reunião ativa (`marcada`/`remarcada`), o closer é o dessa re
 | `cancelar_reuniao` | — | devolve o evento a "Marque aqui" (notifica o convidado); `status='cancelada'` |
 
 **Devolver a "Marque aqui"** = `PATCH` restaurando título `slotTitle`, descrição vazia, sem
-convidados e sem Meet (`conferenceData` removido — comportamento da API a confirmar na
-implementação; se o Google não permitir remover a conferência, o evento é apagado e um "Marque aqui"
-avulso é recriado no mesmo horário).
+convidados e sem Meet (`conferenceData: null`). **Confirmado em 2026-09-26** contra agenda real: o
+Google remove a conferência no PATCH. O caminho de reserva (apagar + recriar "Marque aqui" no mesmo
+horário) ficou no código só pra caso de erro inesperado.
 
 A seleção de horários é função pura (`pickSlots(eventos, slotTitle, regras, agora)`), testável sem
 Google. O `If-Match` com etag fecha a corrida de dois leads pegando o mesmo evento: o segundo PATCH

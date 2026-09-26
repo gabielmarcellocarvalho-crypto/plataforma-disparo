@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
+import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
   buildSystemPrompt,
@@ -160,6 +161,7 @@ export function AgentConfigForm({
   initialLlmProvider,
   mediaCategories,
   fieldDefs = [],
+  closers = [],
 }: {
   agentId: string;
   initialConfig: AgentConfig;
@@ -167,6 +169,7 @@ export function AgentConfigForm({
   initialLlmProvider: LlmProvider;
   mediaCategories: string[];
   fieldDefs?: CustomFieldDef[];
+  closers?: SchedulingCloserOption[];
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
@@ -380,6 +383,8 @@ export function AgentConfigForm({
           </div>
         )}
       </div>
+
+      <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <span className="text-sm font-bold">Informações que preciso</span>

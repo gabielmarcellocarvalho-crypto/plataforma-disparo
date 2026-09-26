@@ -72,6 +72,18 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/integracoes",
+    label: "Integrações",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 2v6" />
+        <path d="M15 2v6" />
+        <path d="M6 8h12v4a6 6 0 0 1-12 0V8Z" />
+        <path d="M12 18v4" />
+      </svg>
+    ),
+  },
+  {
     href: "/agentes",
     label: "Agentes",
     icon: (
@@ -184,7 +196,7 @@ const NAV_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "", hrefs: ["/"] },
   { label: "Atendimento", hrefs: ["/conversas", "/agentes"] },
   { label: "CRM", hrefs: ["/crm", "/contatos", "/empresas", "/equipe", "/agenda"] },
-  { label: "Automação", hrefs: ["/automacoes", "/campanhas"] },
+  { label: "Automação", hrefs: ["/automacoes", "/campanhas", "/integracoes"] },
   { label: "Análise", hrefs: ["/metricas"] },
   { label: "", hrefs: ["/configuracoes"] },
 ];

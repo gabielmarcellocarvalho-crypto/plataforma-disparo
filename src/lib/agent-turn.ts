@@ -7,6 +7,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchContactProfilePicture } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
+import { getSchedulingContext } from "@/lib/scheduling";
+import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
 import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-channel";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
@@ -184,7 +186,7 @@ export async function runAgentTurn(
   resolved: ResolvedIncoming
 ) {
   const CONTACT_COLUMNS =
-    "id, name, custom_fields, opt_out_whatsapp, needs_attention, flagged_reason, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
+    "id, name, email, custom_fields, opt_out_whatsapp, needs_attention, flagged_reason, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -474,8 +476,24 @@ export async function runAgentTurn(
   const { data: mediaCats } = await supabase.from("agent_media").select("category").eq("agent_id", agent.id);
   const categories = [...new Set((mediaCats || []).map((m) => m.category))];
   const { mediaFolderNotes, maxBubbles, bubbleCharLimit } = agentConfig;
-  const tools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
-  const executor = categories.length ? makeToolExecutor(supabase, agent, channel, phone, contact.id) : undefined;
+  const mediaTools = categories.length ? buildAgentTools(categories, mediaFolderNotes) : [];
+  const mediaExecutor = categories.length ? makeToolExecutor(supabase, agent, channel, phone, contact.id) : undefined;
+
+  // Agenda do closer (Integrações → Google Agenda). null quando o agente não tem agendamento ligado ou
+  // nenhum closer conectado — aí nada muda: nem ferramenta, nem instrução no prompt.
+  const scheduling = await getSchedulingContext(supabase, cerebro, contact.id).catch((err) => {
+    console.error("Agendamento indisponível neste turno:", err instanceof Error ? err.message : err);
+    return null;
+  });
+  const schedulingExecutor = scheduling
+    ? makeSchedulingExecutor(supabase, scheduling, cerebro, { ...contact, phone })
+    : undefined;
+  const tools = [...mediaTools, ...(scheduling ? buildSchedulingTools(scheduling) : [])];
+  const executor: ToolExecutor | undefined =
+    mediaExecutor || schedulingExecutor
+      ? (name, input) =>
+          SCHEDULING_TOOL_NAMES.has(name) && schedulingExecutor ? schedulingExecutor(name, input) : mediaExecutor ? mediaExecutor(name, input) : Promise.resolve(`Ferramenta "${name}" não implementada.`)
+      : undefined;
 
   const { data: knowledgeRows } = await supabase.from("agent_knowledge").select("file_name, content").eq("agent_id", agent.id);
   const knowledgeText = knowledgeRows?.length
@@ -484,7 +502,7 @@ export async function runAgentTurn(
 
   const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    cerebro.system_prompt,
+    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : ""),
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,

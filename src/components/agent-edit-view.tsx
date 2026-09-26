@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { connectAgent, linkAgentInstance, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
+import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import { AgentHandoffForm, type HandoffAgentOption } from "@/components/agent-handoff-form";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
@@ -78,6 +79,7 @@ export function AgentEditView({
   fieldDefs,
   handoffOptions,
   availableInstances = [],
+  schedulingClosers = [],
 }: {
   agent: Agent;
   model: string;
@@ -88,6 +90,7 @@ export function AgentEditView({
   fieldDefs: CustomFieldDef[];
   handoffOptions: HandoffAgentOption[];
   availableInstances?: AvailableInstance[];
+  schedulingClosers?: SchedulingCloserOption[];
 }) {
   const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
@@ -383,6 +386,7 @@ export function AgentEditView({
             initialLlmProvider={agent.llm_provider}
             mediaCategories={mediaCategories}
             fieldDefs={fieldDefs}
+            closers={schedulingClosers}
           />
         </div>
       )}

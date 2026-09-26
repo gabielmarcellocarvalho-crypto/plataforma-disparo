@@ -67,6 +67,13 @@ const STAGE_ACCENT: Record<ContactStage, string> = {
 // lista completa no hover e no painel do lead.
 const CARD_MAX_TAGS = 3;
 
+function formatMeeting(iso: string) {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
+  const time = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+  return `${date} ${time}`;
+}
+
 function initials(name: string | null, phone: string | null, email: string | null) {
   const source = (name || phone || email || "?").trim();
   return source.slice(0, 2).toUpperCase();
@@ -288,6 +295,7 @@ function ContactCard({
   onOpen,
   cardDefs,
   responsibleName,
+  meetingAt,
 }: {
   contact: Contact;
   dragging: boolean;
@@ -296,6 +304,7 @@ function ContactCard({
   onOpen: (id: string) => void;
   cardDefs: CustomFieldDef[];
   responsibleName: string | null;
+  meetingAt: string | null;
 }) {
   // Com esquema definido, o card mostra só os campos marcados como "etiqueta no card" (e pelo
   // rótulo, não pela chave crua). Sem nenhum campo marcado, cai no comportamento antigo: os 3
@@ -342,6 +351,11 @@ function ContactCard({
       <div className="flex items-center gap-1.5 flex-wrap">
         {contact.needs_attention && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">precisa de atenção</span>}
         {!contact.needs_attention && contact.flagged_reason && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">alerta do agente</span>}
+        {meetingAt && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-info-soft text-info-text" title="Reunião marcada pelo agente">
+            Reunião {formatMeeting(meetingAt)}
+          </span>
+        )}
         {stale && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">parado {ageInStage}d</span>}
         {contact.lost_reason && (
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted truncate max-w-[160px]" title={contact.lost_reason}>
@@ -402,6 +416,7 @@ export function CrmBoard({
   askLostReason: initialAskLostReason,
   pipelines,
   activity,
+  meetings = [],
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -414,6 +429,8 @@ export function CrmBoard({
   askLostReason: boolean;
   pipelines: PipelineWithStages[];
   activity: ContactActivity;
+  // [contact_id, starts_at] das reuniões futuras, em ordem de início.
+  meetings?: [string, string][];
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -485,6 +502,12 @@ export function CrmBoard({
     return [...todos].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [lostReasons, items]);
   const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
+  // Primeira reunião futura de cada lead (a lista já vem em ordem de início).
+  const meetingByContact = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [contactId, startsAt] of meetings) if (!map.has(contactId)) map.set(contactId, startsAt);
+    return map;
+  }, [meetings]);
   // Coluna de etiquetas só aparece na lista quando a base usa tag — workspace que nunca marcou
   // nenhuma não ganha uma coluna inteira de travessões.
   const temTags = useMemo(() => items.some((c) => c.tags && c.tags.length > 0), [items]);
@@ -1142,6 +1165,9 @@ export function CrmBoard({
                         <span className="truncate max-w-[160px]">{nomeDaEtapa(c)}</span>
                       </span>
                       {c.lost_reason && <div className="text-[11px] text-text-muted truncate max-w-[180px]">{c.lost_reason}</div>}
+                      {meetingByContact.get(c.id) && (
+                        <div className="text-[11px] font-semibold text-info-text whitespace-nowrap">Reunião {formatMeeting(meetingByContact.get(c.id)!)}</div>
+                      )}
                     </td>
                     {teamMembers.length > 0 && (
                       <td className="px-3 py-2.5 text-text-muted truncate max-w-[160px]">
@@ -1216,6 +1242,7 @@ export function CrmBoard({
                           onOpen={setOpenId}
                           cardDefs={cardDefs}
                           responsibleName={c.team_member_id ? teamNameById.get(c.team_member_id) ?? null : null}
+                          meetingAt={meetingByContact.get(c.id) ?? null}
                         />
                       ))
                     )}

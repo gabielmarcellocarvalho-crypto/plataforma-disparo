@@ -55,11 +55,34 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
   return all;
 }
 
+// Reuniões marcadas pelo agente que ainda vão acontecer — viram o selo "Reunião dd/mm hh:mm" no card.
+// Busca por workspace (nunca .in() com ids de contato) e pagina, como o resto desta página.
+async function fetchUpcomingMeetings(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<[string, string][]> {
+  const out: [string, string][] = [];
+  const now = new Date().toISOString();
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("meetings")
+      .select("contact_id, starts_at")
+      .eq("workspace_id", workspaceId)
+      .in("status", ["marcada", "remarcada"])
+      .gte("starts_at", now)
+      .order("starts_at", { ascending: true })
+      .order("id")
+      .range(offset, offset + PAGE_SIZE - 1);
+    // Sem a tabela (migration pendente) ou com erro, o Pipeline segue sem o selo.
+    if (error || !data) break;
+    for (const m of data) out.push([m.contact_id as string, m.starts_at as string]);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
 export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines, activity] = workspace
+  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines, activity, meetings] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons, ask_lost_reason").eq("id", workspace.id).maybeSingle(),
@@ -68,8 +91,9 @@ export default async function CrmPage() {
         listBranches(),
         listPipelines(),
         getContactActivity(supabase, workspace.id),
+        fetchUpcomingMeetings(supabase, workspace.id),
       ])
-    : [[] as ContactRow[], { data: null }, [], [], [], [], { nextTaskAt: [], interactions: [] }];
+    : [[] as ContactRow[], { data: null }, [], [], [], [], { nextTaskAt: [], interactions: [] }, [] as [string, string][]];
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
@@ -92,6 +116,7 @@ export default async function CrmPage() {
         askLostReason={askLostReason}
         pipelines={pipelines}
         activity={activity}
+        meetings={meetings}
       />
     </div>
   );

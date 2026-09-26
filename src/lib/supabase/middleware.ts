@@ -25,6 +25,10 @@ const PUBLIC_PATHS = [
   "/politica-privacidade",
   "/termos-de-uso",
   "/exclusao-de-dados",
+  // Link de conexão da agenda que vai pro closer (normalmente sem login) e o retorno do Google —
+  // a segurança dos dois está no token/state assinado, não na sessão.
+  "/conectar-agenda",
+  "/api/integrations/google/callback",
 ];
 
 export async function updateSession(request: NextRequest) {

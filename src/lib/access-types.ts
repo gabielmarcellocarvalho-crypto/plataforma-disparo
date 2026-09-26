@@ -24,6 +24,7 @@ export const PAGE_CATALOG: { path: string; label: string; hint: string }[] = [
   { path: "/campanhas", label: "Campanhas", hint: "disparo em massa de WhatsApp e e-mail" },
   { path: "/metricas", label: "Métricas", hint: "relatórios de leads e de custo" },
   { path: "/agentes", label: "Agentes de IA", hint: "atendimento automático — desligue se o cliente não usa" },
+  { path: "/integracoes", label: "Integrações", hint: "Google Agenda dos closers e outras conexões externas" },
 ];
 
 const CATALOG_PATHS = new Set(PAGE_CATALOG.map((p) => p.path));
@@ -32,10 +33,10 @@ const CATALOG_PATHS = new Set(PAGE_CATALOG.map((p) => p.path));
 // do cliente, e dali em diante a lista é editável na mão.
 export const ACCESS_TYPES: { key: AccessType; label: string; pages: string[] }[] = [
   { key: "disparo_avulso", label: "Disparo Avulso", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/campanhas", "/configuracoes"] },
-  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/configuracoes"] },
-  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
-  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/configuracoes"] },
+  { key: "sdr", label: "SDR", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/integracoes", "/configuracoes"] },
+  { key: "closer", label: "Closer", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/integracoes", "/configuracoes"] },
+  { key: "sdr_light", label: "SDR LIGHT", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/integracoes", "/configuracoes"] },
+  { key: "ultra", label: "Ultra", pages: ["/", "/conversas", "/crm", "/empresas", "/equipe", "/agenda", "/automacoes", "/contatos", "/metricas", "/campanhas", "/integracoes", "/configuracoes"] },
 ];
 
 const PAGES_BY_TYPE = new Map(ACCESS_TYPES.map((t) => [t.key, new Set(t.pages)]));
