@@ -83,6 +83,12 @@ export async function GET(req: Request) {
       if (contact.needs_attention || contact.opt_out_whatsapp) continue;
       if (contact.stage === "concluido" || contact.stage === "descartado") continue;
 
+      // REGRA: follow-up só em conversa ABERTA — o lead precisa ter respondido ao menos uma vez. Hoje
+      // isso já acontece na prática (o agente só fala com quem escreveu primeiro), mas mensagem que o
+      // agente manda sozinho (apresentação na passagem de bastão, por exemplo) não pode virar porta de
+      // entrada pra cobrar quem nunca conversou.
+      if (!arr.some((m) => m.role === "user")) continue;
+
       const last = arr[arr.length - 1];
       if (last.role !== "assistant") continue; // esperando resposta normal — não é caso de follow-up
 

@@ -30,6 +30,32 @@ type Contact = {
 
 const CONTACT_SELECT = "id, workspace_id, name, phone, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, created_at, custom_fields";
 
+// O PostgREST devolve no máximo 1000 linhas por resposta (teto do servidor, ignora .limit()), então
+// toda busca "traz tudo" daqui pagina de verdade. `build` monta a query do zero a cada página, com
+// ordem estável — sem ordem definida o PostgREST embaralha as linhas entre páginas. Erro vira exceção:
+// antes a falha era engolida e o motor seguia com lista vazia, sem ninguém perceber.
+const PAGE_SIZE = 1000;
+type PageResult<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+async function fetchAllPages<T>(build: (from: number, to: number) => PageResult<T>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
+}
+
+// Lista de ids vai na URL; em blocos pequenos ela fica curta. Um .in() com ~1000 uuids passava de 37KB
+// de URL, o PostgREST devolvia 400 a cada minuto e cada falha gravava a URL inteira no log — sozinha,
+// essa consulta era a maior fonte de log do projeto.
+const ID_CHUNK = 50;
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 // Resolve os campos que exigem 1 lookup extra (nome da empresa, nome do responsável) só quando o
 // contato de fato tem esses ids — mensagem/tarefa/webhook usam isso pra interpolar {{empresa}} e
 // {{responsavel}}.
@@ -103,63 +129,94 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
   const audience = (workflow.audience_config || {}) as AudienceConfig;
   const cfg = workflow.trigger_config as Record<string, unknown>;
 
-  let query = supabase.from("contacts").select(CONTACT_SELECT).eq("workspace_id", workflow.workspace_id);
+  const base = () => {
+    let query = supabase.from("contacts").select(CONTACT_SELECT).eq("workspace_id", workflow.workspace_id);
+    if (audience.stage) query = query.eq("stage", audience.stage);
+    if (audience.responsibleUserId) query = query.eq("responsible_user_id", audience.responsibleUserId);
+    return query;
+  };
 
-  if (audience.stage) query = query.eq("stage", audience.stage);
-  if (audience.responsibleUserId) query = query.eq("responsible_user_id", audience.responsibleUserId);
-
+  let build: () => ReturnType<typeof base>;
   if (workflow.trigger_type === "stage_enter") {
     const stage = String(cfg.stage || "");
     if (!stage) return [];
     // Janela de captura precisa ser folgada o bastante pra cobrir o intervalo entre execuções do
     // cron externo — quem mudou de etapa nos últimos 30min é considerado "acabou de entrar".
     const cutoff = new Date(Date.now() - 30 * 60_000).toISOString();
-    query = query.eq("stage", stage).gte("stage_changed_at", cutoff);
+    build = () => base().eq("stage", stage).gte("stage_changed_at", cutoff);
   } else if (workflow.trigger_type === "stage_stale") {
     const stage = String(cfg.stage || "");
     const days = Number(cfg.days) || 3;
     if (!stage) return [];
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-    query = query.eq("stage", stage).lte("stage_changed_at", cutoff);
+    build = () => base().eq("stage", stage).lte("stage_changed_at", cutoff);
   } else if (workflow.trigger_type === "no_reply") {
-    query = query.not("stage", "in", "(concluido,descartado)");
+    build = () => base().not("stage", "in", "(concluido,descartado)");
   } else {
     return [];
   }
 
-  const { data } = await query;
-  return (data || []) as Contact[];
+  return fetchAllPages<Contact>((from, to) => build().order("id").range(from, to) as unknown as PageResult<Contact>);
 }
 
 // "Ficou X dias sem responder": pega a última mensagem enviada (assistant) e a última recebida
 // (user) por contato — só qualifica quem tem outbound mais recente que o inbound (ou nunca respondeu)
 // e isso já passou do prazo configurado.
+//
+// REGRA: só entra quem JÁ ABRIU CONVERSA (respondeu pelo menos uma vez). Lead que só recebeu disparo
+// não é "conversa parada", é base fria — e sem essa trava um workspace com milhares de leads de disparo
+// mandaria texto livre pra todos de uma vez (que a API oficial ainda recusa fora da janela de 24h).
+type MessageStamp = { contact_id: string; created_at: string };
 async function filterNoReplyCandidates(supabase: AdminClient, workflow: WorkflowRow, contacts: Contact[]): Promise<Contact[]> {
   if (contacts.length === 0) return [];
   const days = Number((workflow.trigger_config as Record<string, unknown>).days) || 3;
   const cutoff = Date.now() - days * 86_400_000;
-  const contactIds = contacts.map((c) => c.id);
 
-  const { data: messages } = await supabase
-    .from("messages")
-    .select("contact_id, role, created_at")
-    .in("contact_id", contactIds)
-    .order("created_at", { ascending: false });
-
-  const lastOutbound = new Map<string, number>();
+  // Última resposta de cada lead do workspace. Resposta é bem mais rara que envio (disparo gera
+  // milhares de linhas), então partir das respostas mantém a busca pequena.
+  const inbound = await fetchAllPages<MessageStamp>((from, to) =>
+    supabase
+      .from("messages")
+      .select("contact_id, created_at")
+      .eq("workspace_id", workflow.workspace_id)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to) as unknown as PageResult<MessageStamp>
+  );
   const lastInbound = new Map<string, number>();
-  for (const m of messages || []) {
-    const t = new Date(m.created_at as string).getTime();
-    if (m.role === "assistant" && !lastOutbound.has(m.contact_id as string)) lastOutbound.set(m.contact_id as string, t);
-    if (m.role === "user" && !lastInbound.has(m.contact_id as string)) lastInbound.set(m.contact_id as string, t);
+  for (const m of inbound) {
+    if (!lastInbound.has(m.contact_id)) lastInbound.set(m.contact_id, new Date(m.created_at).getTime());
   }
 
-  return contacts.filter((c) => {
+  const opened = contacts.filter((c) => lastInbound.has(c.id));
+  if (opened.length === 0) return [];
+
+  // Último envio nosso DEPOIS da última resposta — só isso interessa, então a busca começa na resposta
+  // mais antiga do bloco em vez de trazer o histórico inteiro de disparo de cada lead.
+  const lastOutbound = new Map<string, number>();
+  for (const ids of chunk(opened.map((c) => c.id), ID_CHUNK)) {
+    const since = new Date(Math.min(...ids.map((id) => lastInbound.get(id)!))).toISOString();
+    const outbound = await fetchAllPages<MessageStamp>((from, to) =>
+      supabase
+        .from("messages")
+        .select("contact_id, created_at")
+        .in("contact_id", ids)
+        .eq("role", "assistant")
+        .gt("created_at", since)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to) as unknown as PageResult<MessageStamp>
+    );
+    for (const m of outbound) {
+      if (!lastOutbound.has(m.contact_id)) lastOutbound.set(m.contact_id, new Date(m.created_at).getTime());
+    }
+  }
+
+  return opened.filter((c) => {
     const out = lastOutbound.get(c.id);
-    if (!out) return false;
-    const inb = lastInbound.get(c.id);
-    if (inb && inb > out) return false;
-    return out <= cutoff;
+    if (!out) return false; // a última palavra foi do lead: quem está devendo resposta somos nós
+    return out > lastInbound.get(c.id)! && out <= cutoff;
   });
 }
 
@@ -478,8 +535,13 @@ export async function runWorkflowsTick(): Promise<{ enrolled: number; processed:
       .order("position", { ascending: true });
     const stepRows = (steps || []) as WorkflowStepRow[];
 
-    enrolled += await enrollCandidates(supabase, workflow, stepRows);
-    processed += await processDueRuns(supabase, workflow, stepRows);
+    // Um workflow com problema não pode travar os outros do mesmo tick.
+    try {
+      enrolled += await enrollCandidates(supabase, workflow, stepRows);
+      processed += await processDueRuns(supabase, workflow, stepRows);
+    } catch (err) {
+      console.error(`Workflow ${workflow.id} falhou neste tick:`, err instanceof Error ? err.message : err);
+    }
   }
   return { enrolled, processed };
 }
