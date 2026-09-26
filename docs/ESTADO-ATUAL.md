@@ -1,6 +1,6 @@
 # Estado atual — retomada de contexto
 
-Última atualização: **2026-09-08**. Leia isto antes de mexer em qualquer coisa.
+Última atualização: **2026-09-26**. Leia isto antes de mexer em qualquer coisa.
 
 ---
 
@@ -85,6 +85,7 @@ Commits, do mais antigo pro mais novo:
 | `2cb76cc` | Multi-funil (`pipelines`, `pipeline_stages`) | 0068 |
 | `e6d8135` | Ordenações e visão de lista no Pipeline | 0069 |
 | `5a84d0c` | Passagem de bastão SDR → Closer entre agentes | 0070 |
+| `c97c8e9` | Integrações: SDR marca reunião no Google Agenda do closer | 0075 |
 
 Detalhes que importam:
 
@@ -112,6 +113,29 @@ Detalhes que importam:
   **Desligado por padrão**: sem `handoff_to_agent_id`, nenhuma linha nova executa.
 
 ---
+
+## Integrações — Google Agenda do closer (em produção desde 2026-09-26)
+
+Spec e plano em `docs/superpowers/specs/2026-09-26-integracoes-google-agenda-design.md` e
+`docs/superpowers/plans/2026-09-26-integracoes-google-agenda.md`. Testado de ponta a ponta (motor
+contra agenda real + conversa real no WhatsApp com o agente Eduardo Vendedor/Orbion, Gemini) e
+**desligado em todos os agentes** depois do teste.
+
+- Página `/integracoes` (grupo Automação): closer = pessoa da **Equipe** (sem login). Conecta pelo
+  painel ou por link assinado de 7 dias (`/conectar-agenda/<token>`, página pública).
+- Disponibilidade = eventos **"Marque aqui"** que o closer cria na própria agenda (título editável por
+  agente). Marcar transforma o evento em "Reunião: {lead}" com Meet; remarcar/cancelar devolvem a
+  "Marque aqui" (PATCH com `conferenceData: null` funciona — confirmado).
+- Liga/desliga por agente em Agentes → "Agendamento de reunião" (`config.scheduling`).
+- Refresh token cifrado (AES-256-GCM, `CALENDAR_TOKEN_KEY`); `calendar_connections` tem RLS **sem**
+  policy — só o servidor lê. Envs na Vercel (marcadas Sensitive): `GOOGLE_CLIENT_ID`,
+  `GOOGLE_CLIENT_SECRET`, `CALENDAR_TOKEN_KEY` — a chave tem que ser igual à do `.env.local`, senão
+  as conexões existentes não abrem.
+- Testes: `npm test` (Vitest 4) cobre slots, closer, cripto e token.
+
+**Pendente antes de liberar pra cliente:** verificação do app OAuth no Google (escopo sensível
+`calendar.events`). Até lá: só usuários de teste, aviso de "app não verificado" e autorização que
+expira a cada 7 dias. Trocar o `GOOGLE_CLIENT_SECRET` (foi colado no chat) antes de liberar.
 
 ## Roadmap
 
