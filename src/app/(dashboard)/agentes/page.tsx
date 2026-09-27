@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
-import { AgentCard } from "@/components/agent-card";
+import { AgentsList, type AgentListItem } from "@/components/agents-list";
 import { AddAgentForm } from "@/components/add-agent-form";
 import { AttentionPanel } from "@/components/attention-panel";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
@@ -60,11 +60,33 @@ export default async function AgentesPage() {
   const usedInstanceIds = new Set((linkedRows || []).map((r) => r.whatsapp_instance_id as string));
   const availableInstances = (officialInstances || []).filter((i) => !usedInstanceIds.has(i.id));
 
+  // Métricas do card (conversas hoje, leads atendidos, última atividade, tokens) agregadas no banco —
+  // ver migration 0076. "Hoje" = desde a meia-noite de Brasília. Se a função ainda não existir, o card
+  // mostra "—" nas métricas e o custo cai no cálculo antigo por linha, logo abaixo.
+  const todayBrt = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const { data: statsRows, error: statsError } = workspace
+    ? await supabase.rpc("agent_list_stats", { ws_id: workspace.id, day_start: `${todayBrt}T00:00:00-03:00` })
+    : { data: [], error: null };
+  type StatsRow = {
+    agent_id: string;
+    conversations_today: number;
+    leads_total: number;
+    last_activity: string | null;
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+  };
+  const statsByAgent = new Map(((statsRows as StatsRow[] | null) || []).map((r) => [r.agent_id, r]));
+
   // Soma tokens por agente e converte pra custo estimado em USD, no preço do provider DESSE agente
   // (Gemini é bem mais barato por token que o Sonnet — usar o preço errado engana o custo mostrado).
+  // Com a função disponível, soma os totais agregados (sem o teto de 1000 linhas); sem ela, cai nas
+  // linhas de `usageRows` como sempre foi.
   const providerByAgent = new Map((agents || []).map((a) => [a.id as string, (a.llm_provider as "claude" | "gemini") || "claude"]));
   const costByAgent = new Map<string, number>();
-  for (const row of usageRows || []) {
+  const usageSource = statsError ? usageRows || [] : ((statsRows as StatsRow[] | null) || []);
+  for (const row of usageSource) {
     if (!row.agent_id) continue;
     const provider = providerByAgent.get(row.agent_id) || "claude";
     const cost =
@@ -79,49 +101,32 @@ export default async function AgentesPage() {
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
   }
 
+  const items: AgentListItem[] = (agents || []).map((agent) => {
+    const linkedInstance = agent.whatsapp_instances as unknown as { channel: string } | null;
+    const st = statsByAgent.get(agent.id);
+    return {
+      agent: { ...agent, whatsapp_instance_channel: (linkedInstance?.channel as "360dialog" | "metacloud" | undefined) ?? null },
+      stats: statsError
+        ? { conversationsToday: null, leadsTotal: null, lastActivity: null }
+        : { conversationsToday: Number(st?.conversations_today ?? 0), leadsTotal: Number(st?.leads_total ?? 0), lastActivity: st?.last_activity ?? null },
+      totalCostUsd: costByAgent.get(agent.id) || 0,
+    };
+  });
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Agentes</h1>
-          <p className="text-text-muted text-sm mt-1">
-            Cada agente atende por um número de WhatsApp próprio, com prompt próprio, respondendo sozinho os contatos desse workspace.
-            Diferente de um número de disparo em massa (sem IA) — esse você conecta em Configurações.
-          </p>
-        </div>
-        {isStaff && (
-          <AddAgentForm
-            availableInstances={availableInstances.map((i) => ({
-              id: i.id,
-              department: i.department,
-              channel: i.channel as "360dialog" | "metacloud",
-            }))}
-          />
-        )}
-      </div>
-
-      <AttentionPanel contacts={attentionContacts || []} />
-
-      {!agents?.length ? (
-        <div className="bg-surface border border-border rounded-lg shadow-sm p-10 text-center text-text-muted">
-          <p className="font-semibold text-text">Nenhum agente ainda</p>
-          <p className="text-sm mt-1">Clique em &quot;Adicionar agente&quot; pra conectar o primeiro número.</p>
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 gap-5">
-          {agents.map((agent) => {
-            const linkedInstance = agent.whatsapp_instances as unknown as { channel: string } | null;
-            return (
-              <AgentCard
-                key={agent.id}
-                agent={{ ...agent, whatsapp_instance_channel: (linkedInstance?.channel as "360dialog" | "metacloud" | undefined) ?? null }}
-                totalCostUsd={costByAgent.get(agent.id) || 0}
-                canManage={isStaff}
-              />
-            );
-          })}
-        </div>
-      )}
-    </div>
+    <AgentsList
+      items={items}
+      canManage={isStaff}
+      attention={<AttentionPanel contacts={attentionContacts || []} />}
+      addAgent={
+        <AddAgentForm
+          availableInstances={availableInstances.map((i) => ({
+            id: i.id,
+            department: i.department,
+            channel: i.channel as "360dialog" | "metacloud",
+          }))}
+        />
+      }
+    />
   );
 }

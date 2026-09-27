@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import { createAgent, type CreateAgentState } from "@/app/actions/agents";
 
 const INITIAL_STATE: CreateAgentState = { error: null };
@@ -28,8 +29,9 @@ export function AddAgentForm({ availableInstances = [] }: { availableInstances?:
     <>
       <button
         onClick={() => dialogRef.current?.showModal()}
-        className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md cursor-pointer"
+        className="inline-flex items-center justify-center gap-1.5 min-h-10 bg-primary-strong text-white text-sm font-bold px-4 rounded-lg cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       >
+        <Plus className="w-4 h-4" aria-hidden />
         Adicionar agente
       </button>
 
