@@ -10,11 +10,19 @@ import { agentSendText, agentSendMedia } from "@/lib/agent-channel";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype } from "@/lib/conversation-media";
 
-const MAX_MANUAL_FILE_BYTES = 20 * 1024 * 1024; // 20MB — folga sobre o limite do bucket (25MB) e do WhatsApp
+// Mesmo teto do bucket "conversation-media" (30MB). Documento cabe folgado no WhatsApp (até 100MB);
+// imagem e áudio têm teto menor e viram documento acima dele (ver mediaKindFromMime).
+const MAX_MANUAL_FILE_BYTES = 30 * 1024 * 1024;
 
-function mediaKindFromMime(mime: string): "image" | "audio" | "document" {
-  if (mime.startsWith("image/")) return "image";
-  if (mime.startsWith("audio/")) return "audio";
+// Limites da API oficial da Meta por tipo: imagem até 5MB e áudio até 16MB. Acima disso a Meta recusa
+// o envio como imagem/áudio — mandado como DOCUMENTO o arquivo passa (até 100MB) e o contato recebe
+// pra baixar, com o nome original. Vale também pra Evolution, pra o comportamento ser o mesmo.
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const AUDIO_MAX_BYTES = 16 * 1024 * 1024;
+
+function mediaKindFromMime(mime: string, size?: number): "image" | "audio" | "document" {
+  if (mime.startsWith("image/")) return size && size > IMAGE_MAX_BYTES ? "document" : "image";
+  if (mime.startsWith("audio/")) return size && size > AUDIO_MAX_BYTES ? "document" : "audio";
   return "document";
 }
 
@@ -120,7 +128,7 @@ export async function sendManualMessage(contactId: string, agentId: string, text
 
 // Arquivo que o navegador já subiu direto pro Storage (via prepareManualUpload) — o envio manual só
 // recebe o caminho, nunca os bytes.
-export type ManualUpload = { path: string; fileName: string; mimeType: string };
+export type ManualUpload = { path: string; fileName: string; mimeType: string; size?: number };
 
 // O arquivo NÃO passa pelo server action: na Vercel, o corpo de qualquer requisição à função é cortado
 // em ~4,5MB antes do nosso código rodar (o bodySizeLimit do next.config não vence esse teto), e o
@@ -133,7 +141,7 @@ export async function prepareManualUpload(
   size: number
 ): Promise<{ error: string | null; path?: string; token?: string }> {
   if (!size) return { error: "Selecione um arquivo." };
-  if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 20MB." };
+  if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 30MB." };
   const mimeType = normalizeMimetype(rawMimeType || "");
   if (!CONVERSATION_MEDIA_MIMES.has(mimeType)) {
     return { error: `Tipo de arquivo não suportado (${fileName}). Envie imagem, áudio ou PDF.` };
@@ -165,7 +173,7 @@ function resolveUploadedMedia(
   }
   const { data } = admin.storage.from("conversation-media").getPublicUrl(upload.path);
   const fileName = String(upload.fileName || "arquivo").slice(0, 200);
-  return { url: data.publicUrl, kind: mediaKindFromMime(normalizeMimetype(upload.mimeType || "")), fileName };
+  return { url: data.publicUrl, kind: mediaKindFromMime(normalizeMimetype(upload.mimeType || ""), Number(upload.size) || 0), fileName };
 }
 
 // Envia áudio gravado ou arquivo anexado manualmente (equipe respondendo ao vivo) numa conversa com

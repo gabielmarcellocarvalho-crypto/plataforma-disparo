@@ -23,7 +23,7 @@ import { STAGE_ORDER } from "@/lib/crm-stages";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir 50MB à toa.
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024;
 
 const TICKET_STATUS_LABELS: Record<TicketStatus, string> = { aberto: "Aberto", pendente: "Pendente", resolvido: "Resolvido" };
 const TICKET_STATUS_BADGE: Record<TicketStatus, string> = {
@@ -361,7 +361,7 @@ export function ConversationsPanel({
     if (!selected) return;
     setError(null);
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      setError("Arquivo maior que 20MB.");
+      setError("Arquivo maior que 30MB.");
       return;
     }
     startTransition(async () => {
@@ -378,7 +378,7 @@ export function ConversationsPanel({
           setError(`Falha ao subir o arquivo: ${uploadError.message}`);
           return;
         }
-        const upload = { path: prep.path, fileName: file.name, mimeType: file.type };
+        const upload = { path: prep.path, fileName: file.name, mimeType: file.type, size: file.size };
         const result = selected.agent
           ? await sendManualMedia(selected.contact.id, selected.agent.id, upload)
           : await sendInstanceMedia(selected.contact.id, selected.instance!.id, upload);
