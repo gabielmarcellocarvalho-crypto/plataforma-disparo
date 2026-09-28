@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { motion, type PanInfo } from "framer-motion";
 import {
   createWorkflow,
   updateWorkflow,
@@ -28,7 +27,8 @@ import {
   type WaitUnit,
   type WorkflowStepInput,
 } from "@/lib/workflow-types";
-import { ArrowLeft, Clock, Filter, GitBranch, Globe, MessageCircle, Plus, Trash2, Webhook, Workflow as WorkflowIcon, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Clock, Filter, GitBranch, Globe, MessageCircle, Plus, Settings2, Trash2, Webhook, Workflow as WorkflowIcon, type LucideIcon } from "lucide-react";
+import { WorkflowCanvas, NODE_W, NODE_H, type CanvasAddSlot, type CanvasEdgeSpec, type CanvasNodeSpec, type NodeKind } from "@/components/workflow-canvas";
 
 type Member = { id: string; name: string };
 
@@ -38,15 +38,11 @@ const WAIT_UNITS: WaitUnit[] = ["minutes", "hours", "days"];
 const CONDITION_TYPES: ConditionType[] = ["replied", "stage_is", "responsible_is", "days_in_stage_gte"];
 const HTTP_METHODS: HttpMethod[] = ["GET", "POST", "PUT", "DELETE"];
 
-// Canvas 2D (nós arrastáveis conectados por curva, tipo n8n/Make) — layout auto-calculado a partir
-// do gatilho/público/passos; ramificação de uma condição abre pra cima (SIM) e pra baixo (NÃO).
-const NODE_W = 168;
-const NODE_H = 78;
-const GAP_X = 60;
-const ROW_H = 106;
-
-type CanvasNode = { id: string; x: number; y: number; icon: LucideIcon; label: string; sublabel?: string; accent: string; active: boolean; onSelect?: () => void };
-type CanvasEdge = { from: string; to: string };
+// Layout automático do canvas: fluxo principal numa faixa do meio; ramo SIM de uma condição abre na
+// faixa de cima e NÃO na de baixo (só quando existe condição). O usuário pode arrastar por cima.
+const GAP_X = 84;
+const ROW_H = 150;
+const ADD_H = 44;
 
 function emptyActionConfig(type: ActionType) {
   if (type === "send_message") return { action_type: "send_message" as const, text: "" };
@@ -63,14 +59,14 @@ function emptyConditionConfig(type: ConditionType): ConditionConfig {
   return { condition_type: "replied" };
 }
 
-// Resumo curto de cada passo pro card do canvas — o mesmo dado que já aparece expandido no painel
-// de edição, só condensado pra caber num node de ~150px.
-function stepChipInfo(step: WorkflowStepInput): { icon: LucideIcon; label: string; sublabel: string; accent: string } {
+// Resumo curto de cada passo pro nó do canvas — o mesmo dado que aparece expandido no painel de
+// edição, só condensado pra caber no card.
+function stepChipInfo(step: WorkflowStepInput): { icon: LucideIcon; label: string; sublabel: string; kind: NodeKind } {
   if (step.step_type === "wait") {
-    return { icon: Clock, label: "Esperar", sublabel: `${step.config.amount} ${WAIT_UNIT_LABELS[step.config.unit]}`, accent: "border-border-strong bg-surface-2 text-text-muted" };
+    return { icon: Clock, label: "Esperar", sublabel: `${step.config.amount} ${WAIT_UNIT_LABELS[step.config.unit]}`, kind: "wait" };
   }
   if (step.step_type === "condition") {
-    return { icon: GitBranch, label: "Condição", sublabel: CONDITION_LABELS[step.config.condition_type], accent: "border-warning-text/30 bg-warning-soft text-warning-text" };
+    return { icon: GitBranch, label: "Condição", sublabel: CONDITION_LABELS[step.config.condition_type], kind: "condition" };
   }
   const a = step.config;
   const label = ACTION_LABELS[a.action_type];
@@ -82,7 +78,7 @@ function stepChipInfo(step: WorkflowStepInput): { icon: LucideIcon; label: strin
         : a.action_type === "change_stage"
           ? STAGE_LABELS[a.stage]
           : a.url || "sem URL";
-  return { icon: a.action_type === "http_request" ? Globe : MessageCircle, label, sublabel, accent: "border-primary-strong/30 bg-primary-soft text-primary-strong" };
+  return { icon: a.action_type === "http_request" ? Globe : MessageCircle, label, sublabel, kind: "action" };
 }
 
 export function WorkflowBuilder({
@@ -117,53 +113,64 @@ export function WorkflowBuilder({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [selected, setSelected] = useState<"trigger" | "audience" | number>("trigger");
-  const [dragOffsets, setDragOffsets] = useState<Record<string, { x: number; y: number }>>({});
+  const [panelTab, setPanelTab] = useState<"no" | "regras">("no");
 
-  function handleNodeDragEnd(id: string, info: PanInfo) {
-    setDragOffsets((prev) => ({ ...prev, [id]: { x: (prev[id]?.x || 0) + info.offset.x, y: (prev[id]?.y || 0) + info.offset.y } }));
-  }
-
-  // Monta os nós/arestas do canvas a partir do estado atual — recalculado a cada render (barato:
-  // é só geometria, nada de custo real), então arrastar um card não precisa mexer nessa árvore, só
-  // no offset visual (dragOffsets) por cima da posição calculada.
-  function buildCanvas(): { nodes: CanvasNode[]; edges: CanvasEdge[]; width: number; height: number } {
-    const nodes: CanvasNode[] = [];
-    const edges: CanvasEdge[] = [];
-    const mainY = ROW_H;
+  // Monta nós, ligações e "+" do canvas a partir do estado atual. Tudo que existe no fluxo sai daqui
+  // ligado a alguém — não há nó solto. Recalculado a cada render (é só geometria).
+  function buildCanvas(): { nodes: CanvasNodeSpec[]; edges: CanvasEdgeSpec[]; addSlots: CanvasAddSlot[] } {
+    const nodes: CanvasNodeSpec[] = [];
+    const edges: CanvasEdgeSpec[] = [];
+    const addSlots: CanvasAddSlot[] = [];
+    const hasCondition = steps.some((st) => st.step_type === "condition");
+    const mainY = hasCondition ? ROW_H : 0;
+    const addDy = (NODE_H - ADD_H) / 2;
     let x = 0;
     let prevId = "trigger";
+    let prevPort: "out" | "yes" | "no" = "out";
+    // Depois de uma condição o motor segue só pelo ramo e termina nele — passo de topo que venha
+    // depois nunca executa (workflow-engine: fim do ramo = completed).
+    let afterCondition = false;
+
+    const selectFixed = (which: "trigger" | "audience") => () => {
+      setSelected(which);
+      setPanelTab("no");
+    };
+    const selectStep = (i: number) => () => {
+      setSelected(i);
+      setPanelTab("no");
+    };
 
     nodes.push({
       id: "trigger",
+      kind: "trigger",
       x: 0,
       y: mainY,
       icon: Webhook,
-      label: TRIGGER_LABELS[triggerType],
-      sublabel:
+      title: TRIGGER_LABELS[triggerType],
+      subtitle:
         triggerType === "webhook"
           ? "sistema externo"
           : triggerType === "no_reply"
-            ? `${triggerDays} dia(s)`
+            ? `${triggerDays} dia(s) sem resposta`
             : triggerType === "stage_enter"
               ? STAGE_LABELS[triggerStage]
               : `${STAGE_LABELS[triggerStage]} · ${triggerDays}d`,
-      accent: "border-success/40 bg-success-soft text-success",
       active: selected === "trigger",
-      onSelect: () => setSelected("trigger"),
+      onSelect: selectFixed("trigger"),
     });
 
     if (triggerType !== "webhook") {
       x += NODE_W + GAP_X;
       nodes.push({
         id: "audience",
+        kind: "audience",
         x,
         y: mainY,
         icon: Filter,
-        label: "Público",
-        sublabel: `${audienceStage ? STAGE_LABELS[audienceStage as ContactStage] : "qualquer etapa"} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
-        accent: "border-info-text/30 bg-info-soft text-info-text",
+        title: "Público",
+        subtitle: `${audienceStage ? STAGE_LABELS[audienceStage as ContactStage] : "qualquer etapa"} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
         active: selected === "audience",
-        onSelect: () => setSelected("audience"),
+        onSelect: selectFixed("audience"),
       });
       edges.push({ from: "trigger", to: "audience" });
       prevId = "audience";
@@ -173,37 +180,74 @@ export function WorkflowBuilder({
       x += NODE_W + GAP_X;
       const id = `step-${i}`;
       const chip = stepChipInfo(step);
-      nodes.push({ id, x, y: mainY, icon: chip.icon, label: chip.label, sublabel: chip.sublabel, accent: chip.accent, active: selected === i, onSelect: () => setSelected(i) });
-      edges.push({ from: prevId, to: id });
+      nodes.push({
+        id,
+        kind: chip.kind,
+        x,
+        y: mainY,
+        icon: afterCondition ? AlertTriangle : chip.icon,
+        title: chip.label,
+        subtitle: afterCondition ? "Nunca executa: vem depois de uma condição" : chip.sublabel,
+        active: selected === i,
+        onSelect: selectStep(i),
+      });
+      edges.push({ from: prevId, to: id, port: prevPort });
       prevId = id;
+      prevPort = "out";
 
       if (step.step_type === "condition") {
-        let bx = x + NODE_W + GAP_X;
-        let branchPrev = id;
-        step.yesSteps.forEach((cs, ci) => {
-          const cid = `${id}-yes-${ci}`;
-          const cchip = stepChipInfo(cs);
-          nodes.push({ id: cid, x: bx, y: 0, icon: cchip.icon, label: cchip.label, sublabel: cchip.sublabel, accent: "border-success/40 bg-success-soft text-success", active: selected === i, onSelect: () => setSelected(i) });
-          edges.push({ from: branchPrev, to: cid });
-          branchPrev = cid;
-          bx += NODE_W + GAP_X;
-        });
-        bx = x + NODE_W + GAP_X;
-        branchPrev = id;
-        step.noSteps.forEach((cs, ci) => {
-          const cid = `${id}-no-${ci}`;
-          const cchip = stepChipInfo(cs);
-          nodes.push({ id: cid, x: bx, y: 2 * ROW_H, icon: cchip.icon, label: cchip.label, sublabel: cchip.sublabel, accent: "border-danger/40 bg-danger-soft text-danger", active: selected === i, onSelect: () => setSelected(i) });
-          edges.push({ from: branchPrev, to: cid });
-          branchPrev = cid;
-          bx += NODE_W + GAP_X;
-        });
+        afterCondition = true;
+        for (const branch of ["yes", "no"] as const) {
+          const list = branch === "yes" ? step.yesSteps : step.noSteps;
+          const laneY = branch === "yes" ? 0 : 2 * ROW_H;
+          let bx = x + NODE_W + GAP_X;
+          let bPrev = id;
+          let bPort: "out" | "yes" | "no" = branch;
+          list.forEach((cs, ci) => {
+            const cid = `${id}-${branch}-${ci}`;
+            const cchip = stepChipInfo(cs);
+            nodes.push({ id: cid, kind: cchip.kind, x: bx, y: laneY, icon: cchip.icon, title: cchip.label, subtitle: cchip.sublabel, active: selected === i, onSelect: selectStep(i) });
+            edges.push({ from: bPrev, to: cid, port: bPort });
+            bPrev = cid;
+            bPort = "out";
+            bx += NODE_W + GAP_X;
+          });
+          addSlots.push({
+            id: `add-${id}-${branch}`,
+            after: bPrev,
+            port: bPort,
+            x: bx,
+            y: laneY + addDy,
+            label: list.length ? "Passo" : branch === "yes" ? "Se SIM" : "Se NÃO",
+            options: [
+              { key: "wait", label: "Esperar", icon: Clock, onPick: () => addBranchStep(i, branch, "wait") },
+              { key: "action", label: "Ação", icon: Plus, onPick: () => addBranchStep(i, branch, "action") },
+            ],
+          });
+        }
+        // Os ramos ocupam as faixas de cima/baixo; o próximo nó da faixa do meio vai pra depois deles.
+        x += Math.max(step.yesSteps.length, step.noSteps.length) * (NODE_W + GAP_X);
       }
     });
 
-    const width = x + NODE_W + 40;
-    const height = 2 * ROW_H + NODE_H + 20;
-    return { nodes, edges, width, height };
+    // "+" do fluxo principal — some depois de uma condição, porque dali o caminho segue pelos ramos.
+    if (!afterCondition) {
+      addSlots.push({
+        id: "add-main",
+        after: prevId,
+        port: prevPort,
+        x: x + NODE_W + GAP_X,
+        y: mainY + addDy,
+        label: steps.length ? "Passo" : "Primeiro passo",
+        options: [
+          { key: "wait", label: "Esperar", icon: Clock, onPick: addWaitStep },
+          { key: "action", label: "Ação", icon: Plus, onPick: addActionStep },
+          { key: "condition", label: "Condição (SIM/NÃO)", icon: GitBranch, onPick: addConditionStep },
+        ],
+      });
+    }
+
+    return { nodes, edges, addSlots };
   }
 
   useEffect(() => {
@@ -227,6 +271,17 @@ export function WorkflowBuilder({
   function addConditionStep() {
     setSteps((prev) => [...prev, { step_type: "condition", config: emptyConditionConfig("replied"), yesSteps: [], noSteps: [] }]);
     setSelected(steps.length);
+  }
+  function addBranchStep(index: number, branch: "yes" | "no", type: "wait" | "action") {
+    const leaf: LeafStepInput = type === "wait" ? { step_type: "wait", config: { amount: 1, unit: "days" } } : { step_type: "action", config: emptyActionConfig("send_message") };
+    setSteps((prev) =>
+      prev.map((st, i) => {
+        if (i !== index || st.step_type !== "condition") return st;
+        return branch === "yes" ? { ...st, yesSteps: [...st.yesSteps, leaf] } : { ...st, noSteps: [...st.noSteps, leaf] };
+      })
+    );
+    setSelected(index);
+    setPanelTab("no");
   }
   function removeStep(index: number) {
     setSteps((prev) => prev.filter((_, i) => i !== index));
@@ -283,246 +338,203 @@ export function WorkflowBuilder({
   void workspaceId;
 
   const canvas = buildCanvas();
+  // Chave da ESTRUTURA do fluxo: quando um passo entra, sai ou muda de lugar, o canvas volta ao
+  // layout automático (deslocamentos manuais ficam presos a ids que agora apontam pra outro passo).
+  const layoutKey = `${triggerType}|${steps.map((st) => (st.step_type === "condition" ? `c${st.yesSteps.length}.${st.noSteps.length}` : st.step_type[0])).join("")}`;
+
+  const tabBtn = (active: boolean) =>
+    `flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 rounded-md cursor-pointer transition-colors ${
+      active ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
+    }`;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap sticky top-0 z-10 bg-bg -mx-4 lg:-mx-5 px-4 lg:px-5 py-3 -mt-4 lg:-mt-5 border-b border-border">
+    // Ocupa a área inteira do <main> (desfaz o padding dele), como o editor de um n8n/Make.
+    <div className="flex flex-col -m-4 lg:-m-5 h-[calc(100%+2rem)] lg:h-[calc(100%+2.5rem)] min-h-[560px]">
+      <div className="flex items-center justify-between gap-3 flex-wrap bg-surface px-4 lg:px-5 py-2.5 border-b border-border shrink-0">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button type="button" onClick={() => router.push("/automacoes")} aria-label="Voltar" className="text-text-muted hover:text-text cursor-pointer p-1.5 rounded-md hover:bg-surface-2 shrink-0">
             <ArrowLeft size={20} />
           </button>
+          <span className="hidden sm:grid place-items-center w-8 h-8 rounded-lg bg-primary-soft text-primary-strong shrink-0" aria-hidden>
+            <WorkflowIcon size={16} />
+          </span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Nome do workflow (ex: Follow-up de proposta)"
-            className="text-xl font-extrabold tracking-tight outline-none bg-transparent border-b-2 border-transparent focus:border-primary py-0.5 min-w-0 flex-1"
+            aria-label="Nome do workflow"
+            className="text-lg font-extrabold tracking-tight outline-none bg-transparent border-b-2 border-transparent focus:border-primary py-0.5 min-w-0 flex-1"
           />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {error && <span className="text-xs text-danger font-medium">{error}</span>}
-          <button type="button" onClick={() => router.push("/automacoes")} className="text-sm font-bold px-4 py-2 rounded-md border border-border hover:bg-surface-2 cursor-pointer">
+          <button type="button" onClick={() => router.push("/automacoes")} className="text-sm font-bold px-4 py-2 rounded-lg border border-border hover:bg-surface-2 cursor-pointer">
             Cancelar
           </button>
-          <button type="button" onClick={handleSave} disabled={pending} className="text-sm font-bold px-4 py-2 rounded-md bg-primary-strong text-white hover:brightness-95 disabled:opacity-60 cursor-pointer">
+          <button type="button" onClick={handleSave} disabled={pending} className="text-sm font-bold px-4 py-2 rounded-lg bg-primary-strong text-white hover:brightness-95 disabled:opacity-60 cursor-pointer">
             {pending ? "Salvando…" : "Salvar workflow"}
           </button>
         </div>
       </div>
 
       {loadingSteps ? (
-        <div className="text-text-muted text-sm">Carregando…</div>
+        <div className="p-6 text-text-muted text-sm">Carregando…</div>
       ) : (
-        <>
-          <div className="flex flex-col gap-2.5 max-w-xl">
-                <input
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Descrição (opcional)"
-                  className="border border-border rounded-md px-3 py-2 text-xs outline-none focus:border-primary"
-                />
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+          {/* Canvas: nós ligados por pontilhado, "+" no fim do fluxo e de cada ramo. */}
+          <div className="flex-1 min-h-[420px] min-w-0">
+            <WorkflowCanvas nodes={canvas.nodes} edges={canvas.edges} addSlots={canvas.addSlots} layoutKey={layoutKey} />
+          </div>
+
+          {/* Painel de propriedades (lado direito, como no n8n) */}
+          <aside className="w-full lg:w-[380px] shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-surface flex flex-col min-h-0">
+            <div className="p-3 border-b border-border">
+              <div className="flex gap-1 bg-surface-2 rounded-lg p-1" role="tablist">
+                <button type="button" role="tab" aria-selected={panelTab === "no"} onClick={() => setPanelTab("no")} className={tabBtn(panelTab === "no")}>
+                  <GitBranch size={13} /> Nó selecionado
+                </button>
+                <button type="button" role="tab" aria-selected={panelTab === "regras"} onClick={() => setPanelTab("regras")} className={tabBtn(panelTab === "regras")}>
+                  <Settings2 size={13} /> Regras
+                </button>
               </div>
+            </div>
 
-              {/* Canvas 2D — nós arrastáveis conectados por curva (tipo n8n/Make). Clique num nó edita
-                  ele no painel abaixo; arrastar só reposiciona visualmente (não muda a ordem real —
-                  isso continua pelas setas ↑↓ no painel). Ramo SIM abre pra cima, NÃO pra baixo. */}
-              <div className="rounded-2xl border border-border bg-bg p-4 flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-text-muted">
-                    <WorkflowIcon size={14} /> Fluxo
-                    <span className="opacity-60 font-semibold normal-case">— {steps.length} passo(s)</span>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button type="button" onClick={addWaitStep} className="inline-flex items-center gap-1.5 text-[11px] font-bold border border-border rounded-md px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer bg-surface">
-                      <Clock size={12} /> Esperar
-                    </button>
-                    <button type="button" onClick={addActionStep} className="inline-flex items-center gap-1.5 text-[11px] font-bold border border-border rounded-md px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer bg-surface">
-                      <Plus size={12} /> Ação
-                    </button>
-                    <button type="button" onClick={addConditionStep} className="inline-flex items-center gap-1.5 text-[11px] font-bold border border-border rounded-md px-2.5 py-1.5 hover:bg-surface-2 cursor-pointer bg-surface">
-                      <GitBranch size={12} /> Condição
-                    </button>
-                  </div>
-                </div>
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 flex flex-col gap-3 [&_textarea]:w-full [&_select]:max-w-full">
+              {panelTab === "no" && (
+                <>
+                  {selected === "trigger" && (
+                    <>
+                      <div className="flex items-center gap-2 text-success text-xs font-bold uppercase tracking-wide">
+                        <Webhook size={14} /> Gatilho — quando isso acontecer
+                      </div>
+                      <select
+                        value={triggerType}
+                        onChange={(e) => setTriggerType(e.target.value as TriggerType)}
+                        className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary"
+                      >
+                        {TRIGGER_TYPES.map((t) => (
+                          <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-text-muted">{TRIGGER_DESCRIPTIONS[triggerType]}</p>
+                      {(triggerType === "stage_enter" || triggerType === "stage_stale") && (
+                        <select value={triggerStage} onChange={(e) => setTriggerStage(e.target.value as ContactStage)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
+                          {STAGE_ORDER.map((s) => (
+                            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
+                          ))}
+                        </select>
+                      )}
+                      {(triggerType === "stage_stale" || triggerType === "no_reply") && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-text-muted">Depois de</span>
+                          <input type="number" min={1} value={triggerDays} onChange={(e) => setTriggerDays(Number(e.target.value) || 1)} className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary" />
+                          <span className="text-text-muted">dia(s)</span>
+                        </div>
+                      )}
+                      {triggerType === "webhook" && (
+                        <div className="text-xs">
+                          {existing?.webhook_token ? (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-text-muted">URL (POST, JSON com pelo menos <code>phone</code>):</span>
+                              <code className="block bg-surface-2 border border-border rounded-md px-2 py-1.5 break-all select-all">{`${typeof window !== "undefined" ? window.location.origin : ""}/api/workflows/webhook/${existing.webhook_token}`}</code>
+                            </div>
+                          ) : (
+                            <span className="text-text-muted">Salve o workflow pra gerar a URL do webhook.</span>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
 
-                <div className="relative w-full overflow-auto rounded-xl border border-border/60 bg-surface" style={{ height: Math.min(Math.max(canvas.height, 320), 560) }}>
-                  <div className="relative" style={{ width: canvas.width, height: canvas.height }}>
-                    <svg className="absolute top-0 left-0 pointer-events-none" width={canvas.width} height={canvas.height} style={{ overflow: "visible" }} aria-hidden>
-                      {canvas.edges.map((e, idx) => (
-                        <CanvasConnector key={idx} from={e.from} to={e.to} nodes={canvas.nodes} />
-                      ))}
-                    </svg>
-                    {canvas.nodes.map((node) => (
-                      <CanvasNodeCard key={node.id} node={node} offset={dragOffsets[node.id]} onDragEnd={(info) => handleNodeDragEnd(node.id, info)} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Painel de edição do nó selecionado */}
-              <div className="rounded-xl border border-border bg-surface-2 p-3.5 flex flex-col gap-2.5">
-                {selected === "trigger" && (
-                  <>
-                    <div className="flex items-center gap-2 text-success text-xs font-bold uppercase tracking-wide">
-                      <Webhook size={14} /> Gatilho — quando isso acontecer
-                    </div>
-                    <select
-                      value={triggerType}
-                      onChange={(e) => setTriggerType(e.target.value as TriggerType)}
-                      className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary"
-                    >
-                      {TRIGGER_TYPES.map((t) => (
-                        <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-text-muted">{TRIGGER_DESCRIPTIONS[triggerType]}</p>
-                    {(triggerType === "stage_enter" || triggerType === "stage_stale") && (
-                      <select value={triggerStage} onChange={(e) => setTriggerStage(e.target.value as ContactStage)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
+                  {selected === "audience" && triggerType !== "webhook" && (
+                    <>
+                      <div className="flex items-center gap-2 text-info-text text-xs font-bold uppercase tracking-wide">
+                        <Filter size={14} /> Público — quem entra
+                      </div>
+                      <select value={audienceStage} onChange={(e) => setAudienceStage(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
+                        <option value="">Qualquer etapa</option>
                         {STAGE_ORDER.map((s) => (
                           <option key={s} value={s}>{STAGE_LABELS[s]}</option>
                         ))}
                       </select>
-                    )}
-                    {(triggerType === "stage_stale" || triggerType === "no_reply") && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-text-muted">Depois de</span>
-                        <input type="number" min={1} value={triggerDays} onChange={(e) => setTriggerDays(Number(e.target.value) || 1)} className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary" />
-                        <span className="text-text-muted">dia(s)</span>
-                      </div>
-                    )}
-                    {triggerType === "webhook" && (
-                      <div className="text-xs">
-                        {existing?.webhook_token ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-text-muted">URL (POST, JSON com pelo menos <code>phone</code>):</span>
-                            <code className="block bg-surface border border-border rounded-md px-2 py-1.5 break-all select-all">{`${typeof window !== "undefined" ? window.location.origin : ""}/api/workflows/webhook/${existing.webhook_token}`}</code>
-                          </div>
-                        ) : (
-                          <span className="text-text-muted">Salve o workflow pra gerar a URL do webhook.</span>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
+                      <select value={audienceResponsible} onChange={(e) => setAudienceResponsible(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
+                        <option value="">Qualquer responsável</option>
+                        {members.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
 
-                {selected === "audience" && triggerType !== "webhook" && (
-                  <>
-                    <div className="flex items-center gap-2 text-info-text text-xs font-bold uppercase tracking-wide">
-                      <Filter size={14} /> Público — quem entra
-                    </div>
-                    <select value={audienceStage} onChange={(e) => setAudienceStage(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
-                      <option value="">Qualquer etapa</option>
-                      {STAGE_ORDER.map((s) => (
-                        <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-                      ))}
-                    </select>
-                    <select value={audienceResponsible} onChange={(e) => setAudienceResponsible(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
-                      <option value="">Qualquer responsável</option>
-                      {members.map((m) => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-
-                {typeof selected === "number" && steps[selected] && (
-                  <StepCard
-                    step={steps[selected]}
-                    index={selected}
-                    total={steps.length}
-                    members={members}
-                    onChange={(s) => updateStep(selected, s)}
-                    onRemove={() => {
-                      removeStep(selected);
-                      setSelected("trigger");
-                    }}
-                    onMove={(dir) => {
-                      moveStep(selected, dir);
-                      setSelected(selected + dir);
-                    }}
-                  />
-                )}
-              </div>
-
-              {/* Regras */}
-              <div className="flex flex-col gap-2 border-t border-border pt-4">
-                <h3 className="text-sm font-bold">Regras de parada e segurança</h3>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} /> Parar quando o lead responder
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={stopOnStageChange} onChange={(e) => setStopOnStageChange(e.target.checked)} /> Parar quando o lead mudar de etapa
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={respectBusinessHours} onChange={(e) => setRespectBusinessHours(e.target.checked)} /> Só mandar mensagem em horário comercial (seg-sáb, 9h-20h)
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={allowReentry} onChange={(e) => setAllowReentry(e.target.checked)} /> Permitir que o mesmo lead entre de novo depois de completar
-                </label>
-                {allowReentry && (
-                  <div className="flex items-center gap-2 text-sm pl-6">
-                    <span className="text-text-muted">Mas não antes de</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={reentryCooldownHours ?? ""}
-                      placeholder="—"
-                      onChange={(e) => setReentryCooldownHours(e.target.value ? Number(e.target.value) : null)}
-                      className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+                  {typeof selected === "number" && steps[selected] && (
+                    <StepCard
+                      step={steps[selected]}
+                      index={selected}
+                      total={steps.length}
+                      members={members}
+                      onChange={(s) => updateStep(selected, s)}
+                      onRemove={() => {
+                        removeStep(selected);
+                        setSelected("trigger");
+                      }}
+                      onMove={(dir) => {
+                        moveStep(selected, dir);
+                        setSelected(selected + dir);
+                      }}
                     />
-                    <span className="text-text-muted">hora(s) desde a última vez</span>
-                  </div>
-                )}
-              </div>
-        </>
+                  )}
+
+                  <p className="text-[11px] text-text-muted mt-auto pt-2 border-t border-border">
+                    Clique num nó pra editar. Use o <strong className="text-text">+</strong> no fim do fluxo ou de cada ramo pra adicionar passos.
+                  </p>
+                </>
+              )}
+
+              {panelTab === "regras" && (
+                <>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-bold text-text-muted">Descrição</span>
+                    <input
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Descrição (opcional)"
+                      className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+                    />
+                  </label>
+                  <h3 className="text-sm font-bold mt-1">Regras de parada e segurança</h3>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} /> Parar quando o lead responder
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={stopOnStageChange} onChange={(e) => setStopOnStageChange(e.target.checked)} /> Parar quando o lead mudar de etapa
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={respectBusinessHours} onChange={(e) => setRespectBusinessHours(e.target.checked)} /> Só mandar mensagem em horário comercial (seg-sáb, 9h-20h)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={allowReentry} onChange={(e) => setAllowReentry(e.target.checked)} /> Permitir que o mesmo lead entre de novo depois de completar
+                  </label>
+                  {allowReentry && (
+                    <div className="flex items-center gap-2 text-sm pl-6">
+                      <span className="text-text-muted">Mas não antes de</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={reentryCooldownHours ?? ""}
+                        placeholder="—"
+                        onChange={(e) => setReentryCooldownHours(e.target.value ? Number(e.target.value) : null)}
+                        className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary"
+                      />
+                      <span className="text-text-muted">hora(s) desde a última vez</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
       )}
     </div>
-  );
-}
-
-// Curva bézier entre 2 nós — mesma técnica do modelo de referência (n8n-style): sai da borda direita
-// do nó de origem, entra pela esquerda do destino, com os pontos de controle na metade do caminho.
-function CanvasConnector({ from, to, nodes }: { from: string; to: string; nodes: CanvasNode[] }) {
-  const a = nodes.find((n) => n.id === from);
-  const b = nodes.find((n) => n.id === to);
-  if (!a || !b) return null;
-  const startX = a.x + NODE_W;
-  const startY = a.y + NODE_H / 2;
-  const endX = b.x;
-  const endY = b.y + NODE_H / 2;
-  const cp1X = startX + (endX - startX) * 0.5;
-  const cp2X = endX - (endX - startX) * 0.5;
-  const path = `M${startX},${startY} C${cp1X},${startY} ${cp2X},${endY} ${endX},${endY}`;
-  return <path d={path} fill="none" stroke="currentColor" strokeWidth={2} strokeDasharray="7,5" strokeLinecap="round" opacity={0.4} className="text-text-muted" />;
-}
-
-// Card do nó — arrastável (só cosmético, dragOffsets guarda o deslocamento por cima da posição
-// calculada; a ordem real do fluxo continua vindo de `steps`) e clicável (onTap, pra não brigar com
-// o gesto de arrastar) pra abrir a edição desse passo no painel abaixo do canvas.
-function CanvasNodeCard({ node, offset, onDragEnd }: { node: CanvasNode; offset?: { x: number; y: number }; onDragEnd: (info: PanInfo) => void }) {
-  const Icon = node.icon;
-  const x = node.x + (offset?.x || 0);
-  const y = node.y + (offset?.y || 0);
-  return (
-    <motion.button
-      type="button"
-      drag
-      dragMomentum={false}
-      onDragEnd={(_, info) => onDragEnd(info)}
-      onTap={() => node.onSelect?.()}
-      initial={{ opacity: 0, scale: 0.85 }}
-      animate={{ opacity: 1, scale: 1, x, y }}
-      whileHover={{ scale: 1.02 }}
-      whileDrag={{ scale: 1.05, zIndex: 30, cursor: "grabbing" }}
-      transition={{ duration: 0.15 }}
-      style={{ width: NODE_W, transformOrigin: "0 0" }}
-      className={`absolute top-0 left-0 cursor-grab rounded-xl border-2 p-2.5 text-left bg-surface ${node.accent} ${node.active ? "ring-2 ring-primary shadow-md" : "shadow-sm"}`}
-    >
-      <span className="grid place-items-center w-7 h-7 rounded-lg bg-surface mb-1.5" aria-hidden>
-        <Icon size={14} />
-      </span>
-      <span className="block text-xs font-bold truncate">{node.label}</span>
-      {node.sublabel && <span className="block text-[10px] opacity-70 truncate mt-0.5">{node.sublabel}</span>}
-    </motion.button>
   );
 }
 
@@ -586,7 +598,7 @@ function StepCard({
 function LeafStepFields({ step, onChange }: { step: LeafStepInput; onChange: (step: LeafStepInput) => void }) {
   if (step.step_type === "wait") {
     return (
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <Clock size={14} className="text-text-muted" />
         <span className="text-text-muted">Esperar</span>
         <input
@@ -637,7 +649,7 @@ function ConditionFields({
         <select
           value={config.condition_type}
           onChange={(e) => onChange(emptyConditionConfig(e.target.value as ConditionType))}
-          className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary flex-1"
+          className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary flex-1 min-w-0"
         >
           {CONDITION_TYPES.map((c) => (
             <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
@@ -668,7 +680,7 @@ function ConditionFields({
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-2">
+      <div className="grid gap-2">
         <BranchList label="SIM" accent="border-success/40 bg-success-soft" steps={yesSteps} onChange={onYesChange} />
         <BranchList label="NÃO" accent="border-danger/40 bg-danger-soft" steps={noSteps} onChange={onNoChange} />
       </div>
@@ -729,7 +741,7 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
         <select
           value={config.action_type}
           onChange={(e) => onChange(emptyActionConfig(e.target.value as ActionType))}
-          className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary flex-1"
+          className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary flex-1 min-w-0"
         >
           {ACTION_TYPES.map((a) => (
             <option key={a} value={a}>{ACTION_LABELS[a]}</option>
@@ -767,7 +779,7 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
       )}
       {config.action_type === "http_request" && (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Globe size={14} className="text-text-muted shrink-0" />
             <select value={config.method} onChange={(e) => onChange({ ...config, method: e.target.value as HttpMethod })} className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary">
               {HTTP_METHODS.map((m) => (
@@ -778,7 +790,7 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
               value={config.url}
               onChange={(e) => onChange({ ...config, url: e.target.value })}
               placeholder="https://exemplo.com/webhook"
-              className="flex-1 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface"
+              className="flex-1 min-w-0 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface"
             />
           </div>
           {config.method !== "GET" && (
