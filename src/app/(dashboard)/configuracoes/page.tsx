@@ -12,6 +12,11 @@ import { WorkspaceLogoEditor } from "@/components/workspace-logo-editor";
 import { listApiKeys } from "@/app/actions/api-keys";
 import { listEmailDomains } from "@/app/actions/email-domains";
 import { resolveWorkspacePlan } from "@/lib/workspace-plan";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { ChatbotEditor, type ChatbotInstanceItem } from "@/components/chatbot-editor";
+import { normalizeChatbotConfig } from "@/lib/chatbot";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
+import { resolveStageLabels } from "@/lib/crm-stages";
 
 export default async function ConfiguracoesPage() {
   await assertPageAccess("/configuracoes");
@@ -29,6 +34,32 @@ export default async function ConfiguracoesPage() {
     isStaff ? listEmailDomains() : Promise.resolve([]),
   ]);
   const currentPlan = resolveWorkspacePlan(workspaceRow?.plan);
+
+  // Chatbot de mensagens iniciais: só números SEM agente de IA vinculado. Lido pelo servidor com
+  // fallback — antes da migration 0077 a coluna `chatbot` não existe e a página não pode quebrar.
+  let chatbotItems: ChatbotInstanceItem[] = [];
+  let chatbotReady = false;
+  const [fieldDefs, { data: stageRow }] = workspace
+    ? await Promise.all([listCustomFieldDefs(), supabase.from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle()])
+    : [[], { data: null }];
+  if (workspace) {
+    const admin = createAdminClient();
+    const [{ data: botRows, error: botError }, { data: linked }] = await Promise.all([
+      admin.from("whatsapp_instances").select("id, channel, department, chatbot").eq("workspace_id", workspace.id).order("created_at"),
+      admin.from("agents").select("whatsapp_instance_id").eq("workspace_id", workspace.id).not("whatsapp_instance_id", "is", null),
+    ]);
+    chatbotReady = !botError;
+    const withAgent = new Set((linked || []).map((a) => a.whatsapp_instance_id as string));
+    const channelName: Record<string, string> = { evolution: "WhatsApp (QR code)", "360dialog": "360dialog", metacloud: "API oficial Meta" };
+    const departmentName: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
+    chatbotItems = (botRows || [])
+      .filter((r) => !withAgent.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        label: `${departmentName[r.department] || r.department} · ${channelName[r.channel] || r.channel}`,
+        config: normalizeChatbotConfig(r.chatbot),
+      }));
+  }
 
   const h = await headers();
   const siteUrl = `${h.get("x-forwarded-proto") || "https"}://${h.get("host") || ""}`;
@@ -77,6 +108,21 @@ export default async function ConfiguracoesPage() {
           }))}
         />
       </div>
+
+      {workspace && chatbotReady && (
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5 max-w-5xl">
+          <h3 className="font-bold text-[15px] mb-1">Mensagens iniciais (chatbot)</h3>
+          <p className="text-xs text-text-muted mb-4">
+            Primeiro atendimento automático em número sem IA: perguntas e menu que preenchem o cadastro, aplicam etiquetas e
+            etapa no Pipeline e direcionam o lead antes de a equipe assumir.
+          </p>
+          <ChatbotEditor
+            instances={chatbotItems}
+            fieldDefs={fieldDefs.map((d) => ({ key: d.key, label: d.label, type: d.type, options: d.options }))}
+            stageLabels={resolveStageLabels(stageRow?.crm_stage_labels)}
+          />
+        </div>
+      )}
 
       {isStaff && (
         <>

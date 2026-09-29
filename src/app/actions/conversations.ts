@@ -9,6 +9,7 @@ import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
 import { agentSendText, agentSendMedia } from "@/lib/agent-channel";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype } from "@/lib/conversation-media";
+import { interruptChatbotForContact } from "@/lib/chatbot-engine";
 
 // Mesmo teto do bucket "conversation-media" (30MB). Documento cabe folgado no WhatsApp (até 100MB);
 // imagem e áudio têm teto menor e viram documento acima dele (ver mediaKindFromMime).
@@ -252,6 +253,8 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
     role: "assistant",
     content: trimmed,
   });
+  // Alguém da equipe respondeu: se o chatbot de mensagens iniciais estava no meio, ele sai da conversa.
+  await interruptChatbotForContact(createAdminClient(), contactId);
 
   revalidatePath("/conversas");
   return { error: null, ok: true };
@@ -298,6 +301,7 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, u
     media_url: mediaUrl,
     media_type: kind,
   });
+  await interruptChatbotForContact(admin, contactId);
 
   revalidatePath("/conversas");
   return { error: null, ok: true };

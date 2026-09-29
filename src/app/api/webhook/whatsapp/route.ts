@@ -7,6 +7,7 @@ import { type AgentChannel } from "@/lib/agent-channel";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { secureEqual } from "@/lib/secure-compare";
+import { handleChatbotInbound } from "@/lib/chatbot-engine";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -153,14 +154,35 @@ async function processWebhook(body: {
   }
 
   // Não é instância de agente — trata como número de disparo em massa (sem IA), só registra e checa opt-out.
-  const { data: instance } = await supabase
+  // Coluna `chatbot` (migration 0077) com rede de segurança: se ainda não existir, refaz sem ela em vez
+  // de perder a mensagem — sem isso, deploy antes da migration calaria todo número sem IA.
+  let { data: instance, error: instanceError } = await supabase
     .from("whatsapp_instances")
-    .select("workspace_id")
+    .select("id, workspace_id, channel, instance_name, dialog360_api_key, phone_number_id, chatbot")
     .eq("instance_name", instanceName)
     .maybeSingle();
+  if (instanceError) {
+    const retry = await supabase
+      .from("whatsapp_instances")
+      .select("id, workspace_id, channel, instance_name, dialog360_api_key, phone_number_id")
+      .eq("instance_name", instanceName)
+      .maybeSingle();
+    instance = retry.data ? { ...retry.data, chatbot: null } : null;
+  }
   if (!instance) return;
 
   const text = extractText(data);
+
+  // Chatbot de mensagens iniciais (número sem IA, com o bot ligado). Cuidou da mensagem = para aqui.
+  const handledByBot = await handleChatbotInbound(
+    supabase,
+    { ...instance, instance_name: instance.instance_name ?? instanceName },
+    { phone, pushName: data.pushName ?? null, text: text || null, externalId: data.key?.id ?? null }
+  ).catch((err) => {
+    console.error("Chatbot (Evolution) falhou:", err instanceof Error ? err.message : err);
+    return false;
+  });
+  if (handledByBot) return;
   if (!text) return;
 
   const { data: contact } = await supabase

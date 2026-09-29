@@ -9,6 +9,7 @@ import { brPhoneVariant } from "@/lib/import-contacts";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { secureEqual } from "@/lib/secure-compare";
+import { handleChatbotInbound } from "@/lib/chatbot-engine";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -119,11 +120,21 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
   const supabase = createAdminClient();
 
   for (const msg of incoming) {
-    const { data: instance } = await supabase
+    // Coluna `chatbot` (migration 0077) com rede de segurança: se ainda não existir, refaz sem ela em
+    // vez de perder a mensagem — sem isso, deploy antes da migration calaria todo número sem IA.
+    let { data: instance, error: instanceError } = await supabase
       .from("whatsapp_instances")
-      .select("id, workspace_id, channel, dialog360_api_key")
+      .select("id, workspace_id, channel, dialog360_api_key, chatbot")
       .eq("phone_number_id", msg.phoneNumberId)
       .maybeSingle();
+    if (instanceError) {
+      const retry = await supabase
+        .from("whatsapp_instances")
+        .select("id, workspace_id, channel, dialog360_api_key")
+        .eq("phone_number_id", msg.phoneNumberId)
+        .maybeSingle();
+      instance = retry.data ? { ...retry.data, chatbot: null } : null;
+    }
     if (!instance) continue; // número não cadastrado em nenhum workspace — ignora
 
     // Número com agente de IA vinculado (1 número servindo disparo + SDR, ex.: campanha manda o
@@ -145,6 +156,17 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       await runAgentTurn(supabase, agentRow as Agent, channel, msg.from, msg.contactName, resolved);
       continue;
     }
+
+    // Chatbot de mensagens iniciais (número sem IA, com o bot ligado). Cuidou da mensagem = para aqui.
+    const handledByBot = await handleChatbotInbound(
+      supabase,
+      { ...instance, instance_name: null, phone_number_id: msg.phoneNumberId },
+      { phone: msg.from, pushName: msg.contactName, text: msg.type === "text" ? msg.text : null, externalId: msg.messageId }
+    ).catch((err) => {
+      console.error("Chatbot (360dialog/metacloud) falhou:", err instanceof Error ? err.message : err);
+      return false;
+    });
+    if (handledByBot) continue;
 
     let { data: contact } = await supabase.from("contacts").select("id, stage").eq("workspace_id", instance.workspace_id).eq("phone", msg.from).maybeSingle();
     if (!contact) {
