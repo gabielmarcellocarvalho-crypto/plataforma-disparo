@@ -3,7 +3,9 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { getAutomationRules } from "@/app/actions/automation-rules";
 import { getWorkflows } from "@/app/actions/workflows";
 import { AutomationRulesForm } from "@/components/automation-rules-form";
-import { WorkflowList } from "@/components/workflow-list";
+import { WorkflowList, type StageNames } from "@/components/workflow-list";
+import { listPipelines } from "@/app/actions/pipelines";
+import { resolveStageLabels } from "@/lib/crm-stages";
 
 export default async function AutomacoesPage() {
   const { workspace } = await getCurrentWorkspace();
@@ -15,6 +17,16 @@ export default async function AutomacoesPage() {
       </div>
     );
   }
+
+  // Nomes das etapas como o workspace chama (funil personalizado ou rótulos das fases) pro resumo de cada workflow.
+  const [pipelines, { data: labelsRow }] = await Promise.all([
+    listPipelines(),
+    createAdminClient().from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
+  ]);
+  const stageNames: StageNames = {
+    labels: resolveStageLabels(labelsRow?.crm_stage_labels),
+    pipelineStages: Object.fromEntries(pipelines.flatMap((p) => p.stages.map((st) => [st.id, pipelines.length > 1 ? `${st.name} (${p.name})` : st.name]))),
+  };
 
   const [rules, workflows, members] = await Promise.all([
     getAutomationRules(workspace.id),
@@ -35,7 +47,7 @@ export default async function AutomacoesPage() {
         </p>
       </div>
 
-      <WorkflowList workflows={workflows} members={members} />
+      <WorkflowList workflows={workflows} members={members} stageNames={stageNames} />
 
       <div className="flex flex-col gap-2 border-t border-border pt-6">
         <div>

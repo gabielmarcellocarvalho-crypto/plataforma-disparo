@@ -19,13 +19,17 @@ export const TRIGGER_DESCRIPTIONS: Record<TriggerType, string> = {
   webhook: "Dispara quando um sistema externo chama a URL do webhook desse workflow (ex: formulário de site, outra ferramenta).",
 };
 
+// `pipelineStageId`: etapa exata de um funil personalizado. Duas etapas podem ter o mesmo sinal
+// ("Encaminhado" e "Follow Up", ambas encaminhamento) — sem o id, o workflow não tem como diferenciar.
+// Ausente = comportamento antigo, só pelo sinal (`stage`), que continua sempre gravado.
 export type TriggerConfig =
-  | { type: "stage_enter"; stage: ContactStage }
-  | { type: "stage_stale"; stage: ContactStage; days: number }
+  | { type: "stage_enter"; stage: ContactStage; pipelineStageId?: string | null }
+  | { type: "stage_stale"; stage: ContactStage; days: number; pipelineStageId?: string | null }
   | { type: "no_reply"; days: number };
 
 export type AudienceConfig = {
   stage?: ContactStage | null;
+  pipelineStageId?: string | null;
   responsibleUserId?: string | null;
 };
 
@@ -44,7 +48,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export type ActionConfig =
   | { action_type: "send_message"; text: string }
   | { action_type: "create_task"; title: string }
-  | { action_type: "change_stage"; stage: ContactStage }
+  | { action_type: "change_stage"; stage: ContactStage; pipelineStageId?: string | null }
   | { action_type: "add_note"; text: string }
   | { action_type: "http_request"; method: HttpMethod; url: string; body: string };
 
@@ -71,7 +75,7 @@ export const CONDITION_LABELS: Record<ConditionType, string> = {
 
 export type ConditionConfig =
   | { condition_type: "replied" }
-  | { condition_type: "stage_is"; stage: ContactStage }
+  | { condition_type: "stage_is"; stage: ContactStage; pipelineStageId?: string | null }
   | { condition_type: "responsible_is"; responsibleUserId: string }
   | { condition_type: "days_in_stage_gte"; days: number };
 

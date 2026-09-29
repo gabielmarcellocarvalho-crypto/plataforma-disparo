@@ -4,6 +4,9 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { getWorkflow } from "@/app/actions/workflows";
 import { WorkflowBuilder } from "@/components/workflow-builder";
 import { WORKFLOW_TEMPLATES } from "@/lib/workflow-templates";
+import { listPipelines } from "@/app/actions/pipelines";
+import { createClient } from "@/lib/supabase/server";
+import { resolveStageLabels } from "@/lib/crm-stages";
 
 // Tela dedicada de edição/criação de workflow (não é um drawer/popup — o canvas 2D é o elemento
 // principal da página, igual um editor de verdade de n8n/Make). "novo" é o sentinel de criação;
@@ -32,5 +35,20 @@ export default async function WorkflowEditorPage({
     .eq("workspace_id", workspace.id)
     .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" })));
 
-  return <WorkflowBuilder workspaceId={workspace.id} members={members} existing={existing} template={template} />;
+  // Etapas que o editor mostra: as do funil personalizado, ou as 7 fases com os nomes do workspace.
+  const [pipelines, { data: labelsRow }] = await Promise.all([
+    listPipelines(),
+    (await createClient()).from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
+  ]);
+
+  return (
+    <WorkflowBuilder
+      workspaceId={workspace.id}
+      members={members}
+      existing={existing}
+      template={template}
+      pipelines={pipelines}
+      stageLabels={resolveStageLabels(labelsRow?.crm_stage_labels)}
+    />
+  );
 }

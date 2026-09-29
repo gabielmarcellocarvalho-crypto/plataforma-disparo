@@ -473,6 +473,8 @@ export type ContactDetail = {
   branch_id: string | null;
   lost_reason: string | null;
   tags: string[] | null;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -486,7 +488,7 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
     supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, tags, companies(name)"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, tags, pipeline_id, pipeline_stage_id, companies(name)"
       )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)

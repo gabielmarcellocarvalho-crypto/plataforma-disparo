@@ -14,6 +14,8 @@ import {
   type ContactNote,
 } from "@/app/actions/contacts";
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { listPipelines, moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
+import { sortStages, stageForSignal } from "@/lib/pipelines";
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
@@ -53,7 +55,10 @@ export function CrmLeadDrawer({
   lostReasons?: string[];
   // Avisa quem abriu o painel (o Pipeline guarda a própria cópia dos leads) pra o card refletir a
   // mudança na hora, sem esperar recarregar a página.
-  onPatched?: (id: string, patch: { tags?: string[]; team_member_id?: string | null; branch_id?: string | null }) => void;
+  onPatched?: (
+    id: string,
+    patch: { tags?: string[]; team_member_id?: string | null; branch_id?: string | null; stage?: string; pipeline_id?: string | null; pipeline_stage_id?: string | null; lost_reason?: string | null }
+  ) => void;
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -69,6 +74,14 @@ export function CrmLeadDrawer({
   const [branchId, setBranchId] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  // Funis do workspace — carregados uma vez; sem funil, o seletor segue com as 7 fases (nomes do workspace).
+  const [pipelines, setPipelines] = useState<PipelineWithStages[] | null>(null);
+  useEffect(() => {
+    if (!contactId || pipelines) return;
+    listPipelines()
+      .then(setPipelines)
+      .catch(() => setPipelines([]));
+  }, [contactId, pipelines]);
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +129,14 @@ export function CrmLeadDrawer({
 
   // Tag salva na hora da marcação, e não no "Salvar" de infos pessoais: ela é usada pra segmentar
   // disparo, e uma tag marcada que não foi salva por esquecimento vira lead de fora da campanha.
+  // Lead sem pipeline_id pertence ao funil PADRÃO, posicionado pelo sinal — mesma regra do Kanban.
+  const contactPipeline = contact && pipelines ? pipelines.find((pl) => pl.id === contact.pipeline_id) ?? pipelines.find((pl) => pl.is_default) ?? null : null;
+  const pipelineStages = contactPipeline ? sortStages(contactPipeline.stages) : [];
+  const currentPipelineStageId =
+    contact && pipelineStages.length
+      ? (pipelineStages.find((st) => st.id === contact.pipeline_stage_id) ?? stageForSignal(contact.stage as ContactStage, pipelineStages))?.id ?? ""
+      : "";
+
   function handleTagsChange(next: string[]) {
     setTags(next);
     if (!contactId) return;
@@ -177,8 +198,24 @@ export function CrmLeadDrawer({
     // Sair da fase de perda limpa o motivo: lead reaberto com "perdemos por preço" pendurado
     // envenenaria o relatório de perdas. Quem limpa de verdade é a action; aqui é só o espelho.
     setContact({ ...contact, stage, lost_reason: stage === LOST_STAGE ? contact.lost_reason : null });
+    onPatched?.(contactId, { stage, lost_reason: stage === LOST_STAGE ? contact.lost_reason : null });
     startTransition(async () => {
       const result = await updateContactStage(contactId, stage, contact.lost_reason);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  // Lead em funil personalizado: move pra ETAPA do funil (mesma action do arrastar no Kanban), que
+  // grava etapa + sinal juntos. Antes o painel só oferecia as 7 fases fixas e ignorava o funil.
+  function handlePipelineStageChange(stageId: string) {
+    if (!contactId || !contact) return;
+    const etapa = pipelineStages.find((s) => s.id === stageId);
+    if (!etapa) return;
+    const lost = etapa.signal === LOST_STAGE ? contact.lost_reason : null;
+    setContact({ ...contact, stage: etapa.signal, pipeline_id: etapa.pipeline_id, pipeline_stage_id: etapa.id, lost_reason: lost });
+    onPatched?.(contactId, { stage: etapa.signal, pipeline_id: etapa.pipeline_id, pipeline_stage_id: etapa.id, lost_reason: lost });
+    startTransition(async () => {
+      const result = await moveContactToStage(contactId, stageId, lost);
       if (result.error) setError(result.error);
     });
   }
@@ -303,17 +340,33 @@ export function CrmLeadDrawer({
                 <div className="min-w-0">
                   <h2 className="text-lg font-extrabold truncate">{contact.name || contact.phone || contact.email || "sem nome"}</h2>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <select
-                    value={contact.stage}
-                    onChange={(e) => handleStageChange(e.target.value as ContactStage)}
-                    className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong border-none outline-none cursor-pointer"
-                  >
-                    {STAGE_ORDER.map((s) => (
-                      <option key={s} value={s}>
-                        {stageLabels[s]}
-                      </option>
-                    ))}
-                  </select>
+                  {pipelineStages.length > 0 ? (
+                    <select
+                      value={currentPipelineStageId}
+                      onChange={(e) => handlePipelineStageChange(e.target.value)}
+                      aria-label="Etapa do lead"
+                      className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong border-none outline-none cursor-pointer"
+                    >
+                      {pipelineStages.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <select
+                      value={contact.stage}
+                      onChange={(e) => handleStageChange(e.target.value as ContactStage)}
+                      aria-label="Etapa do lead"
+                      className="text-xs font-bold px-2 py-1 rounded-full bg-primary-faint text-primary-strong border-none outline-none cursor-pointer"
+                    >
+                      {STAGE_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {stageLabels[s]}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <span className="text-xs text-text-muted">há {daysSince(contact.stage_changed_at)}d nessa fase</span>
                 </div>
                 {contact.stage === LOST_STAGE && (

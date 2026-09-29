@@ -11,22 +11,31 @@ import { History, Pencil, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, X } 
 
 type Member = { id: string; name: string };
 
-function triggerSummary(w: WorkflowListRow): string {
+// Nomes que o workspace dá às etapas: etapa de funil pelo id, senão a fase com o rótulo do workspace.
+export type StageNames = { labels: Record<string, string>; pipelineStages: Record<string, string> };
+const DEFAULT_NAMES: StageNames = { labels: STAGE_LABELS, pipelineStages: {} };
+function stageName(names: StageNames, stage: unknown, pipelineStageId: unknown): string | null {
+  if (typeof pipelineStageId === "string" && names.pipelineStages[pipelineStageId]) return names.pipelineStages[pipelineStageId];
+  if (typeof stage === "string" && stage) return names.labels[stage] ?? STAGE_LABELS[stage as ContactStage] ?? stage;
+  return null;
+}
+
+function triggerSummary(w: WorkflowListRow, names: StageNames): string {
   const cfg = w.trigger_config;
   const label = TRIGGER_LABELS[w.trigger_type];
-  const stage = cfg.stage ? STAGE_LABELS[cfg.stage as ContactStage] : null;
+  const stage = stageName(names, cfg.stage, cfg.pipelineStageId);
   const days = cfg.days ? `${cfg.days}d` : null;
   return [label, stage, days].filter(Boolean).join(" · ");
 }
 
-function audienceSummary(w: WorkflowListRow, members: Member[]): string {
-  const stage = w.audience_config.stage ? STAGE_LABELS[w.audience_config.stage as ContactStage] : "qualquer etapa";
+function audienceSummary(w: WorkflowListRow, members: Member[], names: StageNames): string {
+  const stage = stageName(names, w.audience_config.stage, w.audience_config.pipelineStageId) ?? "qualquer etapa";
   const respId = w.audience_config.responsibleUserId;
   const resp = respId ? members.find((m) => m.id === respId)?.name || "responsável específico" : "qualquer responsável";
   return `${stage} · ${resp}`;
 }
 
-export function WorkflowList({ workflows, members }: { workflows: WorkflowListRow[]; members: Member[] }) {
+export function WorkflowList({ workflows, members, stageNames = DEFAULT_NAMES }: { workflows: WorkflowListRow[]; members: Member[]; stageNames?: StageNames }) {
   const router = useRouter();
   const [viewingRuns, setViewingRuns] = useState<WorkflowListRow | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
@@ -103,8 +112,8 @@ export function WorkflowList({ workflows, members }: { workflows: WorkflowListRo
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                <span className="bg-success-soft text-success px-2 py-0.5 rounded-full font-semibold">{triggerSummary(w)}</span>
-                {w.trigger_type !== "webhook" && <span className="bg-info-soft text-info-text px-2 py-0.5 rounded-full font-semibold">{audienceSummary(w, members)}</span>}
+                <span className="bg-success-soft text-success px-2 py-0.5 rounded-full font-semibold">{triggerSummary(w, stageNames)}</span>
+                {w.trigger_type !== "webhook" && <span className="bg-info-soft text-info-text px-2 py-0.5 rounded-full font-semibold">{audienceSummary(w, members, stageNames)}</span>}
                 <span>{w.step_count} passo(s)</span>
                 <span>·</span>
                 <span>{w.running_count} em andamento</span>

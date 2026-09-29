@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   createWorkflow,
@@ -11,6 +11,8 @@ import {
 import type { WorkflowListRow } from "@/app/actions/workflows";
 import type { WorkflowTemplateSeed } from "@/lib/workflow-templates";
 import { STAGE_LABELS, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import type { PipelineWithStages } from "@/app/actions/pipelines";
+import { sortStages } from "@/lib/pipelines";
 import {
   ACTION_LABELS,
   CONDITION_LABELS,
@@ -44,6 +46,76 @@ const GAP_X = 84;
 const ROW_H = 150;
 const ADD_H = 44;
 
+// Etapas que o workspace enxerga: as do(s) funil(is) personalizado(s) quando existem, senão as 7 fases
+// com os nomes que o workspace deu (antes era sempre a lista fixa de fábrica, que não batia com o CRM).
+type StageOptions = { pipelines: PipelineWithStages[]; labels: Record<ContactStage, string> };
+const StageCtx = createContext<StageOptions>({ pipelines: [], labels: STAGE_LABELS });
+
+function stageDisplayName(opts: StageOptions, stage: ContactStage | null | undefined, pipelineStageId?: string | null): string {
+  if (pipelineStageId) {
+    for (const p of opts.pipelines) {
+      const st = p.stages.find((x) => x.id === pipelineStageId);
+      if (st) return opts.pipelines.length > 1 ? `${st.name} (${p.name})` : st.name;
+    }
+  }
+  return stage ? opts.labels[stage] ?? STAGE_LABELS[stage] : "";
+}
+
+// Um seletor só pra etapa em todo o editor. Valor codificado: "ps:<id>" (etapa de funil) ou
+// "sig:<sinal>" (fase fixa). Escolher etapa de funil grava também o sinal dela — o motor antigo e as
+// métricas continuam lendo o sinal.
+function StageSelect({
+  stage,
+  pipelineStageId,
+  onChange,
+  emptyLabel,
+}: {
+  stage: ContactStage | "" | null | undefined;
+  pipelineStageId?: string | null;
+  onChange: (stage: ContactStage | "", pipelineStageId: string | null) => void;
+  emptyLabel?: string;
+}) {
+  const opts = useContext(StageCtx);
+  const hasPipelines = opts.pipelines.some((p) => p.stages.length > 0);
+  const value = pipelineStageId ? `ps:${pipelineStageId}` : stage ? `sig:${stage}` : "";
+  const cls = "border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary w-full min-w-0";
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!v) return onChange("", null);
+        if (v.startsWith("sig:")) return onChange(v.slice(4) as ContactStage, null);
+        const id = v.slice(3);
+        for (const p of opts.pipelines) {
+          const st = p.stages.find((x) => x.id === id);
+          if (st) return onChange(st.signal, st.id);
+        }
+      }}
+      className={cls}
+    >
+      {emptyLabel !== undefined && <option value="">{emptyLabel}</option>}
+      {hasPipelines
+        ? opts.pipelines.map((p) => (
+            <optgroup key={p.id} label={p.name}>
+              {sortStages(p.stages).map((st) => (
+                <option key={st.id} value={`ps:${st.id}`}>
+                  {st.name}
+                </option>
+              ))}
+            </optgroup>
+          ))
+        : STAGE_ORDER.map((st) => (
+            <option key={st} value={`sig:${st}`}>
+              {opts.labels[st] ?? STAGE_LABELS[st]}
+            </option>
+          ))}
+      {/* Valor antigo por sinal num workspace que hoje tem funil: continua visível e selecionado. */}
+      {hasPipelines && stage && !pipelineStageId && <option value={`sig:${stage}`}>{opts.labels[stage] ?? STAGE_LABELS[stage]} (fase)</option>}
+    </select>
+  );
+}
+
 function emptyActionConfig(type: ActionType) {
   if (type === "send_message") return { action_type: "send_message" as const, text: "" };
   if (type === "create_task") return { action_type: "create_task" as const, title: "" };
@@ -61,12 +133,14 @@ function emptyConditionConfig(type: ConditionType): ConditionConfig {
 
 // Resumo curto de cada passo pro nó do canvas — o mesmo dado que aparece expandido no painel de
 // edição, só condensado pra caber no card.
-function stepChipInfo(step: WorkflowStepInput): { icon: LucideIcon; label: string; sublabel: string; kind: NodeKind } {
+function stepChipInfo(step: WorkflowStepInput, opts: StageOptions): { icon: LucideIcon; label: string; sublabel: string; kind: NodeKind } {
   if (step.step_type === "wait") {
     return { icon: Clock, label: "Esperar", sublabel: `${step.config.amount} ${WAIT_UNIT_LABELS[step.config.unit]}`, kind: "wait" };
   }
   if (step.step_type === "condition") {
-    return { icon: GitBranch, label: "Condição", sublabel: CONDITION_LABELS[step.config.condition_type], kind: "condition" };
+    const c = step.config;
+    const sub = c.condition_type === "stage_is" ? `Etapa é ${stageDisplayName(opts, c.stage, c.pipelineStageId)}` : CONDITION_LABELS[c.condition_type];
+    return { icon: GitBranch, label: "Condição", sublabel: sub, kind: "condition" };
   }
   const a = step.config;
   const label = ACTION_LABELS[a.action_type];
@@ -76,7 +150,7 @@ function stepChipInfo(step: WorkflowStepInput): { icon: LucideIcon; label: strin
       : a.action_type === "create_task"
         ? a.title || "sem título"
         : a.action_type === "change_stage"
-          ? STAGE_LABELS[a.stage]
+          ? stageDisplayName(opts, a.stage, a.pipelineStageId)
           : a.url || "sem URL";
   return { icon: a.action_type === "http_request" ? Globe : MessageCircle, label, sublabel, kind: "action" };
 }
@@ -86,13 +160,18 @@ export function WorkflowBuilder({
   members,
   existing,
   template,
+  pipelines = [],
+  stageLabels = STAGE_LABELS,
 }: {
   workspaceId: string;
   members: Member[];
   existing: WorkflowListRow | null;
   template?: WorkflowTemplateSeed;
+  pipelines?: PipelineWithStages[];
+  stageLabels?: Record<ContactStage, string>;
 }) {
   const router = useRouter();
+  const stageOpts: StageOptions = { pipelines, labels: stageLabels };
   const isEditing = Boolean(existing);
 
   const [name, setName] = useState(existing?.name || template?.name || "");
@@ -100,7 +179,9 @@ export function WorkflowBuilder({
   const [triggerType, setTriggerType] = useState<TriggerType>(existing?.trigger_type || template?.triggerType || "stage_enter");
   const [triggerStage, setTriggerStage] = useState<ContactStage>((existing?.trigger_config?.stage as ContactStage) || template?.triggerStage || "interessado");
   const [triggerDays, setTriggerDays] = useState<number>(Number(existing?.trigger_config?.days) || template?.triggerDays || 3);
+  const [triggerPipelineStageId, setTriggerPipelineStageId] = useState<string | null>((existing?.trigger_config?.pipelineStageId as string | undefined) || null);
   const [audienceStage, setAudienceStage] = useState<string>(existing?.audience_config?.stage || template?.audienceStage || "");
+  const [audiencePipelineStageId, setAudiencePipelineStageId] = useState<string | null>(existing?.audience_config?.pipelineStageId || null);
   const [audienceResponsible, setAudienceResponsible] = useState<string>(existing?.audience_config?.responsibleUserId || "");
   const [stopOnReply, setStopOnReply] = useState(existing?.stop_on_reply ?? template?.stopOnReply ?? true);
   const [stopOnStageChange, setStopOnStageChange] = useState(existing?.stop_on_stage_change ?? template?.stopOnStageChange ?? false);
@@ -153,8 +234,8 @@ export function WorkflowBuilder({
           : triggerType === "no_reply"
             ? `${triggerDays} dia(s) sem resposta`
             : triggerType === "stage_enter"
-              ? STAGE_LABELS[triggerStage]
-              : `${STAGE_LABELS[triggerStage]} · ${triggerDays}d`,
+              ? stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)
+              : `${stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)} · ${triggerDays}d`,
       active: selected === "trigger",
       onSelect: selectFixed("trigger"),
     });
@@ -168,7 +249,7 @@ export function WorkflowBuilder({
         y: mainY,
         icon: Filter,
         title: "Público",
-        subtitle: `${audienceStage ? STAGE_LABELS[audienceStage as ContactStage] : "qualquer etapa"} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
+        subtitle: `${audienceStage ? stageDisplayName(stageOpts, audienceStage as ContactStage, audiencePipelineStageId) : "qualquer etapa"} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
         active: selected === "audience",
         onSelect: selectFixed("audience"),
       });
@@ -179,7 +260,7 @@ export function WorkflowBuilder({
     steps.forEach((step, i) => {
       x += NODE_W + GAP_X;
       const id = `step-${i}`;
-      const chip = stepChipInfo(step);
+      const chip = stepChipInfo(step, stageOpts);
       nodes.push({
         id,
         kind: chip.kind,
@@ -205,7 +286,7 @@ export function WorkflowBuilder({
           let bPort: "out" | "yes" | "no" = branch;
           list.forEach((cs, ci) => {
             const cid = `${id}-${branch}-${ci}`;
-            const cchip = stepChipInfo(cs);
+            const cchip = stepChipInfo(cs, stageOpts);
             nodes.push({ id: cid, kind: cchip.kind, x: bx, y: laneY, icon: cchip.icon, title: cchip.label, subtitle: cchip.sublabel, active: selected === i, onSelect: selectStep(i) });
             edges.push({ from: bPrev, to: cid, port: bPort });
             bPrev = cid;
@@ -307,15 +388,15 @@ export function WorkflowBuilder({
         : triggerType === "no_reply"
           ? { days: triggerDays }
           : triggerType === "stage_enter"
-            ? { stage: triggerStage }
-            : { stage: triggerStage, days: triggerDays };
+            ? { stage: triggerStage, pipelineStageId: triggerPipelineStageId }
+            : { stage: triggerStage, days: triggerDays, pipelineStageId: triggerPipelineStageId };
 
     const input: WorkflowInput = {
       name,
       description: description || null,
       triggerType,
       triggerConfig,
-      audienceConfig: { stage: (audienceStage || null) as ContactStage | null, responsibleUserId: audienceResponsible || null },
+      audienceConfig: { stage: (audienceStage || null) as ContactStage | null, pipelineStageId: audiencePipelineStageId, responsibleUserId: audienceResponsible || null },
       stopOnReply,
       stopOnStageChange,
       respectBusinessHours,
@@ -349,6 +430,7 @@ export function WorkflowBuilder({
 
   return (
     // Ocupa a área inteira do <main> (desfaz o padding dele), como o editor de um n8n/Make.
+    <StageCtx.Provider value={stageOpts}>
     <div className="flex flex-col -m-4 lg:-m-5 h-[calc(100%+2rem)] lg:h-[calc(100%+2.5rem)] min-h-[560px]">
       <div className="flex items-center justify-between gap-3 flex-wrap bg-surface px-4 lg:px-5 py-2.5 border-b border-border shrink-0">
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -418,11 +500,14 @@ export function WorkflowBuilder({
                       </select>
                       <p className="text-[11px] text-text-muted">{TRIGGER_DESCRIPTIONS[triggerType]}</p>
                       {(triggerType === "stage_enter" || triggerType === "stage_stale") && (
-                        <select value={triggerStage} onChange={(e) => setTriggerStage(e.target.value as ContactStage)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
-                          {STAGE_ORDER.map((s) => (
-                            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-                          ))}
-                        </select>
+                        <StageSelect
+                          stage={triggerStage}
+                          pipelineStageId={triggerPipelineStageId}
+                          onChange={(st, id) => {
+                            if (st) setTriggerStage(st);
+                            setTriggerPipelineStageId(id);
+                          }}
+                        />
                       )}
                       {(triggerType === "stage_stale" || triggerType === "no_reply") && (
                         <div className="flex items-center gap-2 text-sm">
@@ -451,12 +536,15 @@ export function WorkflowBuilder({
                       <div className="flex items-center gap-2 text-info-text text-xs font-bold uppercase tracking-wide">
                         <Filter size={14} /> Público — quem entra
                       </div>
-                      <select value={audienceStage} onChange={(e) => setAudienceStage(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
-                        <option value="">Qualquer etapa</option>
-                        {STAGE_ORDER.map((s) => (
-                          <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-                        ))}
-                      </select>
+                      <StageSelect
+                        stage={audienceStage as ContactStage | ""}
+                        pipelineStageId={audiencePipelineStageId}
+                        emptyLabel="Qualquer etapa"
+                        onChange={(st, id) => {
+                          setAudienceStage(st);
+                          setAudiencePipelineStageId(id);
+                        }}
+                      />
                       <select value={audienceResponsible} onChange={(e) => setAudienceResponsible(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
                         <option value="">Qualquer responsável</option>
                         {members.map((m) => (
@@ -535,6 +623,7 @@ export function WorkflowBuilder({
         </div>
       )}
     </div>
+    </StageCtx.Provider>
   );
 }
 
@@ -658,11 +747,7 @@ function ConditionFields({
       </div>
 
       {config.condition_type === "stage_is" && (
-        <select value={config.stage} onChange={(e) => onChange({ ...config, stage: e.target.value as ContactStage })} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
-          {STAGE_ORDER.map((s) => (
-            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-          ))}
-        </select>
+        <StageSelect stage={config.stage} pipelineStageId={config.pipelineStageId} onChange={(st, id) => st && onChange({ ...config, stage: st, pipelineStageId: id })} />
       )}
       {config.condition_type === "responsible_is" && (
         <select value={config.responsibleUserId} onChange={(e) => onChange({ ...config, responsibleUserId: e.target.value })} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
@@ -767,15 +852,7 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
         />
       )}
       {config.action_type === "change_stage" && (
-        <select
-          value={config.stage}
-          onChange={(e) => onChange({ ...config, stage: e.target.value as ContactStage })}
-          className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary"
-        >
-          {STAGE_ORDER.map((s) => (
-            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-          ))}
-        </select>
+        <StageSelect stage={config.stage} pipelineStageId={config.pipelineStageId} onChange={(st, id) => st && onChange({ ...config, stage: st, pipelineStageId: id })} />
       )}
       {config.action_type === "http_request" && (
         <div className="flex flex-col gap-2">

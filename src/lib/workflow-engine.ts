@@ -24,11 +24,13 @@ type Contact = {
   responsible_user_id: string | null;
   company_id: string | null;
   whatsapp_instance_id: string | null;
+  pipeline_id?: string | null;
+  pipeline_stage_id?: string | null;
   created_at?: string;
   custom_fields?: Record<string, unknown> | null;
 };
 
-const CONTACT_SELECT = "id, workspace_id, name, phone, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, created_at, custom_fields";
+const CONTACT_SELECT = "id, workspace_id, name, phone, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, pipeline_id, pipeline_stage_id, created_at, custom_fields";
 
 // O PostgREST devolve no máximo 1000 linhas por resposta (teto do servidor, ignora .limit()), então
 // toda busca "traz tudo" daqui pagina de verdade. `build` monta a query do zero a cada página, com
@@ -125,6 +127,36 @@ function firstChild(steps: WorkflowStepRow[], parentId: string, branch: "yes" | 
   return children[0] ?? null;
 }
 
+// ── Etapa exata de funil personalizado ────────────────────────────────────────────────────────
+// O lead está na etapa X quando pipeline_stage_id = X, ou quando nunca foi movido num funil
+// (pipeline_stage_id nulo) e X é a etapa que representa o sinal dele no funil padrão — mesma regra
+// do Kanban (stageForSignal: primeira etapa do funil com aquele sinal).
+export type StageRef = { id: string; pipeline_id: string; signal: string; position: number; isDefault: boolean };
+const stageCache = new Map<string, Promise<StageRef[]>>();
+function loadStages(supabase: AdminClient, workspaceId: string): Promise<StageRef[]> {
+  if (!stageCache.has(workspaceId)) {
+    stageCache.set(
+      workspaceId,
+      (async () => {
+        const [{ data: stages }, { data: pipes }] = await Promise.all([
+          supabase.from("pipeline_stages").select("id, pipeline_id, signal, position").eq("workspace_id", workspaceId),
+          supabase.from("pipelines").select("id, is_default").eq("workspace_id", workspaceId),
+        ]);
+        const defaults = new Set((pipes || []).filter((p) => p.is_default).map((p) => p.id as string));
+        return (stages || []).map((st) => ({ ...(st as Omit<StageRef, "isDefault">), isDefault: defaults.has(st.pipeline_id as string) }));
+      })()
+    );
+  }
+  return stageCache.get(workspaceId)!;
+}
+export function isInPipelineStage(contact: Contact, stageId: string, stages: StageRef[]): boolean {
+  if (contact.pipeline_stage_id) return contact.pipeline_stage_id === stageId;
+  const alvo = stages.find((st) => st.id === stageId);
+  if (!alvo || !alvo.isDefault || contact.stage !== alvo.signal) return false;
+  const primeira = stages.filter((st) => st.pipeline_id === alvo.pipeline_id && st.signal === alvo.signal).sort((a, b) => a.position - b.position)[0];
+  return primeira?.id === stageId;
+}
+
 async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRow): Promise<Contact[]> {
   const audience = (workflow.audience_config || {}) as AudienceConfig;
   const cfg = workflow.trigger_config as Record<string, unknown>;
@@ -156,7 +188,14 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
     return [];
   }
 
-  return fetchAllPages<Contact>((from, to) => build().order("id").range(from, to) as unknown as PageResult<Contact>);
+  let rows = await fetchAllPages<Contact>((from, to) => build().order("id").range(from, to) as unknown as PageResult<Contact>);
+  const triggerStageId = (workflow.trigger_type === "stage_enter" || workflow.trigger_type === "stage_stale") && typeof cfg.pipelineStageId === "string" ? cfg.pipelineStageId : null;
+  const audienceStageId = typeof audience.pipelineStageId === "string" ? audience.pipelineStageId : null;
+  if (triggerStageId || audienceStageId) {
+    const stages = await loadStages(supabase, workflow.workspace_id);
+    rows = rows.filter((c) => (!triggerStageId || isInPipelineStage(c, triggerStageId, stages)) && (!audienceStageId || isInPipelineStage(c, audienceStageId, stages)));
+  }
+  return rows;
 }
 
 // "Ficou X dias sem responder": pega a última mensagem enviada (assistant) e a última recebida
@@ -289,7 +328,10 @@ async function contactHasStoppingReply(supabase: AdminClient, contactId: string,
 
 async function evaluateCondition(supabase: AdminClient, contact: Contact, run: { started_at: string }, cond: ConditionConfig): Promise<boolean> {
   if (cond.condition_type === "replied") return contactHasStoppingReply(supabase, contact.id, run.started_at);
-  if (cond.condition_type === "stage_is") return contact.stage === cond.stage;
+  if (cond.condition_type === "stage_is") {
+    if (cond.pipelineStageId) return isInPipelineStage(contact, cond.pipelineStageId, await loadStages(supabase, contact.workspace_id));
+    return contact.stage === cond.stage;
+  }
   if (cond.condition_type === "responsible_is") return contact.responsible_user_id === cond.responsibleUserId;
   if (cond.condition_type === "days_in_stage_gte") {
     const days = (Date.now() - new Date(contact.stage_changed_at).getTime()) / 86_400_000;
@@ -350,6 +392,17 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
   }
 
   if (action.action_type === "change_stage") {
+    // Etapa exata do funil: grava etapa + funil + sinal juntos (igual arrastar no Kanban).
+    if (action.pipelineStageId) {
+      const etapa = (await loadStages(supabase, contact.workspace_id)).find((st) => st.id === action.pipelineStageId);
+      if (etapa) {
+        const { error } = await supabase
+          .from("contacts")
+          .update({ stage: etapa.signal, pipeline_id: etapa.pipeline_id, pipeline_stage_id: etapa.id, stage_changed_at: new Date().toISOString() })
+          .eq("id", contact.id);
+        return { ok: !error, detail: { stage: etapa.signal, pipelineStageId: etapa.id } };
+      }
+    }
     const { error } = await supabase
       .from("contacts")
       .update({ stage: action.stage, stage_changed_at: new Date().toISOString() })
@@ -522,6 +575,7 @@ export async function enrollWebhookContact(workflowId: string, contactId: string
 }
 
 export async function runWorkflowsTick(): Promise<{ enrolled: number; processed: number }> {
+  stageCache.clear();
   const supabase = createAdminClient();
   const { data: workflows } = await supabase.from("workflows").select("*").eq("enabled", true);
 
