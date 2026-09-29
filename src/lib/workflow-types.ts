@@ -23,8 +23,10 @@ export const TRIGGER_DESCRIPTIONS: Record<TriggerType, string> = {
 // ("Encaminhado" e "Follow Up", ambas encaminhamento) — sem o id, o workflow não tem como diferenciar.
 // Ausente = comportamento antigo, só pelo sinal (`stage`), que continua sempre gravado.
 export type TriggerConfig =
-  | { type: "stage_enter"; stage: ContactStage; pipelineStageId?: string | null }
-  | { type: "stage_stale"; stage: ContactStage; days: number; pipelineStageId?: string | null }
+  // allStages: "todas as fases" — entrou em qualquer etapa / parado em qualquer etapa (menos ganho e
+  // perdido, que não contam como "parado"). Com ele ligado, `stage`/`pipelineStageId` são ignorados.
+  | { type: "stage_enter"; stage: ContactStage; pipelineStageId?: string | null; allStages?: boolean }
+  | { type: "stage_stale"; stage: ContactStage; days: number; pipelineStageId?: string | null; allStages?: boolean }
   | { type: "no_reply"; days: number };
 
 export type AudienceConfig = {

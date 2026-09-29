@@ -23,7 +23,7 @@ function stageName(names: StageNames, stage: unknown, pipelineStageId: unknown):
 function triggerSummary(w: WorkflowListRow, names: StageNames): string {
   const cfg = w.trigger_config;
   const label = TRIGGER_LABELS[w.trigger_type];
-  const stage = stageName(names, cfg.stage, cfg.pipelineStageId);
+  const stage = cfg.allStages === true ? "todas as fases" : stageName(names, cfg.stage, cfg.pipelineStageId);
   const days = cfg.days ? `${cfg.days}d` : null;
   return [label, stage, days].filter(Boolean).join(" · ");
 }

@@ -169,7 +169,17 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
   };
 
   let build: () => ReturnType<typeof base>;
-  if (workflow.trigger_type === "stage_enter") {
+  const allStages = cfg.allStages === true;
+  if (workflow.trigger_type === "stage_enter" && allStages) {
+    // Qualquer mudança de etapa nos últimos 30min (mesma janela do caso de etapa específica).
+    const cutoff = new Date(Date.now() - 30 * 60_000).toISOString();
+    build = () => base().gte("stage_changed_at", cutoff);
+  } else if (workflow.trigger_type === "stage_stale" && allStages) {
+    // Parado em qualquer etapa — ganho e perdido não contam como "parado" (mesma regra do selo do Pipeline).
+    const days = Number(cfg.days) || 3;
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+    build = () => base().not("stage", "in", "(concluido,descartado)").lte("stage_changed_at", cutoff);
+  } else if (workflow.trigger_type === "stage_enter") {
     const stage = String(cfg.stage || "");
     if (!stage) return [];
     // Janela de captura precisa ser folgada o bastante pra cobrir o intervalo entre execuções do
@@ -189,7 +199,7 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
   }
 
   let rows = await fetchAllPages<Contact>((from, to) => build().order("id").range(from, to) as unknown as PageResult<Contact>);
-  const triggerStageId = (workflow.trigger_type === "stage_enter" || workflow.trigger_type === "stage_stale") && typeof cfg.pipelineStageId === "string" ? cfg.pipelineStageId : null;
+  const triggerStageId = !allStages && (workflow.trigger_type === "stage_enter" || workflow.trigger_type === "stage_stale") && typeof cfg.pipelineStageId === "string" ? cfg.pipelineStageId : null;
   const audienceStageId = typeof audience.pipelineStageId === "string" ? audience.pipelineStageId : null;
   if (triggerStageId || audienceStageId) {
     const stages = await loadStages(supabase, workflow.workspace_id);

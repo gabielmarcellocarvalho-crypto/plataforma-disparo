@@ -180,6 +180,7 @@ export function WorkflowBuilder({
   const [triggerStage, setTriggerStage] = useState<ContactStage>((existing?.trigger_config?.stage as ContactStage) || template?.triggerStage || "interessado");
   const [triggerDays, setTriggerDays] = useState<number>(Number(existing?.trigger_config?.days) || template?.triggerDays || 3);
   const [triggerPipelineStageId, setTriggerPipelineStageId] = useState<string | null>((existing?.trigger_config?.pipelineStageId as string | undefined) || null);
+  const [triggerAllStages, setTriggerAllStages] = useState<boolean>(existing?.trigger_config?.allStages === true);
   const [audienceStage, setAudienceStage] = useState<string>(existing?.audience_config?.stage || template?.audienceStage || "");
   const [audiencePipelineStageId, setAudiencePipelineStageId] = useState<string | null>(existing?.audience_config?.pipelineStageId || null);
   const [audienceResponsible, setAudienceResponsible] = useState<string>(existing?.audience_config?.responsibleUserId || "");
@@ -234,8 +235,10 @@ export function WorkflowBuilder({
           : triggerType === "no_reply"
             ? `${triggerDays} dia(s) sem resposta`
             : triggerType === "stage_enter"
-              ? stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)
-              : `${stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)} · ${triggerDays}d`,
+              ? triggerAllStages
+                ? "Todas as fases"
+                : stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)
+              : `${triggerAllStages ? "Todas as fases" : stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)} · ${triggerDays}d`,
       active: selected === "trigger",
       onSelect: selectFixed("trigger"),
     });
@@ -388,8 +391,8 @@ export function WorkflowBuilder({
         : triggerType === "no_reply"
           ? { days: triggerDays }
           : triggerType === "stage_enter"
-            ? { stage: triggerStage, pipelineStageId: triggerPipelineStageId }
-            : { stage: triggerStage, days: triggerDays, pipelineStageId: triggerPipelineStageId };
+            ? { stage: triggerStage, pipelineStageId: triggerAllStages ? null : triggerPipelineStageId, allStages: triggerAllStages }
+            : { stage: triggerStage, days: triggerDays, pipelineStageId: triggerAllStages ? null : triggerPipelineStageId, allStages: triggerAllStages };
 
     const input: WorkflowInput = {
       name,
@@ -501,13 +504,23 @@ export function WorkflowBuilder({
                       <p className="text-[11px] text-text-muted">{TRIGGER_DESCRIPTIONS[triggerType]}</p>
                       {(triggerType === "stage_enter" || triggerType === "stage_stale") && (
                         <StageSelect
-                          stage={triggerStage}
-                          pipelineStageId={triggerPipelineStageId}
+                          stage={triggerAllStages ? "" : triggerStage}
+                          pipelineStageId={triggerAllStages ? null : triggerPipelineStageId}
+                          emptyLabel="Todas as fases"
                           onChange={(st, id) => {
+                            // Opção vazia do seletor = "Todas as fases".
+                            setTriggerAllStages(!st);
                             if (st) setTriggerStage(st);
                             setTriggerPipelineStageId(id);
                           }}
                         />
+                      )}
+                      {(triggerType === "stage_enter" || triggerType === "stage_stale") && triggerAllStages && (
+                        <p className="text-[11px] text-text-muted">
+                          {triggerType === "stage_enter"
+                            ? "Dispara sempre que o lead mudar de etapa, pra qualquer uma."
+                            : "Dispara quando o lead fica esse tempo sem mudar de etapa, em qualquer uma — menos ganho e perdido, que não contam como parado."}
+                        </p>
                       )}
                       {(triggerType === "stage_stale" || triggerType === "no_reply") && (
                         <div className="flex items-center gap-2 text-sm">
