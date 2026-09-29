@@ -20,16 +20,24 @@ function stageName(names: StageNames, stage: unknown, pipelineStageId: unknown):
   return null;
 }
 
+// Várias etapas marcadas (formato novo) ou uma só (antigo).
+function refsName(names: StageNames, cfg: Record<string, unknown> | null | undefined): string | null {
+  const refs = cfg && Array.isArray(cfg.stageRefs) && cfg.stageRefs.length ? (cfg.stageRefs as { stage: string; pipelineStageId?: string | null }[]) : null;
+  if (!refs) return stageName(names, cfg?.stage, cfg?.pipelineStageId);
+  if (refs.length > 2) return `${refs.length} etapas`;
+  return refs.map((r) => stageName(names, r.stage, r.pipelineStageId)).filter(Boolean).join(", ");
+}
+
 function triggerSummary(w: WorkflowListRow, names: StageNames): string {
   const cfg = w.trigger_config;
   const label = TRIGGER_LABELS[w.trigger_type];
-  const stage = cfg.allStages === true ? "todas as fases" : stageName(names, cfg.stage, cfg.pipelineStageId);
+  const stage = cfg.allStages === true ? "todas as fases" : refsName(names, cfg);
   const days = cfg.days ? `${cfg.days}d` : null;
   return [label, stage, days].filter(Boolean).join(" · ");
 }
 
 function audienceSummary(w: WorkflowListRow, members: Member[], names: StageNames): string {
-  const stage = stageName(names, w.audience_config.stage, w.audience_config.pipelineStageId) ?? "qualquer etapa";
+  const stage = refsName(names, w.audience_config as Record<string, unknown>) || "qualquer etapa";
   const respId = w.audience_config.responsibleUserId;
   const resp = respId ? members.find((m) => m.id === respId)?.name || "responsável específico" : "qualquer responsável";
   return `${stage} · ${resp}`;

@@ -38,3 +38,28 @@ describe("isInPipelineStage", () => {
     expect(isInPipelineStage(lead({ pipeline_stage_id: null, stage: "abordado" }), "atendimento", stages)).toBe(true);
   });
 });
+
+describe("stageRefsOf / matchesStageRefs", async () => {
+  const { stageRefsOf, matchesStageRefs } = await import("./workflow-engine");
+
+  it("lê a lista nova e o formato antigo de uma etapa só", () => {
+    expect(stageRefsOf({ stageRefs: [{ stage: "abordado", pipelineStageId: null }, { stage: "encaminhamento", pipelineStageId: "followup" }] })).toEqual([
+      { stage: "abordado", pipelineStageId: null },
+      { stage: "encaminhamento", pipelineStageId: "followup" },
+    ]);
+    expect(stageRefsOf({ stage: "interessado", pipelineStageId: "x" })).toEqual([{ stage: "interessado", pipelineStageId: "x" }]);
+    expect(stageRefsOf({ stage: "interessado", stageRefs: [] })).toEqual([{ stage: "interessado", pipelineStageId: null }]);
+    expect(stageRefsOf({})).toBeNull();
+  });
+
+  it("lead entra se estiver em QUALQUER uma das etapas marcadas", () => {
+    const refs = [
+      { stage: "abordado", pipelineStageId: null },
+      { stage: "encaminhamento", pipelineStageId: "followup" },
+    ];
+    expect(matchesStageRefs(lead({ stage: "abordado", pipeline_stage_id: null }), refs, stages)).toBe(true);
+    expect(matchesStageRefs(lead({ pipeline_stage_id: "followup" }), refs, stages)).toBe(true);
+    // Encaminhado tem o mesmo sinal de Follow Up, mas não foi marcado.
+    expect(matchesStageRefs(lead({ pipeline_stage_id: "encaminhado" }), refs, stages)).toBe(false);
+  });
+});

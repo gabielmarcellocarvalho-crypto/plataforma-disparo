@@ -13,6 +13,7 @@ import type { WorkflowTemplateSeed } from "@/lib/workflow-templates";
 import { STAGE_LABELS, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import type { PipelineWithStages } from "@/app/actions/pipelines";
 import { sortStages } from "@/lib/pipelines";
+import { cn } from "@/lib/utils";
 import {
   ACTION_LABELS,
   CONDITION_LABELS,
@@ -28,6 +29,7 @@ import {
   type TriggerType,
   type WaitUnit,
   type WorkflowStepInput,
+  type WorkflowStageRef,
 } from "@/lib/workflow-types";
 import { AlertTriangle, ArrowLeft, Clock, Filter, GitBranch, Globe, MessageCircle, Plus, Settings2, Trash2, Webhook, Workflow as WorkflowIcon, type LucideIcon } from "lucide-react";
 import { WorkflowCanvas, NODE_W, NODE_H, type CanvasAddSlot, type CanvasEdgeSpec, type CanvasNodeSpec, type NodeKind } from "@/components/workflow-canvas";
@@ -116,6 +118,77 @@ function StageSelect({
   );
 }
 
+// Lista de etapas com caixinhas (gatilho e público). Nenhuma marcada + `allChecked` = todas.
+// Mesmas opções do StageSelect: etapas do funil quando existem, senão as 7 fases com o nome do workspace.
+function refKey(r: { stage: string; pipelineStageId: string | null }) {
+  return r.pipelineStageId ? `ps:${r.pipelineStageId}` : `sig:${r.stage}`;
+}
+function StageChecklist({
+  refs,
+  allChecked,
+  allLabel,
+  onChange,
+}: {
+  refs: WorkflowStageRef[];
+  allChecked: boolean;
+  allLabel: string;
+  onChange: (refs: WorkflowStageRef[], all: boolean) => void;
+}) {
+  const opts = useContext(StageCtx);
+  const hasPipelines = opts.pipelines.some((p) => p.stages.length > 0);
+  const options: { key: string; ref: WorkflowStageRef; label: string; group?: string }[] = hasPipelines
+    ? opts.pipelines.flatMap((p) => sortStages(p.stages).map((st) => ({ key: `ps:${st.id}`, ref: { stage: st.signal, pipelineStageId: st.id }, label: st.name, group: opts.pipelines.length > 1 ? p.name : undefined })))
+    : STAGE_ORDER.map((st) => ({ key: `sig:${st}`, ref: { stage: st, pipelineStageId: null }, label: opts.labels[st] ?? STAGE_LABELS[st] }));
+  // Etapa antiga (só pelo sinal) num workspace que hoje tem funil: continua aparecendo, marcada.
+  for (const r of refs) {
+    if (!options.some((o) => o.key === refKey(r))) options.push({ key: refKey(r), ref: r, label: `${opts.labels[r.stage] ?? STAGE_LABELS[r.stage]} (fase)` });
+  }
+  const checked = new Set(refs.map(refKey));
+  const toggle = (o: (typeof options)[number]) => {
+    const next = checked.has(o.key) ? refs.filter((r) => refKey(r) !== o.key) : [...refs, o.ref];
+    onChange(next, next.length === 0);
+  };
+  const row = "flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm cursor-pointer hover:bg-surface-2";
+  let lastGroup: string | undefined;
+  return (
+    <div className="border border-border rounded-lg bg-surface p-1 max-h-64 overflow-y-auto" role="group" aria-label="Etapas">
+      <label className={cn(row, "font-semibold border-b border-border rounded-b-none mb-1")}>
+        <input type="checkbox" checked={allChecked} onChange={() => onChange([], true)} className="cursor-pointer accent-[var(--color-primary-strong)]" />
+        {allLabel}
+      </label>
+      {options.map((o) => {
+        const header = o.group && o.group !== lastGroup ? o.group : null;
+        lastGroup = o.group;
+        return (
+          <div key={o.key}>
+            {header && <div className="px-2.5 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-text-muted">{header}</div>}
+            <label className={row}>
+              <input type="checkbox" checked={!allChecked && checked.has(o.key)} onChange={() => toggle(o)} className="cursor-pointer accent-[var(--color-primary-strong)]" />
+              {o.label}
+            </label>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function refsSummary(opts: StageOptions, refs: WorkflowStageRef[], empty: string): string {
+  if (refs.length === 0) return empty;
+  if (refs.length > 2) return `${refs.length} etapas`;
+  return refs.map((r) => stageDisplayName(opts, r.stage, r.pipelineStageId)).join(", ");
+}
+
+// Lê a lista salva (novo) ou a etapa única (antigo).
+function initialRefs(cfg: Record<string, unknown> | null | undefined, fallbackStage?: ContactStage | null): WorkflowStageRef[] {
+  if (cfg && Array.isArray(cfg.stageRefs) && cfg.stageRefs.length) {
+    return (cfg.stageRefs as WorkflowStageRef[]).filter((r) => r && r.stage).map((r) => ({ stage: r.stage, pipelineStageId: r.pipelineStageId || null }));
+  }
+  const stage = (cfg?.stage as ContactStage | undefined) || fallbackStage;
+  if (!stage) return [];
+  return [{ stage, pipelineStageId: (cfg?.pipelineStageId as string | undefined) || null }];
+}
+
 function emptyActionConfig(type: ActionType) {
   if (type === "send_message") return { action_type: "send_message" as const, text: "" };
   if (type === "create_task") return { action_type: "create_task" as const, title: "" };
@@ -177,12 +250,14 @@ export function WorkflowBuilder({
   const [name, setName] = useState(existing?.name || template?.name || "");
   const [description, setDescription] = useState(existing?.description || template?.description || "");
   const [triggerType, setTriggerType] = useState<TriggerType>(existing?.trigger_type || template?.triggerType || "stage_enter");
-  const [triggerStage, setTriggerStage] = useState<ContactStage>((existing?.trigger_config?.stage as ContactStage) || template?.triggerStage || "interessado");
+  const [triggerRefs, setTriggerRefs] = useState<WorkflowStageRef[]>(() =>
+    existing?.trigger_config?.allStages === true ? [] : initialRefs(existing?.trigger_config, existing ? null : template?.triggerStage || "interessado")
+  );
   const [triggerDays, setTriggerDays] = useState<number>(Number(existing?.trigger_config?.days) || template?.triggerDays || 3);
-  const [triggerPipelineStageId, setTriggerPipelineStageId] = useState<string | null>((existing?.trigger_config?.pipelineStageId as string | undefined) || null);
   const [triggerAllStages, setTriggerAllStages] = useState<boolean>(existing?.trigger_config?.allStages === true);
-  const [audienceStage, setAudienceStage] = useState<string>(existing?.audience_config?.stage || template?.audienceStage || "");
-  const [audiencePipelineStageId, setAudiencePipelineStageId] = useState<string | null>(existing?.audience_config?.pipelineStageId || null);
+  const [audienceRefs, setAudienceRefs] = useState<WorkflowStageRef[]>(() =>
+    initialRefs(existing?.audience_config as Record<string, unknown> | undefined, existing ? null : (template?.audienceStage as ContactStage | undefined) || null)
+  );
   const [audienceResponsible, setAudienceResponsible] = useState<string>(existing?.audience_config?.responsibleUserId || "");
   const [stopOnReply, setStopOnReply] = useState(existing?.stop_on_reply ?? template?.stopOnReply ?? true);
   const [stopOnStageChange, setStopOnStageChange] = useState(existing?.stop_on_stage_change ?? template?.stopOnStageChange ?? false);
@@ -237,8 +312,8 @@ export function WorkflowBuilder({
             : triggerType === "stage_enter"
               ? triggerAllStages
                 ? "Todas as fases"
-                : stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)
-              : `${triggerAllStages ? "Todas as fases" : stageDisplayName(stageOpts, triggerStage, triggerPipelineStageId)} · ${triggerDays}d`,
+                : refsSummary(stageOpts, triggerRefs, "nenhuma etapa")
+              : `${triggerAllStages ? "Todas as fases" : refsSummary(stageOpts, triggerRefs, "nenhuma etapa")} · ${triggerDays}d`,
       active: selected === "trigger",
       onSelect: selectFixed("trigger"),
     });
@@ -252,7 +327,7 @@ export function WorkflowBuilder({
         y: mainY,
         icon: Filter,
         title: "Público",
-        subtitle: `${audienceStage ? stageDisplayName(stageOpts, audienceStage as ContactStage, audiencePipelineStageId) : "qualquer etapa"} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
+        subtitle: `${refsSummary(stageOpts, audienceRefs, "qualquer etapa")} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
         active: selected === "audience",
         onSelect: selectFixed("audience"),
       });
@@ -385,21 +460,32 @@ export function WorkflowBuilder({
 
   function handleSave() {
     setError(null);
+    if ((triggerType === "stage_enter" || triggerType === "stage_stale") && !triggerAllStages && triggerRefs.length === 0) {
+      setError("Marque pelo menos uma etapa no gatilho (ou Todas as fases).");
+      return;
+    }
+    // `stage`/`pipelineStageId` = primeira da lista, só pra compatibilidade; quem manda é `stageRefs`.
+    const firstTrigger = triggerRefs[0];
     const triggerConfig =
       triggerType === "webhook"
         ? {}
         : triggerType === "no_reply"
           ? { days: triggerDays }
           : triggerType === "stage_enter"
-            ? { stage: triggerStage, pipelineStageId: triggerAllStages ? null : triggerPipelineStageId, allStages: triggerAllStages }
-            : { stage: triggerStage, days: triggerDays, pipelineStageId: triggerAllStages ? null : triggerPipelineStageId, allStages: triggerAllStages };
+            ? { stage: firstTrigger?.stage ?? "interessado", pipelineStageId: triggerAllStages ? null : firstTrigger?.pipelineStageId ?? null, allStages: triggerAllStages, stageRefs: triggerAllStages ? [] : triggerRefs }
+            : { stage: firstTrigger?.stage ?? "interessado", days: triggerDays, pipelineStageId: triggerAllStages ? null : firstTrigger?.pipelineStageId ?? null, allStages: triggerAllStages, stageRefs: triggerAllStages ? [] : triggerRefs };
 
     const input: WorkflowInput = {
       name,
       description: description || null,
       triggerType,
       triggerConfig,
-      audienceConfig: { stage: (audienceStage || null) as ContactStage | null, pipelineStageId: audiencePipelineStageId, responsibleUserId: audienceResponsible || null },
+      audienceConfig: {
+        stage: audienceRefs[0]?.stage ?? null,
+        pipelineStageId: audienceRefs[0]?.pipelineStageId ?? null,
+        stageRefs: audienceRefs,
+        responsibleUserId: audienceResponsible || null,
+      },
       stopOnReply,
       stopOnStageChange,
       respectBusinessHours,
@@ -503,15 +589,13 @@ export function WorkflowBuilder({
                       </select>
                       <p className="text-[11px] text-text-muted">{TRIGGER_DESCRIPTIONS[triggerType]}</p>
                       {(triggerType === "stage_enter" || triggerType === "stage_stale") && (
-                        <StageSelect
-                          stage={triggerAllStages ? "" : triggerStage}
-                          pipelineStageId={triggerAllStages ? null : triggerPipelineStageId}
-                          emptyLabel="Todas as fases"
-                          onChange={(st, id) => {
-                            // Opção vazia do seletor = "Todas as fases".
-                            setTriggerAllStages(!st);
-                            if (st) setTriggerStage(st);
-                            setTriggerPipelineStageId(id);
+                        <StageChecklist
+                          refs={triggerRefs}
+                          allChecked={triggerAllStages}
+                          allLabel="Todas as fases"
+                          onChange={(refs, all) => {
+                            setTriggerRefs(refs);
+                            setTriggerAllStages(all);
                           }}
                         />
                       )}
@@ -549,14 +633,11 @@ export function WorkflowBuilder({
                       <div className="flex items-center gap-2 text-info-text text-xs font-bold uppercase tracking-wide">
                         <Filter size={14} /> Público — quem entra
                       </div>
-                      <StageSelect
-                        stage={audienceStage as ContactStage | ""}
-                        pipelineStageId={audiencePipelineStageId}
-                        emptyLabel="Qualquer etapa"
-                        onChange={(st, id) => {
-                          setAudienceStage(st);
-                          setAudiencePipelineStageId(id);
-                        }}
+                      <StageChecklist
+                        refs={audienceRefs}
+                        allChecked={audienceRefs.length === 0}
+                        allLabel="Qualquer etapa"
+                        onChange={(refs) => setAudienceRefs(refs)}
                       />
                       <select value={audienceResponsible} onChange={(e) => setAudienceResponsible(e.target.value)} className="border border-border rounded-md px-2.5 py-2 text-sm bg-surface outline-none focus:border-primary">
                         <option value="">Qualquer responsável</option>

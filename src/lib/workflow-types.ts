@@ -25,13 +25,19 @@ export const TRIGGER_DESCRIPTIONS: Record<TriggerType, string> = {
 export type TriggerConfig =
   // allStages: "todas as fases" — entrou em qualquer etapa / parado em qualquer etapa (menos ganho e
   // perdido, que não contam como "parado"). Com ele ligado, `stage`/`pipelineStageId` são ignorados.
-  | { type: "stage_enter"; stage: ContactStage; pipelineStageId?: string | null; allStages?: boolean }
-  | { type: "stage_stale"; stage: ContactStage; days: number; pipelineStageId?: string | null; allStages?: boolean }
+  | { type: "stage_enter"; stage: ContactStage; pipelineStageId?: string | null; allStages?: boolean; stageRefs?: WorkflowStageRef[] }
+  | { type: "stage_stale"; stage: ContactStage; days: number; pipelineStageId?: string | null; allStages?: boolean; stageRefs?: WorkflowStageRef[] }
   | { type: "no_reply"; days: number };
+
+// Uma etapa marcada na lista de etapas do gatilho/público: o sinal e, em funil personalizado, a
+// etapa exata. `stageRefs` (lista) substitui o par stage/pipelineStageId (uma só), que continua sendo
+// lido pra workflows antigos.
+export type WorkflowStageRef = { stage: ContactStage; pipelineStageId: string | null };
 
 export type AudienceConfig = {
   stage?: ContactStage | null;
   pipelineStageId?: string | null;
+  stageRefs?: WorkflowStageRef[];
   responsibleUserId?: string | null;
 };
 

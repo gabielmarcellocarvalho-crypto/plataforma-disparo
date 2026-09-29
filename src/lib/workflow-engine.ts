@@ -157,41 +157,60 @@ export function isInPipelineStage(contact: Contact, stageId: string, stages: Sta
   return primeira?.id === stageId;
 }
 
+// Etapas marcadas num gatilho/público. null = sem filtro de etapa (todas). Lê o formato novo (lista
+// `stageRefs`) e o antigo (um `stage` + `pipelineStageId` opcional) — workflow salvo antes da lista
+// continua funcionando igual.
+type Ref = { stage: string; pipelineStageId: string | null };
+export function stageRefsOf(cfg: Record<string, unknown> | null | undefined): Ref[] | null {
+  if (!cfg) return null;
+  if (Array.isArray(cfg.stageRefs)) {
+    const refs = (cfg.stageRefs as unknown[])
+      .map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>) : null))
+      .filter((r): r is Record<string, unknown> => Boolean(r && typeof r.stage === "string" && r.stage))
+      .map((r) => ({ stage: String(r.stage), pipelineStageId: typeof r.pipelineStageId === "string" && r.pipelineStageId ? r.pipelineStageId : null }));
+    if (refs.length) return refs;
+  }
+  if (typeof cfg.stage === "string" && cfg.stage) {
+    return [{ stage: cfg.stage, pipelineStageId: typeof cfg.pipelineStageId === "string" && cfg.pipelineStageId ? cfg.pipelineStageId : null }];
+  }
+  return null;
+}
+
+// O lead está em alguma das etapas marcadas? Etapa exata de funil vence; senão compara o sinal.
+export function matchesStageRefs(contact: Contact, refs: Ref[], stages: StageRef[]): boolean {
+  return refs.some((r) => (r.pipelineStageId ? isInPipelineStage(contact, r.pipelineStageId, stages) : contact.stage === r.stage));
+}
+
 async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRow): Promise<Contact[]> {
-  const audience = (workflow.audience_config || {}) as AudienceConfig;
-  const cfg = workflow.trigger_config as Record<string, unknown>;
+  const audience = (workflow.audience_config || {}) as Record<string, unknown>;
+  const cfg = (workflow.trigger_config || {}) as Record<string, unknown>;
+  const audienceRefs = stageRefsOf(audience);
+  const usesStage = workflow.trigger_type === "stage_enter" || workflow.trigger_type === "stage_stale";
+  const triggerRefs = usesStage && cfg.allStages !== true ? stageRefsOf(cfg) : null;
+  // Gatilho de etapa sem nenhuma etapa marcada e sem "todas" = mal configurado, não dispara.
+  if (usesStage && cfg.allStages !== true && !triggerRefs) return [];
+
+  const signals = (refs: Ref[]) => [...new Set(refs.map((r) => r.stage))];
 
   const base = () => {
     let query = supabase.from("contacts").select(CONTACT_SELECT).eq("workspace_id", workflow.workspace_id);
-    if (audience.stage) query = query.eq("stage", audience.stage);
-    if (audience.responsibleUserId) query = query.eq("responsible_user_id", audience.responsibleUserId);
+    // Filtro grosso por sinal no banco; a etapa exata do funil é conferida depois, em memória.
+    if (audienceRefs) query = query.in("stage", signals(audienceRefs));
+    if (typeof audience.responsibleUserId === "string" && audience.responsibleUserId) query = query.eq("responsible_user_id", audience.responsibleUserId);
     return query;
   };
 
   let build: () => ReturnType<typeof base>;
-  const allStages = cfg.allStages === true;
-  if (workflow.trigger_type === "stage_enter" && allStages) {
-    // Qualquer mudança de etapa nos últimos 30min (mesma janela do caso de etapa específica).
-    const cutoff = new Date(Date.now() - 30 * 60_000).toISOString();
-    build = () => base().gte("stage_changed_at", cutoff);
-  } else if (workflow.trigger_type === "stage_stale" && allStages) {
-    // Parado em qualquer etapa — ganho e perdido não contam como "parado" (mesma regra do selo do Pipeline).
-    const days = Number(cfg.days) || 3;
-    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-    build = () => base().not("stage", "in", "(concluido,descartado)").lte("stage_changed_at", cutoff);
-  } else if (workflow.trigger_type === "stage_enter") {
-    const stage = String(cfg.stage || "");
-    if (!stage) return [];
+  if (workflow.trigger_type === "stage_enter") {
     // Janela de captura precisa ser folgada o bastante pra cobrir o intervalo entre execuções do
     // cron externo — quem mudou de etapa nos últimos 30min é considerado "acabou de entrar".
     const cutoff = new Date(Date.now() - 30 * 60_000).toISOString();
-    build = () => base().eq("stage", stage).gte("stage_changed_at", cutoff);
+    build = () => (triggerRefs ? base().in("stage", signals(triggerRefs)) : base()).gte("stage_changed_at", cutoff);
   } else if (workflow.trigger_type === "stage_stale") {
-    const stage = String(cfg.stage || "");
     const days = Number(cfg.days) || 3;
-    if (!stage) return [];
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-    build = () => base().eq("stage", stage).lte("stage_changed_at", cutoff);
+    // "Todas as fases": ganho e perdido não contam como parado (mesma regra do selo do Pipeline).
+    build = () => (triggerRefs ? base().in("stage", signals(triggerRefs)) : base().not("stage", "in", "(concluido,descartado)")).lte("stage_changed_at", cutoff);
   } else if (workflow.trigger_type === "no_reply") {
     build = () => base().not("stage", "in", "(concluido,descartado)");
   } else {
@@ -199,11 +218,10 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
   }
 
   let rows = await fetchAllPages<Contact>((from, to) => build().order("id").range(from, to) as unknown as PageResult<Contact>);
-  const triggerStageId = !allStages && (workflow.trigger_type === "stage_enter" || workflow.trigger_type === "stage_stale") && typeof cfg.pipelineStageId === "string" ? cfg.pipelineStageId : null;
-  const audienceStageId = typeof audience.pipelineStageId === "string" ? audience.pipelineStageId : null;
-  if (triggerStageId || audienceStageId) {
-    const stages = await loadStages(supabase, workflow.workspace_id);
-    rows = rows.filter((c) => (!triggerStageId || isInPipelineStage(c, triggerStageId, stages)) && (!audienceStageId || isInPipelineStage(c, audienceStageId, stages)));
+  const needsExact = [...(triggerRefs || []), ...(audienceRefs || [])].some((r) => r.pipelineStageId);
+  if (triggerRefs || audienceRefs) {
+    const stages = needsExact ? await loadStages(supabase, workflow.workspace_id) : [];
+    rows = rows.filter((c) => (!triggerRefs || matchesStageRefs(c, triggerRefs, stages)) && (!audienceRefs || matchesStageRefs(c, audienceRefs, stages)));
   }
   return rows;
 }
