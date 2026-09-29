@@ -11,9 +11,9 @@ import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype } from "@/lib/conversation-media";
 import { interruptChatbotForContact } from "@/lib/chatbot-engine";
 
-// Mesmo teto do bucket "conversation-media" (30MB). Documento cabe folgado no WhatsApp (até 100MB);
+// Mesmo teto do bucket "conversation-media" (50MB — máximo por arquivo do plano gratuito do Supabase). Documento cabe folgado no WhatsApp (até 100MB);
 // imagem e áudio têm teto menor e viram documento acima dele (ver mediaKindFromMime).
-const MAX_MANUAL_FILE_BYTES = 30 * 1024 * 1024;
+const MAX_MANUAL_FILE_BYTES = 50 * 1024 * 1024;
 
 // Limites da API oficial da Meta por tipo: imagem até 5MB e áudio até 16MB. Acima disso a Meta recusa
 // o envio como imagem/áudio — mandado como DOCUMENTO o arquivo passa (até 100MB) e o contato recebe
@@ -142,7 +142,7 @@ export async function prepareManualUpload(
   size: number
 ): Promise<{ error: string | null; path?: string; token?: string }> {
   if (!size) return { error: "Selecione um arquivo." };
-  if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 30MB." };
+  if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 50MB." };
   const mimeType = normalizeMimetype(rawMimeType || "");
   if (!CONVERSATION_MEDIA_MIMES.has(mimeType)) {
     return { error: `Tipo de arquivo não suportado (${fileName}). Envie imagem, áudio ou PDF.` };
