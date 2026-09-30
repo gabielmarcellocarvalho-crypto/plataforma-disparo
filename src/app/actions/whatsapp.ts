@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createInstance, setWebhook, connectionState, fetchQrCode, instanceNameFor } from "@/lib/evolution";
 import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } from "@/lib/dialog360";
@@ -351,4 +352,38 @@ export async function updateInstanceDisplayName(instanceId: string, newName: str
   } catch (err) {
     return { error: (err as Error).message };
   }
+}
+
+// ── Remover número ───────────────────────────────────────────────────────────
+// Tira o número da plataforma (ex.: foi apagado na Meta e ficou "fantasma" aqui). Não mexe na conta da
+// Meta/360dialog/Evolution. Contatos, conversas e campanhas CONTINUAM — as FKs para whatsapp_instances
+// são `on delete set null`; só a sessão do chatbot desse número é apagada junto (cascade).
+//
+// Duas travas, porque remover no meio da operação quebraria algo calado:
+//  - agente de IA ligado ao número: pararia de responder sem ninguém perceber;
+//  - campanha ativa usando o número: sem número definido, o disparo cai no único outro número do
+//    workspace (se houver só um) — a campanha sairia pelo número errado.
+export async function removeWhatsappInstance(instanceId: string): Promise<{ error: string | null }> {
+  const { workspace, isStaff } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+  if (!isStaff) return { error: "Só a equipe da agência pode remover um número." };
+
+  const admin = createAdminClient();
+  const [{ data: instance }, { data: agents }, { data: campaigns }] = await Promise.all([
+    admin.from("whatsapp_instances").select("id, workspace_id").eq("id", instanceId).maybeSingle(),
+    admin.from("agents").select("name").eq("whatsapp_instance_id", instanceId),
+    admin.from("campaigns").select("name").eq("whatsapp_instance_id", instanceId).eq("status", "ativa"),
+  ]);
+  if (!instance || instance.workspace_id !== workspace.id) return { error: "Número não encontrado." };
+  if (agents && agents.length) {
+    return { error: `Esse número está ligado ao agente "${agents.map((a) => a.name).join('", "')}". Desvincule ou remova o agente antes.` };
+  }
+  if (campaigns && campaigns.length) {
+    return { error: `Campanha ativa usando esse número: "${campaigns.map((c) => c.name).join('", "')}". Pause ou conclua antes de remover.` };
+  }
+
+  const { error } = await admin.from("whatsapp_instances").delete().eq("id", instanceId);
+  if (error) return { error: "Não foi possível remover o número." };
+  for (const path of ["/configuracoes", "/conversas", "/campanhas", "/agentes"]) revalidatePath(path);
+  return { error: null };
 }

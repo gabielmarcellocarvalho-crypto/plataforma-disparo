@@ -100,6 +100,7 @@ export default async function ConfiguracoesPage() {
             : "Se o número desconectar (QR expirado, troca de aparelho), reconecte por aqui."}
         </p>
         <WhatsappInstancesManager
+          canRemove={isStaff}
           initialInstances={(instances || []).map((i) => ({
             id: i.id,
             channel: i.channel as WhatsappChannel,

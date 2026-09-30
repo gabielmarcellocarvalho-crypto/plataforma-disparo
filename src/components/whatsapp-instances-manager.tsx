@@ -9,6 +9,7 @@ import { MetacloudConnect } from "@/components/metacloud-connect";
 import { MetacloudProfilePhoto } from "@/components/metacloud-profile-photo";
 import { MetacloudDisplayName } from "@/components/metacloud-display-name";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
+import { RemoveNumberButton } from "@/components/remove-number-button";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 const ALL_DEPARTMENTS = ["vendas", "financeiro"];
@@ -26,8 +27,11 @@ export type WhatsappInstanceRow = {
 // só do workspace_id, sem conceito de departamento) — só 360dialog suporta múltiplos números aqui.
 export function WhatsappInstancesManager({
   initialInstances,
+  canRemove = false,
 }: {
   initialInstances: WhatsappInstanceRow[];
+  // Só a equipe da agência remove número (a action também confere).
+  canRemove?: boolean;
 }) {
   const [addingNew, setAddingNew] = useState(false);
   const hasEvolution = initialInstances.some((i) => i.channel === "evolution");
@@ -57,6 +61,14 @@ export function WhatsappInstancesManager({
             </>
           ) : (
             <WhatsappConnect initialStatus={instance.connection_status} />
+          )}
+          {canRemove && (
+            <div className="mt-3 pt-3 border-t border-border">
+              <RemoveNumberButton
+                instanceId={instance.id}
+                label={`${DEPARTMENT_LABEL[instance.department] || instance.department} (${instance.channel === "metacloud" ? "Meta" : instance.channel === "360dialog" ? "360dialog" : "Evolution"})`}
+              />
+            </div>
           )}
         </div>
       ))}
