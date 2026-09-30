@@ -10,7 +10,8 @@
 // lê o config atual do banco a cada chamada, sem cache) — inclusive corrigir só o dia certo (ex.: terça em
 // vez de segunda) resolve sozinho, sem deploy nem ação manual.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendText } from "@/lib/evolution";
+import { agentSendText } from "@/lib/agent-channel";
+import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -36,7 +37,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
 
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, config, evolution_instance_name, llm_provider")
+    .select("id, workspace_id, system_prompt, config, evolution_instance_name, whatsapp_instance_id, llm_provider")
     .eq("status", "ativo");
 
   for (const agent of agents || []) {
@@ -44,6 +45,11 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
 
     const agentConfig = normalizeAgentConfig(agent.config);
     if (!isWithinBusinessHours(agentConfig.hours)) continue; // só age quando o agente está ABERTO agora
+
+    // Canal real do agente (QR code ou API oficial). Antes mandava sempre pela Evolution — em número
+    // oficial a retomada nunca chegava. Agente sem número (desvinculado) é pulado: nem gasta IA.
+    const channel = await resolveAgentChannel(supabase, agent);
+    if (!channel) continue;
 
     const { data: contactRows } = await supabase
       .from("contacts")
@@ -132,7 +138,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
             cache_creation_input_tokens: i === 0 ? gen.cacheCreationInputTokens : null,
             cache_read_input_tokens: i === 0 ? gen.cacheReadInputTokens : null,
           });
-          await sendText(agent.evolution_instance_name, contact.phone, part).catch((err) => console.error("Erro ao enviar retomada pós-horário:", err));
+          await agentSendText(channel, contact.phone, part).catch((err) => console.error("Erro ao enviar retomada pós-horário:", err));
           if (i < replyParts.length - 1) await sleep(MESSAGE_GAP_MS);
         }
 

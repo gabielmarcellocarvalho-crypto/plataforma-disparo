@@ -6,6 +6,7 @@ import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 import { secureEqual } from "@/lib/secure-compare";
+import { resolveAgentChannel } from "@/lib/agent-handoff";
 
 // Roda periodicamente (Vercel Cron, ver vercel.json) checando contatos que pararam de responder
 // depois de uma resposta do agente. Cada agente configura, em AgentConfig.followUp: de quanto em
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
   const supabase = createAdminClient();
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, workspace_id, system_prompt, config, evolution_instance_name, phone_number, llm_provider")
+    .select("id, workspace_id, system_prompt, config, evolution_instance_name, whatsapp_instance_id, phone_number, llm_provider")
     .eq("status", "ativo");
 
   let sent = 0;
@@ -44,6 +45,12 @@ export async function GET(req: Request) {
   for (const agent of agents || []) {
     const agentConfig = normalizeAgentConfig(agent.config);
     if (!agentConfig.followUp.enabled) continue;
+    // Follow-up roda dias depois da última mensagem do lead. Na API oficial (Meta/360dialog), fora da
+    // janela de 24h a Meta só aceita template aprovado — texto livre seria recusado, mas a mensagem já
+    // teria sido registrada como enviada e o lead iria pra "descartado" sem nunca ter recebido nada.
+    // Então só roda em número por QR code (Evolution). Agente sem número também é pulado.
+    const channel = await resolveAgentChannel(supabase, agent);
+    if (!channel || channel.kind !== "evolution") continue;
     if (!isWithinBusinessHours(agentConfig.hours)) continue;
 
     const { intervalDays, maxCount } = agentConfig.followUp;
@@ -172,7 +179,7 @@ export async function GET(req: Request) {
           cache_creation_input_tokens: i === 0 ? gen.cacheCreationInputTokens : null,
           cache_read_input_tokens: i === 0 ? gen.cacheReadInputTokens : null,
         });
-        await sendText(agent.evolution_instance_name, contact.phone, part).catch((err) =>
+        await sendText(channel.instanceName, contact.phone, part).catch((err) =>
           console.error("Erro ao enviar follow-up:", err)
         );
         if (i < replyParts.length - 1) await sleep(MESSAGE_GAP_MS);

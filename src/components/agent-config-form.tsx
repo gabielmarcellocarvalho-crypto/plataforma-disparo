@@ -356,6 +356,10 @@ export function AgentConfigForm({
           Não vale pra todo lead: <strong className="text-text">não atua em quem já está concluído, descartado, com
           atendimento pausado (atenção humana) ou que pediu pra não receber mais mensagens.</strong>
         </p>
+        <p className="text-xs text-warning-text font-semibold">
+          Só funciona em número conectado por QR code. Na API oficial (Meta/360dialog), depois de 24h sem resposta do lead a
+          Meta só aceita mensagem de template — por isso o follow-up não roda nesses números.
+        </p>
         {config.followUp.enabled && (
           <div className="grid grid-cols-2 gap-3 mt-1">
             <label className="flex flex-col gap-1.5">
