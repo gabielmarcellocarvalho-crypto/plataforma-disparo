@@ -120,9 +120,23 @@ export async function registerMetaCloudPhone(phoneNumberId: string, token: strin
   if (!res.ok) throw new Error(`Falha ao registrar número na Cloud API: ${res.status} ${await res.text().catch(() => "")}`);
 }
 
-// Tenta com o System User; se a Meta disser que falta permissão (#10), tenta com o token do negócio
-// do cliente vindo do Embedded Signup.
+// Número que já está ativo na Cloud API (status CONNECTED + plataforma CLOUD_API) não precisa — e não
+// pode — ser registrado de novo: a Meta devolve "(#10) Application does not have permission" pra um
+// /register repetido. Acontece quando o número foi ativado pelo Gerenciador do WhatsApp antes de
+// conectar pela plataforma (caso da ENACAL em 30/09/2026).
+async function isAlreadyOnCloudApi(phoneNumberId: string): Promise<boolean> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}?fields=status,platform_type`, {
+    headers: { Authorization: `Bearer ${systemUserToken()}` },
+  });
+  if (!res.ok) return false;
+  const data = (await res.json().catch(() => null)) as { status?: string; platform_type?: string } | null;
+  return data?.status === "CONNECTED" && data?.platform_type === "CLOUD_API";
+}
+
+// Registra o número na Cloud API, pulando se ele já estiver ativo lá. Tenta com o System User; se a
+// Meta disser que falta permissão (#10), tenta com o token do negócio do cliente vindo do Embedded Signup.
 export async function registerMetaCloudPhoneWithFallback(phoneNumberId: string, businessToken: string | null): Promise<void> {
+  if (await isAlreadyOnCloudApi(phoneNumberId)) return;
   try {
     await registerMetaCloudPhone(phoneNumberId);
   } catch (err) {
