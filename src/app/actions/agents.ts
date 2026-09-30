@@ -149,6 +149,31 @@ export async function linkAgentInstance(agentId: string, instanceId: string): Pr
   return { error: null, ok: true };
 }
 
+// Caminho inverso do linkAgentInstance: tira o número oficial do agente SEM mexer em mais nada (prompt,
+// config, mídia, base de conhecimento, histórico). O agente fica sem número — não recebe nem responde
+// mensagem — até ligar outro. É o que libera "Remover número" em Configurações.
+export async function unlinkAgentInstance(agentId: string): Promise<LinkInstanceResult> {
+  await requireStaff();
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+
+  const supabase = await createClient();
+  const { data: agent } = await supabase
+    .from("agents")
+    .select("id, whatsapp_instance_id")
+    .eq("id", agentId)
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!agent) return { error: "Agente não encontrado nesse workspace." };
+  if (!agent.whatsapp_instance_id) return { error: "Esse agente não está usando número de Configurações." };
+
+  const { error } = await supabase.from("agents").update({ whatsapp_instance_id: null, connection_status: "desconectado" }).eq("id", agentId);
+  if (error) return { error: "Não foi possível desvincular o número." };
+
+  for (const path of ["/agentes", `/agentes/${agentId}`, "/configuracoes"]) revalidatePath(path);
+  return { error: null, ok: true };
+}
+
 export async function refreshAgentStatus(agentId: string) {
   await requireStaff();
   const supabase = await createClient();

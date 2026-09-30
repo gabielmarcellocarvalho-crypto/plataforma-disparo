@@ -376,7 +376,9 @@ export async function removeWhatsappInstance(instanceId: string): Promise<{ erro
   ]);
   if (!instance || instance.workspace_id !== workspace.id) return { error: "Número não encontrado." };
   if (agents && agents.length) {
-    return { error: `Esse número está ligado ao agente "${agents.map((a) => a.name).join('", "')}". Desvincule ou remova o agente antes.` };
+    return {
+      error: `Esse número está ligado ao agente "${agents.map((a) => a.name).join('", "')}". Abra Agentes → esse agente → "Desvincular número" (as configurações do agente ficam) e depois remova aqui.`,
+    };
   }
   if (campaigns && campaigns.length) {
     return { error: `Campanha ativa usando esse número: "${campaigns.map((c) => c.name).join('", "')}". Pause ou conclua antes de remover.` };

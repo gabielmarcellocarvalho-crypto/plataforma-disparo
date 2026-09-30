@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { connectAgent, linkAgentInstance, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
+import { connectAgent, linkAgentInstance, unlinkAgentInstance, refreshAgentStatus, toggleAgentStatus, updateAgentDelay, deleteAgent, type LlmProvider } from "@/app/actions/agents";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
@@ -132,6 +132,19 @@ export function AgentEditView({
     });
   }
 
+  const [confirmingUnlink, setConfirmingUnlink] = useState(false);
+  function handleUnlinkInstance() {
+    setError(null);
+    startTransition(async () => {
+      const result = await unlinkAgentInstance(agent.id);
+      if (result.error) setError(result.error);
+      else {
+        setConfirmingUnlink(false);
+        router.refresh();
+      }
+    });
+  }
+
   function handleRefresh() {
     startTransition(async () => {
       await refreshAgentStatus(agent.id);
@@ -231,11 +244,40 @@ export function AgentEditView({
         )}
 
         {isInstanceLinked && (
-          <p className="text-xs text-text-muted border-t border-border pt-3">
-            Esse agente usa o número já conectado em Configurações — o mesmo número também pode
-            disparar campanha em massa (modo &quot;Agente de IA&quot; na criação de campanha). Pra
-            reconectar/trocar o número, use a tela de Configurações.
-          </p>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <p className="text-xs text-text-muted">
+              Esse agente usa o número já conectado em Configurações — o mesmo número também pode
+              disparar campanha em massa (modo &quot;Agente de IA&quot; na criação de campanha). Pra
+              reconectar/trocar o número, use a tela de Configurações.
+            </p>
+            {canManage &&
+              (confirmingUnlink ? (
+                <div className="rounded-lg border border-border bg-surface-2 p-3 flex flex-col gap-2 max-w-lg">
+                  <p className="text-xs font-bold">Desvincular o número desse agente?</p>
+                  <p className="text-xs text-text-muted leading-relaxed">
+                    O agente continua com prompt, configurações, arquivos, base de conhecimento e histórico — só fica sem número e
+                    para de responder até você ligar outro. Depois disso dá pra remover o número em Configurações.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUnlinkInstance}
+                      disabled={pending}
+                      className="text-xs font-bold px-3 py-2 rounded-md bg-primary-strong text-white hover:opacity-90 cursor-pointer disabled:opacity-60"
+                    >
+                      {pending ? "Desvinculando…" : "Sim, desvincular"}
+                    </button>
+                    <button type="button" onClick={() => setConfirmingUnlink(false)} className="text-xs font-bold px-3 py-2 text-text-muted hover:text-text cursor-pointer">
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirmingUnlink(true)} className="text-xs font-bold text-text-muted hover:text-danger cursor-pointer w-fit">
+                  Desvincular número
+                </button>
+              ))}
+          </div>
         )}
 
         {canManage && !isInstanceLinked && !connected && (
