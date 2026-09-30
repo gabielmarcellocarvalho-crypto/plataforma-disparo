@@ -9,7 +9,7 @@ import { setDialog360Webhook, listDialog360Templates, type Dialog360Template } f
 import {
   exchangeMetaCloudCode,
   subscribeMetaCloudWebhook,
-  registerMetaCloudPhone,
+  registerMetaCloudPhoneWithFallback,
   getMetaCloudPhoneInfo,
   listMetaCloudTemplates,
   updateMetaCloudProfilePhoto,
@@ -139,12 +139,12 @@ export async function connectMetaCloudInstance(
   if (!wabaId || !phoneNumberId || !code) return { error: "Dados incompletos do Embedded Signup — tente conectar de novo." };
 
   try {
-    await exchangeMetaCloudCode(code);
+    const businessToken = await exchangeMetaCloudCode(code);
     await subscribeMetaCloudWebhook(wabaId);
     // Sem isso, todo envio (template, texto, mídia) falha com "(#133010) Account not registered" —
     // passo separado da assinatura do webhook, exigido pela Cloud API mesmo com o número já
     // aparecendo conectado no Business Manager.
-    await registerMetaCloudPhone(phoneNumberId);
+    await registerMetaCloudPhoneWithFallback(phoneNumberId, businessToken);
     const phoneInfo = await getMetaCloudPhoneInfo(phoneNumberId);
 
     // Upsert manual em vez de .upsert({onConflict:"phone_number_id"}) de propósito — esse índice é
@@ -171,7 +171,9 @@ export async function connectMetaCloudInstance(
     revalidatePath("/configuracoes");
     return { error: null, ok: true };
   } catch (err) {
-    return { error: (err as Error).message };
+    // IDs na mensagem: se falhar de novo, dá pra diagnosticar direto na Meta sem refazer o fluxo às cegas.
+    console.error("Falha ao conectar número Meta:", { wabaId, phoneNumberId, error: (err as Error).message });
+    return { error: `${(err as Error).message} (WABA ${wabaId}, número ${phoneNumberId})` };
   }
 }
 

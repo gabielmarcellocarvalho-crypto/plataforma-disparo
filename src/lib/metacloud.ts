@@ -105,20 +105,37 @@ export async function subscribeMetaCloudWebhook(wabaId: string): Promise<void> {
 // conectado no nosso banco e no Business Manager da Meta. O PIN de verificação em 2 etapas é gerado
 // aqui e descartado — não guardamos em lugar nenhum porque nada no fluxo atual precisa dele de novo
 // (só seria necessário pra um de-register/re-register manual, que não existe na plataforma ainda).
-export async function registerMetaCloudPhone(phoneNumberId: string): Promise<void> {
+//
+// `token`: por padrão o do System User da agência. No Embedded Signup a Meta recomenda registrar com o
+// token do NEGÓCIO do cliente (devolvido na troca do code), que tem permissão garantida sobre aquele
+// número — o do System User às vezes enxerga o WABA mas não o número (erro #10 "Application does not
+// have permission"). Ver registerMetaCloudPhoneWithFallback.
+export async function registerMetaCloudPhone(phoneNumberId: string, token: string = systemUserToken()): Promise<void> {
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   const res = await fetch(`${BASE_URL}/${phoneNumberId}/register`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", pin }),
   });
   if (!res.ok) throw new Error(`Falha ao registrar número na Cloud API: ${res.status} ${await res.text().catch(() => "")}`);
 }
 
+// Tenta com o System User; se a Meta disser que falta permissão (#10), tenta com o token do negócio
+// do cliente vindo do Embedded Signup.
+export async function registerMetaCloudPhoneWithFallback(phoneNumberId: string, businessToken: string | null): Promise<void> {
+  try {
+    await registerMetaCloudPhone(phoneNumberId);
+  } catch (err) {
+    const semPermissao = err instanceof Error && /"code":\s*10\b|\(#10\)/.test(err.message);
+    if (!semPermissao || !businessToken) throw err;
+    await registerMetaCloudPhone(phoneNumberId, businessToken);
+  }
+}
+
 // Troca o `code` do Embedded Signup (FB.login com response_type: 'code') por um token — usado só
 // como verificação server-side de que o popup foi legítimo (o code prova que veio do fluxo real da
 // Meta). O envio em si usa o token de System User, não esse token de curta duração.
-export async function exchangeMetaCloudCode(code: string): Promise<void> {
+export async function exchangeMetaCloudCode(code: string): Promise<string | null> {
   // NEXT_PUBLIC_META_APP_ID de propósito — o App ID não é segredo (já vai pro navegador de qualquer
   // jeito, é usado no FB.init do botão de conectar), então não faz sentido duplicar numa variável
   // server-only separada. META_APP_SECRET esse sim é sensível e só existe no servidor.
@@ -128,6 +145,9 @@ export async function exchangeMetaCloudCode(code: string): Promise<void> {
   const url = `${BASE_URL}/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${encodeURIComponent(code)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Falha ao validar code do Embedded Signup: ${res.status} ${await res.text().catch(() => "")}`);
+  // Token do negócio do cliente (business integration token) — usado como reserva no registro do número.
+  const data = (await res.json().catch(() => null)) as { access_token?: string } | null;
+  return data?.access_token ?? null;
 }
 
 // Confirma que o token de System User realmente enxerga esse número (prova que o cliente concluiu o
