@@ -16,6 +16,7 @@ import {
 import { daysSince, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import { listPipelines, moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
 import { sortStages, stageForSignal } from "@/lib/pipelines";
+import { buildLeadShareText } from "@/lib/lead-share-text";
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import { linkContactToCompany, createCompanyAndLinkContact, searchCompanies, type CompanyRow } from "@/app/actions/companies";
 import { getTasksForRecord, quickCreateTask, toggleTaskCompleted, type TaskRow } from "@/app/actions/tasks";
@@ -136,6 +137,36 @@ export function CrmLeadDrawer({
     contact && pipelineStages.length
       ? (pipelineStages.find((st) => st.id === contact.pipeline_stage_id) ?? stageForSignal(contact.stage as ContactStage, pipelineStages))?.id ?? ""
       : "";
+
+  // "Copiar dados": texto pronto pro WhatsApp com o que está na tela agora (inclusive edição ainda
+  // não salva), pra repassar o lead pra vendedor/outra pessoa.
+  const [copied, setCopied] = useState(false);
+  async function handleCopyLead() {
+    if (!contact) return;
+    const stageName = pipelineStages.length
+      ? pipelineStages.find((st) => st.id === currentPipelineStageId)?.name ?? null
+      : stageLabels[contact.stage as ContactStage] ?? contact.stage;
+    const text = buildLeadShareText({
+      name,
+      phone,
+      email,
+      stageName,
+      teamMemberName: teamMembers.find((m) => m.id === teamMemberId)?.name ?? null,
+      branchName: branches.find((b) => b.id === branchId)?.name ?? null,
+      tags,
+      lostReason: contact.stage === LOST_STAGE ? contact.lost_reason : null,
+      fieldDefs,
+      values,
+      extras: fields,
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Não foi possível copiar. Tente de novo.");
+    }
+  }
 
   function handleTagsChange(next: string[]) {
     setTags(next);
@@ -389,12 +420,34 @@ export function CrmLeadDrawer({
                 )}
                 </div>
               </div>
+              <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyLead}
+                title="Copia nome, telefone, e-mail, etapa, vendedor e campos num texto pronto pro WhatsApp"
+                className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors ${
+                  copied ? "border-success/40 bg-success-soft text-success" : "border-border text-text-muted hover:text-text hover:bg-surface-2"
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  {copied ? (
+                    <polyline points="20 6 9 17 4 12" />
+                  ) : (
+                    <>
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </>
+                  )}
+                </svg>
+                {copied ? "Copiado!" : "Copiar dados"}
+              </button>
               <button type="button" onClick={onClose} aria-label="Fechar" className="text-text-muted hover:text-text cursor-pointer p-1 shrink-0">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
+              </div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-6">
