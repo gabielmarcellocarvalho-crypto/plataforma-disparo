@@ -423,8 +423,20 @@ export function ConversationsPanel({
       recorder.start();
       mediaRecorderRef.current = recorder;
       setRecording(true);
-    } catch {
-      setError("Não foi possível acessar o microfone (verifique a permissão do navegador).");
+    } catch (err) {
+      // Cada causa tem um conserto diferente, então a mensagem diz qual é (o nome do erro do navegador).
+      const name = err instanceof DOMException ? err.name : "";
+      if (!window.isSecureContext || !navigator.mediaDevices) {
+        setError("O navegador bloqueou o microfone porque a página não está em HTTPS. Abra o painel pelo endereço seguro.");
+      } else if (name === "NotAllowedError" || name === "SecurityError") {
+        setError("Permissão do microfone negada. Clique no cadeado ao lado do endereço, libere o microfone pra este site e tente de novo. Se continuar, verifique em Configurações do Windows > Privacidade > Microfone se o navegador está liberado.");
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        setError("Nenhum microfone encontrado. Conecte um microfone ou escolha outro dispositivo nas configurações de som do Windows.");
+      } else if (name === "NotReadableError") {
+        setError("O microfone está em uso por outro programa (ex.: Teams, Zoom ou outra aba). Feche-o e tente de novo.");
+      } else {
+        setError(`Não foi possível iniciar a gravação${name ? ` (${name})` : ""}. Tente de novo.`);
+      }
     }
   }
 
