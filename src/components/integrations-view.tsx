@@ -3,9 +3,10 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarClock, Check, Copy, Link2, Megaphone, Unplug, Webhook } from "lucide-react";
+import { CalendarClock, Check, Copy, Link2, Unplug, Webhook } from "lucide-react";
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { GoogleLogo } from "@/components/google-logo";
+import { FacebookLogo } from "@/components/facebook-logo";
 import { createConnectLink, disconnectCalendar } from "@/app/actions/integrations";
 import { cn } from "@/lib/utils";
 
@@ -215,7 +216,7 @@ export function IntegrationsView({
               {facebook.connected ? `${facebook.pages} página(s)` : "Não conectado"}
             </span>
           }
-          art={<Megaphone className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
+          art={<FacebookLogo size={112} />}
         />
         <IntegrationCard
           title="Webhooks"
