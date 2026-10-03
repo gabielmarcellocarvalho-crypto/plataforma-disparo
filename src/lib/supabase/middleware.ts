@@ -30,6 +30,7 @@ const PUBLIC_PATHS = [
   "/conectar-agenda",
   "/api/integrations/google/callback",
   "/api/integrations/facebook/webhook",
+  "/api/integrations/facebook/callback",
 ];
 
 export async function updateSession(request: NextRequest) {

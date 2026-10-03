@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarClock, Check, Copy, Link2, Megaphone, Unplug, Webhook } from "lucide-react";
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { GoogleLogo } from "@/components/google-logo";
+import { FacebookLeadsSection, type FacebookConnectionRow, type FacebookPageRow } from "@/components/facebook-leads-section";
 import { createConnectLink, disconnectCalendar } from "@/app/actions/integrations";
 import { cn } from "@/lib/utils";
 
@@ -164,7 +165,15 @@ function CloserItem({ row }: { row: CloserRow }) {
   );
 }
 
-export function IntegrationsView({ workspaceName, closers }: { workspaceName: string; closers: CloserRow[] }) {
+export function IntegrationsView({
+  workspaceName,
+  closers,
+  facebook,
+}: {
+  workspaceName: string;
+  closers: CloserRow[];
+  facebook?: { connection: FacebookConnectionRow; pages: FacebookPageRow[]; canManage: boolean; status: string | null };
+}) {
   const params = useSearchParams();
   const ret = RETURN_MESSAGES[params.get("agenda") || ""];
   const connectedCount = closers.filter((c) => c.status === "conectado").length;
@@ -208,10 +217,21 @@ export function IntegrationsView({ workspaceName, closers }: { workspaceName: st
           art={<GoogleLogo size={112} />}
         />
         <IntegrationCard
-          title="Anúncios de formulário"
-          description="Leads dos formulários de anúncio caindo direto em Contatos."
-          cta="Em breve"
-          variant="muted"
+          title="Facebook — leads"
+          description="Quem preenche o formulário do anúncio cai direto em Contatos, com a etiqueta da campanha."
+          cta={facebook?.connection ? "Configurar" : "Conectar"}
+          href="#facebook-leads"
+          variant="default"
+          badge={
+            <span
+              className={cn(
+                "text-[11px] font-bold px-2 py-0.5 rounded-full",
+                facebook?.connection ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
+              )}
+            >
+              {facebook?.connection ? `${facebook.pages.length} página(s)` : "Não conectado"}
+            </span>
+          }
           art={<Megaphone className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
         />
         <IntegrationCard
@@ -258,6 +278,10 @@ export function IntegrationsView({ workspaceName, closers }: { workspaceName: st
           O closer não precisa de login: use “Copiar link” e mande pra ele. O link vale 7 dias e só conecta a agenda daquela pessoa.
         </p>
       </section>
+
+      {facebook && (
+        <FacebookLeadsSection connection={facebook.connection} pages={facebook.pages} canManage={facebook.canManage} status={facebook.status} />
+      )}
     </div>
   );
 }
