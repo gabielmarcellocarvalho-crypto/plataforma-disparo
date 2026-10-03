@@ -406,7 +406,10 @@ export function ConversationsPanel({
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      // WhatsApp não aceita webm como áudio (só ogg/opus, mp4/aac, mpeg e amr). Por isso tenta primeiro
+      // os formatos aceitos; webm só se o navegador não gravar nenhum deles.
+      const preferred = ["audio/ogg;codecs=opus", "audio/mp4", "audio/webm;codecs=opus"].find((t) => MediaRecorder.isTypeSupported(t));
+      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
       recordedChunksRef.current = [];
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data);
@@ -416,7 +419,7 @@ export function ConversationsPanel({
         const mimeType = recorder.mimeType || "audio/webm";
         const blob = new Blob(recordedChunksRef.current, { type: mimeType });
         if (blob.size > 0) {
-          const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+          const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
           handleSendFile(new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType }));
         }
       };
