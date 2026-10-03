@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarClock, Check, Copy, Link2, Megaphone, Unplug, Webhook } from "lucide-react";
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { GoogleLogo } from "@/components/google-logo";
-import { FacebookLeadsSection, type FacebookConnectionRow, type FacebookPageRow } from "@/components/facebook-leads-section";
 import { createConnectLink, disconnectCalendar } from "@/app/actions/integrations";
 import { cn } from "@/lib/utils";
 
@@ -167,17 +166,13 @@ function CloserItem({ row }: { row: CloserRow }) {
 
 export function IntegrationsView({
   workspaceName,
-  closers,
+  googleConnected,
   facebook,
 }: {
   workspaceName: string;
-  closers: CloserRow[];
-  facebook?: { connection: FacebookConnectionRow; pages: FacebookPageRow[]; canManage: boolean; status: string | null };
+  googleConnected: number;
+  facebook: { connected: boolean; pages: number };
 }) {
-  const params = useSearchParams();
-  const ret = RETURN_MESSAGES[params.get("agenda") || ""];
-  const connectedCount = closers.filter((c) => c.status === "conectado").length;
-
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -185,33 +180,21 @@ export function IntegrationsView({
         <p className="text-text-muted text-sm mt-1">Conecte ferramentas externas às pessoas e aos agentes de {workspaceName}.</p>
       </div>
 
-      {ret && (
-        <p
-          role="status"
-          className={cn(
-            "text-sm font-medium rounded-lg px-3.5 py-2.5",
-            ret.tone === "ok" ? "bg-success-soft text-success" : "bg-warning-soft text-warning-text"
-          )}
-        >
-          {ret.text}
-        </p>
-      )}
-
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         <IntegrationCard
           title="Google Agenda"
           description="O agente SDR marca a reunião direto na agenda do closer, com link do Meet."
           cta="Configurar"
-          href="#google-agenda"
+          href="/integracoes/google-agenda"
           variant="default"
           badge={
             <span
               className={cn(
                 "text-[11px] font-bold px-2 py-0.5 rounded-full",
-                connectedCount > 0 ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
+                googleConnected > 0 ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
               )}
             >
-              {connectedCount > 0 ? `${connectedCount} conectado${connectedCount > 1 ? "s" : ""}` : "Nenhum conectado"}
+              {googleConnected > 0 ? `${googleConnected} conectado${googleConnected > 1 ? "s" : ""}` : "Nenhum conectado"}
             </span>
           }
           art={<GoogleLogo size={112} />}
@@ -219,17 +202,17 @@ export function IntegrationsView({
         <IntegrationCard
           title="Facebook — leads"
           description="Quem preenche o formulário do anúncio cai direto em Contatos, com a etiqueta da campanha."
-          cta={facebook?.connection ? "Configurar" : "Conectar"}
-          href="#facebook-leads"
+          cta={facebook.connected ? "Configurar" : "Conectar"}
+          href="/integracoes/facebook-leads"
           variant="default"
           badge={
             <span
               className={cn(
                 "text-[11px] font-bold px-2 py-0.5 rounded-full",
-                facebook?.connection ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
+                facebook.connected ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
               )}
             >
-              {facebook?.connection ? `${facebook.pages.length} página(s)` : "Não conectado"}
+              {facebook.connected ? `${facebook.pages} página(s)` : "Não conectado"}
             </span>
           }
           art={<Megaphone className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
@@ -242,8 +225,29 @@ export function IntegrationsView({
           art={<Webhook className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
         />
       </div>
+    </div>
+  );
+}
 
-      <section id="google-agenda" className="scroll-mt-6 bg-surface border border-border rounded-xl shadow-sm">
+// Página de configuração do Google Agenda (abre ao clicar no card). Conteúdo igual ao de antes.
+export function GoogleAgendaPanel({ closers }: { closers: CloserRow[] }) {
+  const params = useSearchParams();
+  const ret = RETURN_MESSAGES[params.get("agenda") || ""];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {ret && (
+        <p
+          role="status"
+          className={cn(
+            "text-sm font-medium rounded-lg px-3.5 py-2.5",
+            ret.tone === "ok" ? "bg-success-soft text-success" : "bg-warning-soft text-warning-text"
+          )}
+        >
+          {ret.text}
+        </p>
+      )}
+      <section id="google-agenda" className="bg-surface border border-border rounded-xl shadow-sm">
         <div className="flex items-start gap-3 px-4 py-4 border-b border-border">
           <span className="grid place-items-center w-10 h-10 rounded-lg bg-surface-2 border border-border shrink-0" aria-hidden>
             <GoogleLogo size={20} />
@@ -278,10 +282,6 @@ export function IntegrationsView({
           O closer não precisa de login: use “Copiar link” e mande pra ele. O link vale 7 dias e só conecta a agenda daquela pessoa.
         </p>
       </section>
-
-      {facebook && (
-        <FacebookLeadsSection connection={facebook.connection} pages={facebook.pages} canManage={facebook.canManage} status={facebook.status} />
-      )}
     </div>
   );
 }

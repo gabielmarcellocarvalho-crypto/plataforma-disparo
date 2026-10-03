@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const result = (status: string) => {
     const dest =
       payload?.origin === "painel"
-        ? `/integracoes?agenda=${status}`
+        ? `/integracoes/google-agenda?agenda=${status}`
         : `/conectar-agenda/resultado?status=${status}`;
     return NextResponse.redirect(new URL(dest, url.origin));
   };

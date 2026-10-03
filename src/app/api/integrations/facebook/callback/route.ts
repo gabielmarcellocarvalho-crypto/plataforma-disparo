@@ -30,7 +30,7 @@ async function exchangeCode(origin: string, code: string): Promise<string> {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const back = (status: string) => NextResponse.redirect(new URL(`/integracoes?facebook=${status}`, url.origin));
+  const back = (status: string) => NextResponse.redirect(new URL(`/integracoes/facebook-leads?facebook=${status}`, url.origin));
 
   const state = verifyFacebookState(url.searchParams.get("state") || "", appSecret());
   if (!state) return back("expirado");

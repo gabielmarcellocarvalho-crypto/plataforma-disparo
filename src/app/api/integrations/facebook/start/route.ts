@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   if (!workspace) return NextResponse.redirect(new URL("/login", url.origin));
 
   const secret = process.env.META_APP_SECRET;
-  if (!secret) return NextResponse.redirect(new URL("/integracoes?facebook=config", url.origin));
+  if (!secret) return NextResponse.redirect(new URL("/integracoes/facebook-leads?facebook=config", url.origin));
 
   const state = signFacebookState(workspace.id, secret);
   const login = new URL("https://www.facebook.com/v21.0/dialog/oauth");

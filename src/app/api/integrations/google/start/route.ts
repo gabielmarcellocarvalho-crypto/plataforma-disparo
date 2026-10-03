@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     .eq("id", teamMemberId)
     .eq("workspace_id", workspace.id)
     .maybeSingle();
-  if (!member) return NextResponse.redirect(new URL("/integracoes?erro=pessoa", url.origin));
+  if (!member) return NextResponse.redirect(new URL("/integracoes/google-agenda?erro=pessoa", url.origin));
 
   const state = signConnectToken({ workspaceId: workspace.id, teamMemberId: member.id, origin: "painel" });
   return NextResponse.redirect(buildAuthUrl(url.origin, state));
