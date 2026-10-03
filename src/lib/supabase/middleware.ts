@@ -29,6 +29,7 @@ const PUBLIC_PATHS = [
   // a segurança dos dois está no token/state assinado, não na sessão.
   "/conectar-agenda",
   "/api/integrations/google/callback",
+  "/api/integrations/facebook/webhook",
 ];
 
 export async function updateSession(request: NextRequest) {
