@@ -486,6 +486,8 @@ export function CrmBoard({
   const [stageFilter, setStageFilter] = useState<ContactStage | "">("");
   const [teamFilter, setTeamFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
+  // WhatsApp = lead com telefone. E-mail = lead que entrou só com e-mail (ex.: formulário do Facebook sem telefone).
+  const [channelFilter, setChannelFilter] = useState<"" | "whatsapp" | "email">("");
   const [lostReasonFilter, setLostReasonFilter] = useState("");
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
@@ -549,6 +551,8 @@ export function CrmBoard({
       if (stageFilter && c.stage !== stageFilter) return false;
       if (teamFilter && (teamFilter === "__nenhum__" ? c.team_member_id : c.team_member_id !== teamFilter)) return false;
       if (branchFilter && (branchFilter === "__nenhum__" ? c.branch_id : c.branch_id !== branchFilter)) return false;
+      if (channelFilter === "whatsapp" && !c.phone) return false;
+      if (channelFilter === "email" && c.phone) return false;
       if (lostReasonFilter) {
         // "sem motivo" só faz sentido dentro da fase de perda — lead ativo não tem motivo por
         // definição, e listar todos eles como "sem motivo" enterraria o que falta preencher.
@@ -569,7 +573,7 @@ export function CrmBoard({
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, lostReasonFilter, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, channelFilter, lostReasonFilter, fieldFilters]);
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
@@ -717,6 +721,7 @@ export function CrmBoard({
     (stageFilter ? 1 : 0) +
     (teamFilter ? 1 : 0) +
     (branchFilter ? 1 : 0) +
+    (channelFilter ? 1 : 0) +
     (lostReasonFilter ? 1 : 0) +
     fieldFilters.length;
   const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
@@ -729,6 +734,7 @@ export function CrmBoard({
     setStageFilter("");
     setTeamFilter("");
     setBranchFilter("");
+    setChannelFilter("");
     setLostReasonFilter("");
     setFieldFilters([]);
   }
@@ -1014,6 +1020,16 @@ export function CrmBoard({
                   setDateTo("");
                 }}
               />
+
+              <select
+                value={channelFilter}
+                onChange={(e) => setChannelFilter(e.target.value as "" | "whatsapp" | "email")}
+                className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+              >
+                <option value="">Canal: todos</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">E-mail</option>
+              </select>
 
               {teamMembers.length > 0 && (
                 <select
