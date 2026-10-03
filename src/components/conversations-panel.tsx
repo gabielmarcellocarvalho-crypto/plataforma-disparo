@@ -20,6 +20,7 @@ import { setConversationStatus, setConversationResponsible } from "@/app/actions
 import type { TicketStatus } from "@/lib/conversation-tickets";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { VoiceInput } from "@/components/ui/voice-input";
+import { VoiceMessageBubble } from "@/components/ui/voice-message-bubble";
 import { STAGE_ORDER } from "@/lib/crm-stages";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 
@@ -156,7 +157,7 @@ function formatListTime(iso: string) {
 // (foto sem legenda) — não faz sentido mostrar esse texto técnico junto do preview visual.
 const MEDIA_ONLY_PLACEHOLDER = /^\[(o cliente enviou uma foto|arquivo enviado: .*)\]$/;
 
-function MediaAttachment({ url, type }: { url: string; type: "image" | "audio" | "document" }) {
+function MediaAttachment({ url, type, tone }: { url: string; type: "image" | "audio" | "document"; tone: "in" | "out" }) {
   if (type === "image") {
     return (
       <a href={url} target="_blank" rel="noopener noreferrer" className="block mb-1.5">
@@ -166,11 +167,7 @@ function MediaAttachment({ url, type }: { url: string; type: "image" | "audio" |
     );
   }
   if (type === "audio") {
-    return (
-      <audio controls src={url} className="w-full max-w-[240px] mb-1.5 h-9">
-        Seu navegador não suporta áudio.
-      </audio>
-    );
+    return <VoiceMessageBubble audioSrc={url} tone={tone} />;
   }
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm font-semibold underline mb-1.5">
@@ -829,7 +826,7 @@ export function ConversationsPanel({
                         m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
                       }`}
                     >
-                      {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} />}
+                      {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} tone={m.role === "user" ? "in" : "out"} />}
                       {!MEDIA_ONLY_PLACEHOLDER.test(m.content) && m.content}
                       <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
                     </div>
