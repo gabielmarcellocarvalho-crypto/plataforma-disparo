@@ -3,7 +3,7 @@
 export const GRAPH = "https://graph.facebook.com/v21.0";
 
 // Permissões pedidas na conexão. `leads_retrieval` é a que lê os leads; as de página listam e assinam.
-export const FACEBOOK_SCOPES = ["pages_show_list", "pages_manage_metadata", "pages_read_engagement", "leads_retrieval"];
+export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "leads_retrieval"];
 
 export function appId(): string {
   const id = process.env.NEXT_PUBLIC_META_APP_ID;
