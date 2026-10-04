@@ -473,3 +473,25 @@ export function buildSystemPrompt(config: AgentConfig): string {
 
   return lines.join("\n");
 }
+
+// Linhas que estão no texto atual e não estavam no último texto gerado a partir da configuração:
+// são as edições feitas à mão. Mantém a primeira ocorrência de cada uma, sem repetir.
+export function manualAdditions(current: string, base: string): string[] {
+  const known = new Set(base.split("\n").map((l) => l.trim()).filter(Boolean));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of current.split("\n")) {
+    const line = raw.trim();
+    if (!line || known.has(line) || seen.has(line)) continue;
+    seen.add(line);
+    out.push(raw);
+  }
+  return out;
+}
+
+// Regenerar sem perder o que foi escrito à mão: o texto gerado pela configuração atual, com as linhas
+// manuais acrescentadas no fim. Nada digitado some; linha que você apagou à mão volta se o gerado a tiver.
+export function regenerateKeepingManual(generated: string, current: string, base: string): string {
+  const extras = manualAdditions(current, base);
+  return extras.length ? `${generated.trimEnd()}\n\n${extras.join("\n")}` : generated;
+}

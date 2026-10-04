@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
   buildSystemPrompt,
+  regenerateKeepingManual,
   getAgentMode,
   AGENT_MODES,
   DAY_KEYS,
@@ -173,6 +174,8 @@ export function AgentConfigForm({
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
+  // Último texto gerado a partir da configuração. Tudo que estiver no prompt e não estiver aqui é escrita manual.
+  const generatedBaseRef = useRef(buildSystemPrompt(initialConfig));
   // Começa "true" (fora de sincronia) se o prompt salvo já não bate com o que os campos gerariam hoje
   // — agente antigo com prompt editado à mão, ou configurado antes de algum campo ter sido adicionado.
   // Nesse caso NÃO regeramos sozinhos por cima (perderia uma customização de verdade), só avisamos.
@@ -190,8 +193,14 @@ export function AgentConfigForm({
     // Enquanto o operador não tiver editado o prompt final manualmente, mantém ele sincronizado sozinho
     // com os campos acima — é isso que evita um campo novo (ex.: "Informações que preciso") ser salvo na
     // configuração mas nunca virar instrução real pro modelo, porque ninguém clicou em "Regenerar".
-    if (!promptCustomized) setFinalPrompt(buildSystemPrompt(next));
+    if (!promptCustomized) syncGenerated(next);
     setSaved(false);
+  }
+
+  function syncGenerated(cfg: AgentConfig) {
+    const gen = buildSystemPrompt(cfg);
+    generatedBaseRef.current = gen;
+    setFinalPrompt(gen);
   }
 
   // Escolher um modo injeta o objetivo no prompt e sugere defaults — mas só preenche campos que ainda
@@ -204,7 +213,7 @@ export function AgentConfigForm({
         if (c.collectFields.length === 0) next.collectFields = def.defaultCollectFields.map((f) => ({ ...f }));
         if (!c.handoffBehavior.trim()) next.handoffBehavior = def.defaultHandoff;
       }
-      if (!promptCustomized) setFinalPrompt(buildSystemPrompt(next));
+      if (!promptCustomized) syncGenerated(next);
       return next;
     });
     setSaved(false);
@@ -510,8 +519,12 @@ export function AgentConfigForm({
           <button
             type="button"
             onClick={() => {
-              setFinalPrompt(buildSystemPrompt(config));
-              setPromptCustomized(false);
+              // Regenera a partir da configuração, mas mantém o que foi escrito à mão (acrescentado no fim).
+              const gen = buildSystemPrompt(config);
+              const merged = regenerateKeepingManual(gen, finalPrompt, generatedBaseRef.current);
+              generatedBaseRef.current = gen;
+              setFinalPrompt(merged);
+              setPromptCustomized(merged !== gen);
               setSaved(false);
             }}
             className="text-xs font-semibold text-primary-strong hover:underline cursor-pointer"
@@ -523,7 +536,7 @@ export function AgentConfigForm({
           <p className="text-xs text-warning-text bg-warning-soft border border-warning/30 rounded-md px-3 py-2">
             Esse prompt foi editado à mão (ou ficou desatualizado em relação aos campos acima) — a partir de agora, mudar um
             campo lá em cima <strong>não</strong> atualiza esse texto sozinho. Clique em &quot;Regenerar&quot; pra sincronizar
-            (isso substitui o texto atual pelo gerado a partir dos campos).
+            (isso atualiza o texto gerado pelos campos e mantém o que você escreveu à mão).
           </p>
         )}
         <div className="relative">
