@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { activateCampaign, pauseCampaign, searchWorkspaceContacts, type ContactSearchResult } from "@/app/actions/campaigns";
 
 export type StageOption = { value: string; label: string };
@@ -46,6 +47,16 @@ export function CampaignRowActions({
     }, 300);
     return () => clearTimeout(handle);
   }, [contactQuery, sendMode, selectedContact]);
+
+  // Pop-up de disparo fecha com Esc (fora do pending, pra não cancelar um envio em andamento).
+  useEffect(() => {
+    if (!optionsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !pending) setOptionsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [optionsOpen, pending]);
 
   if (status === "ativa") {
     return (
@@ -108,22 +119,37 @@ export function CampaignRowActions({
     });
   }
 
-  if (!optionsOpen) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOptionsOpen(true)}
-        className="text-xs font-bold text-primary-strong hover:underline cursor-pointer"
-      >
-        Ativar disparo
-      </button>
-    );
-  }
-
   const filtersDisabled = sendMode === "contato";
 
+  const trigger = (
+    <button
+      type="button"
+      onClick={() => setOptionsOpen(true)}
+      className="text-xs font-bold text-primary-strong hover:underline cursor-pointer"
+    >
+      Ativar disparo
+    </button>
+  );
+
+  if (!optionsOpen) return trigger;
+
+  // Pop-up: mesmo formulário de antes, centralizado sobre a tela. Clicar no fundo fecha (se não estiver enviando).
   return (
-    <div className="flex flex-col items-end gap-2 text-left bg-surface-2 border border-border rounded-lg p-3 w-80">
+    <>
+      {trigger}
+      {createPortal(
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !pending) setOptionsOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ativar disparo"
+            className="flex flex-col gap-3 text-left bg-surface border border-border rounded-xl shadow-xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"
+          >
       <div className="w-full">
         <span className="text-xs font-semibold block mb-1.5">Enviar para</span>
         <div className="flex gap-1.5">
@@ -291,6 +317,10 @@ export function CampaignRowActions({
         </button>
       </div>
       {error && <span className="text-xs text-danger font-medium">{error}</span>}
-    </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
