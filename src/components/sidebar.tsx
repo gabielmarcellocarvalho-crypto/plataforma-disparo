@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { canAccessPage, type AccessType } from "@/lib/access-types";
 
@@ -196,7 +196,7 @@ const COLABORADOR_NAV_ITEMS = [
 const NAV_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "", hrefs: ["/"] },
   { label: "Atendimento", hrefs: ["/conversas", "/agentes"] },
-  { label: "CRM", hrefs: ["/crm", "/contatos", "/equipe", "/agenda"] },
+  { label: "CRM", hrefs: ["/crm", "/equipe", "/agenda"] },
   { label: "Automação", hrefs: ["/automacoes", "/campanhas", "/templates", "/integracoes"] },
   { label: "Análise", hrefs: ["/metricas"] },
   { label: "", hrefs: ["/configuracoes"] },
@@ -290,6 +290,8 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const emEmpresas = useSearchParams().get("view") === "empresas";
+  // Subcaixas do Pipeline (Contatos e Empresas): só aparecem quando a setinha é aberta.
+  const [pipelineAberto, setPipelineAberto] = useState(false);
 
   const podeVer = (href: string) =>
     !hiddenPages.includes(href) && (isStaff || (!STAFF_ONLY_PATHS.has(href) && canAccessPage(accessType, href, hiddenPages)));
@@ -338,22 +340,49 @@ export function Sidebar({
               ))}
             {grupo.itens.map((item) => (
               <Fragment key={item.href}>
-                <NavLink
-                  {...item}
-                  active={pathname === item.href && !(item.href === "/contatos" && emEmpresas)}
-                  collapsed={collapsed}
-                  badge={item.href === "/conversas" ? attentionCount : undefined}
-                />
-                {item.href === "/contatos" && !collapsed && (
-                  <Link
-                    href="/contatos?view=empresas"
-                    aria-current={pathname === "/contatos" && emEmpresas ? "page" : undefined}
-                    className={`ml-7 flex items-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                      pathname === "/contatos" && emEmpresas ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
-                    }`}
-                  >
-                    Empresas
-                  </Link>
+                {item.href === "/crm" && !collapsed ? (
+                  <div className="flex items-center">
+                    <div className="flex-1 min-w-0">
+                      <NavLink {...item} active={pathname === item.href} collapsed={collapsed} />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPipelineAberto((v) => !v)}
+                      aria-expanded={pipelineAberto}
+                      aria-label={pipelineAberto ? "Recolher Pipeline" : "Abrir Pipeline"}
+                      className="p-1.5 rounded-md text-sidebar-muted hover:text-white hover:bg-white/[0.06] cursor-pointer shrink-0"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${pipelineAberto ? "rotate-180" : ""}`} aria-hidden>
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <NavLink
+                    {...item}
+                    active={pathname === item.href}
+                    collapsed={collapsed}
+                    badge={item.href === "/conversas" ? attentionCount : undefined}
+                  />
+                )}
+                {item.href === "/crm" && !collapsed && pipelineAberto && (
+                  <div className="ml-7 flex flex-col gap-0.5">
+                    {[
+                      { label: "Contatos", href: "/contatos", active: pathname === "/contatos" && !emEmpresas },
+                      { label: "Empresas", href: "/contatos?view=empresas", active: pathname === "/contatos" && emEmpresas },
+                    ].map((sub) => (
+                      <Link
+                        key={sub.label}
+                        href={sub.href}
+                        aria-current={sub.active ? "page" : undefined}
+                        className={`flex items-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                          sub.active ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
+                        }`}
+                      >
+                        {sub.label}
+                      </Link>
+                    ))}
+                  </div>
                 )}
               </Fragment>
             ))}
