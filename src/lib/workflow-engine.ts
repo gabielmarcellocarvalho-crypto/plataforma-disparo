@@ -1,12 +1,13 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
-import { sendMetaCloudText } from "@/lib/metacloud";
+import { sendMetaCloudText, sendMetaCloudTemplate } from "@/lib/metacloud";
 import {
   interpolateVariables,
   type ActionConfig,
   type AudienceConfig,
   type ConditionConfig,
+  type SendMode,
   type WaitConfig,
   type WorkflowRow,
   type WorkflowStepRow,
@@ -24,13 +25,14 @@ type Contact = {
   responsible_user_id: string | null;
   company_id: string | null;
   whatsapp_instance_id: string | null;
+  email?: string | null;
   pipeline_id?: string | null;
   pipeline_stage_id?: string | null;
   created_at?: string;
   custom_fields?: Record<string, unknown> | null;
 };
 
-const CONTACT_SELECT = "id, workspace_id, name, phone, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, pipeline_id, pipeline_stage_id, created_at, custom_fields";
+const CONTACT_SELECT = "id, workspace_id, name, phone, email, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, pipeline_id, pipeline_stage_id, created_at, custom_fields";
 
 // O PostgREST devolve no máximo 1000 linhas por resposta (teto do servidor, ignora .limit()), então
 // toda busca "traz tudo" daqui pagina de verdade. `build` monta a query do zero a cada página, com
@@ -368,6 +370,19 @@ async function evaluateCondition(supabase: AdminClient, contact: Contact, run: {
   return false;
 }
 
+// Valor de um campo da lista de contatos pra preencher uma variável de template ({{1}}, {{2}}…).
+function fieldValue(field: string, contact: Contact, vars: { company_name?: string | null }): string {
+  if (field === "name") return contact.name || "";
+  if (field === "company") return vars.company_name || "";
+  if (field === "phone") return contact.phone || "";
+  if (field === "email") return contact.email || "";
+  if (field.startsWith("cf:")) {
+    const v = contact.custom_fields?.[field.slice(3)];
+    return v == null ? "" : String(v);
+  }
+  return "";
+}
+
 async function executeAction(supabase: AdminClient, contact: Contact, action: ActionConfig): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
   const vars = await resolveVariableContext(supabase, contact);
 
@@ -381,20 +396,55 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       .maybeSingle();
     if (!instance) return { ok: false, detail: { error: "instância não encontrada" } };
 
-    const text = interpolateVariables(action.text, vars);
-    try {
-      if (instance.channel === "360dialog") {
-        if (!instance.dialog360_api_key) return { ok: false, detail: { error: "sem api key 360dialog" } };
-        await sendDialog360Text(instance.dialog360_api_key, contact.phone, text);
-      } else if (instance.channel === "metacloud") {
-        if (!instance.phone_number_id) return { ok: false, detail: { error: "sem phone_number_id" } };
-        await sendMetaCloudText(instance.phone_number_id, contact.phone, text);
-      } else {
-        if (!instance.instance_name) return { ok: false, detail: { error: "sem instância evolution" } };
-        await sendText(instance.instance_name, contact.phone, text);
+    const mode: SendMode = action.mode ?? "free";
+    const official = instance.channel !== "evolution";
+    if (mode === "template" && !official) return { ok: false, detail: { error: "template só existe na conexão oficial da Meta" } };
+
+    // Texto livre na API oficial: a Meta só aceita dentro de 24h da última mensagem do lead. Sem essa
+    // checagem, a mensagem sumia (a Meta recusava e o histórico nem registrava o motivo).
+    if (official && mode === "free") {
+      const { data: last } = await supabase
+        .from("messages")
+        .select("created_at")
+        .eq("contact_id", contact.id)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const dentroDaJanela = last && Date.now() - new Date(last.created_at as string).getTime() < 24 * 60 * 60 * 1000;
+      if (!dentroDaJanela) {
+        return { ok: false, detail: { error: "fora da janela de 24h: o lead não falou nas últimas 24h. Use um template aprovado nesse passo." } };
       }
-    } catch {
-      return { ok: false, detail: { error: "falha ao enviar" } };
+    }
+
+    let content: string;
+    let billing: string | null = null;
+    try {
+      if (mode === "template") {
+        const tpl = action.template;
+        if (!tpl?.name) return { ok: false, detail: { error: "nenhum template escolhido nesse passo" } };
+        if (!instance.phone_number_id) return { ok: false, detail: { error: "número sem phone_number_id" } };
+        const params = tpl.variables.map((field) => fieldValue(field, contact, vars));
+        const empty = params.findIndex((v) => !v);
+        if (empty >= 0) return { ok: false, detail: { error: `o lead não tem o campo da variável {{${empty + 1}}} (${tpl.variables[empty]})` } };
+        await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params);
+        content = `[Template: ${tpl.name}]`;
+        billing = tpl.category || "MARKETING";
+      } else {
+        content = interpolateVariables(action.text, vars);
+        if (instance.channel === "360dialog") {
+          if (!instance.dialog360_api_key) return { ok: false, detail: { error: "sem api key 360dialog" } };
+          await sendDialog360Text(instance.dialog360_api_key, contact.phone, content);
+        } else if (instance.channel === "metacloud") {
+          if (!instance.phone_number_id) return { ok: false, detail: { error: "sem phone_number_id" } };
+          await sendMetaCloudText(instance.phone_number_id, contact.phone, content);
+        } else {
+          if (!instance.instance_name) return { ok: false, detail: { error: "sem instância evolution" } };
+          await sendText(instance.instance_name, contact.phone, content);
+        }
+      }
+    } catch (err) {
+      return { ok: false, detail: { error: `falha ao enviar: ${err instanceof Error ? err.message.slice(0, 300) : "erro desconhecido"}` } };
     }
 
     await supabase.from("messages").insert({
@@ -402,9 +452,10 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       contact_id: contact.id,
       agent_id: null,
       role: "assistant",
-      content: text,
+      content,
+      billing_category: billing,
     });
-    return { ok: true, detail: { text } };
+    return { ok: true, detail: { text: content, mode } };
   }
 
   if (action.action_type === "create_task") {

@@ -109,3 +109,29 @@ export async function createWorkspaceTemplate(input: {
     return { error: err instanceof Error ? err.message : "A Meta recusou o template." };
   }
 }
+
+// Templates aprovados pra escolher num passo de automação. Já vem com o campo de cada variável (se foi salvo).
+export type ApprovedTemplateOption = {
+  name: string;
+  language: string;
+  category: string;
+  bodyText: string;
+  variableCount: number;
+  variables: string[];
+};
+
+export async function listApprovedTemplatesForWorkflow(): Promise<Result<{ templates: ApprovedTemplateOption[]; fields: TemplateField[] }>> {
+  const r = await listWorkspaceTemplates();
+  if (r.error !== null) return { error: r.error };
+  const templates = r.templates
+    .filter((t) => t.status === "APPROVED")
+    .map((t) => ({
+      name: t.name,
+      language: t.language,
+      category: t.category,
+      bodyText: t.bodyText || "",
+      variableCount: variableCount(t.bodyText || ""),
+      variables: r.mappings[`${t.name}|${t.language}`] || [],
+    }));
+  return { error: null, templates, fields: r.fields };
+}

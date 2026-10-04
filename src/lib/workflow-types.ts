@@ -53,8 +53,18 @@ export const ACTION_LABELS: Record<ActionType, string> = {
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
+// Envio pelo WhatsApp oficial. "free" = texto livre (só vale se o lead falou nas últimas 24h);
+// "template" = template aprovado, que vale a qualquer momento. Passo antigo sem modo = texto livre.
+export type SendMode = "free" | "template";
+export type SendTemplate = {
+  name: string;
+  language: string;
+  category: string; // UTILITY | MARKETING | AUTHENTICATION (cobrança)
+  variables: string[]; // um campo por variável ({{1}}, {{2}}…): name, company, phone, email, cf:<key>
+};
+
 export type ActionConfig =
-  | { action_type: "send_message"; text: string }
+  | { action_type: "send_message"; text: string; mode?: SendMode; template?: SendTemplate | null }
   | { action_type: "create_task"; title: string }
   | { action_type: "change_stage"; stage: ContactStage; pipelineStageId?: string | null }
   | { action_type: "add_note"; text: string }

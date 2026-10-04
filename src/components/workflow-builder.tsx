@@ -14,6 +14,7 @@ import { STAGE_LABELS, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import type { PipelineWithStages } from "@/app/actions/pipelines";
 import { sortStages } from "@/lib/pipelines";
 import { cn } from "@/lib/utils";
+import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import {
   ACTION_LABELS,
   CONDITION_LABELS,
@@ -190,7 +191,7 @@ function initialRefs(cfg: Record<string, unknown> | null | undefined, fallbackSt
 }
 
 function emptyActionConfig(type: ActionType) {
-  if (type === "send_message") return { action_type: "send_message" as const, text: "" };
+  if (type === "send_message") return { action_type: "send_message" as const, text: "", mode: "free" as const, template: null };
   if (type === "create_task") return { action_type: "create_task" as const, title: "" };
   if (type === "change_stage") return { action_type: "change_stage" as const, stage: "abordado" as ContactStage };
   if (type === "http_request") return { action_type: "http_request" as const, method: "POST" as HttpMethod, url: "", body: "" };
@@ -928,7 +929,14 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
         </select>
       </div>
 
-      {(config.action_type === "send_message" || config.action_type === "add_note") && (
+      {config.action_type === "send_message" && (
+        <WorkflowSendConfig
+          config={config}
+          onChange={(next) => onChange({ ...config, ...next })}
+          textPlaceholder="Use {{nome}}, {{primeiro_nome}}, {{sobrenome}}, {{telefone}}, {{empresa}}, {{etapa}}, {{responsavel}}, {{data_criacao}}, {{campo:chave}}"
+        />
+      )}
+      {config.action_type === "add_note" && (
         <textarea
           value={config.text}
           onChange={(e) => onChange({ ...config, text: e.target.value })}
