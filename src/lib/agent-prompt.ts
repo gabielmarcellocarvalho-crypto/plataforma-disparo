@@ -49,6 +49,8 @@ export type AgentConfig = {
   companyName: string;
   businessType: string;
   tone: "" | "formal" | "humanizado";
+  // Ajuste livre do tom (o dono escreve; entra no prompt junto do tom escolhido).
+  toneCustom: string;
   address: string;
   hours: WeekHours;
   handoffBehavior: string;
@@ -171,6 +173,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   companyName: "",
   businessType: "",
   tone: "",
+  toneCustom: "",
   address: "",
   hours: emptyWeekHours(),
   handoffBehavior: "",
@@ -212,6 +215,7 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     companyName: typeof r.companyName === "string" ? r.companyName : "",
     businessType: typeof r.businessType === "string" ? r.businessType : "",
     tone,
+    toneCustom: typeof r.toneCustom === "string" ? r.toneCustom.slice(0, 1000) : "",
     address: typeof r.address === "string" ? r.address : "",
     hours: normalizeWeekHours(r.hours),
     handoffBehavior: typeof r.handoffBehavior === "string" ? r.handoffBehavior : "",
@@ -418,6 +422,8 @@ export function buildSystemPrompt(config: AgentConfig): string {
         "minúscula, ser direto), sem soar automático ou institucional. Nunca use emojis. Trate o cliente por \"você\"."
     );
   }
+
+  if (config.toneCustom.trim()) lines.push(`Ajuste de tom de voz definido pelo dono da conta: ${config.toneCustom.trim()}`);
 
   if (config.address) lines.push(`Endereço: ${config.address}.`);
 

@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
+import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
   buildSystemPrompt,
@@ -67,29 +68,37 @@ function ToneField({ value, onChange }: { value: AgentConfig["tone"]; onChange: 
   );
 }
 
-const PROVIDER_OPTIONS: { value: LlmProvider; label: string; note: string }[] = [
-  { value: "claude", label: "Claude (Sonnet 5)", note: "Padrão — validado em produção." },
-  { value: "gemini", label: "Gemini 3 Flash", note: "Mais barato, em teste — valide qualidade antes de usar com cliente pagante." },
+const MODEL_CARDS: { value: LlmProvider; name: string; logo: string; note: string }[] = [
+  { value: "claude", name: "Claude Sonnet 5", logo: "/brand/claude.webp", note: "Padrão — validado em produção." },
+  { value: "gemini", name: "Gemini 3 Flash", logo: "/brand/gemini.png", note: "Mais barato — valide a qualidade antes de usar com cliente pagante." },
 ];
 
-function ProviderField({ value, onChange }: { value: LlmProvider; onChange: (v: LlmProvider) => void }) {
+function ModelCards({ value, onChange }: { value: LlmProvider; onChange: (v: LlmProvider) => void }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-bold text-text-muted">Modelo de IA</span>
-      <div className="flex gap-2">
-        {PROVIDER_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={`flex-1 text-left text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
-              value === opt.value ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
-            }`}
-          >
-            <div>{opt.label}</div>
-            <div className={`font-normal mt-0.5 ${value === opt.value ? "text-white/80" : "text-text-muted"}`}>{opt.note}</div>
-          </button>
-        ))}
+      <div className="grid sm:grid-cols-2 gap-2">
+        {MODEL_CARDS.map((m) => {
+          const active = value === m.value;
+          return (
+            <button
+              key={m.value}
+              type="button"
+              onClick={() => onChange(m.value)}
+              aria-pressed={active}
+              className={`flex items-center gap-3 text-left p-3 rounded-lg border cursor-pointer transition-colors ${
+                active ? "border-primary-strong bg-primary-faint" : "border-border hover:border-primary-soft"
+              }`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={m.logo} alt="" className="w-8 h-8 object-contain shrink-0" />
+              <span className="flex flex-col min-w-0">
+                <span className={`text-sm font-bold ${active ? "text-primary-strong" : ""}`}>{m.name}</span>
+                <span className="text-[11px] text-text-muted leading-snug">{m.note}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -155,6 +164,16 @@ const PRESET_FIELDS: { key: string; display: string; label: string; mode: Collec
   { key: "email", display: "E-mail", label: "e-mail para cadastro", mode: "perguntar" },
 ];
 
+type AgentTab = "basico" | "horario" | "info" | "prompt" | "humano" | "material";
+const AGENT_TABS: { key: AgentTab; label: string }[] = [
+  { key: "basico", label: "Básico" },
+  { key: "horario", label: "Horário e follow-up" },
+  { key: "info", label: "Informações" },
+  { key: "prompt", label: "Prompt" },
+  { key: "humano", label: "Humano e agenda" },
+  { key: "material", label: "Material" },
+];
+
 export function AgentConfigForm({
   agentId,
   initialConfig,
@@ -176,6 +195,12 @@ export function AgentConfigForm({
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
   // Último texto gerado a partir da configuração. Tudo que estiver no prompt e não estiver aqui é escrita manual.
   const generatedBaseRef = useRef(buildSystemPrompt(initialConfig));
+  const [tab, setTab] = useState<AgentTab>("basico");
+  // Trocar de aba salva o que estiver pendente, assim nada digitado numa aba se perde ao ir pra outra.
+  function switchTab(next: AgentTab) {
+    if (!saved && tab !== next) handleSave();
+    setTab(next);
+  }
   // Começa "true" (fora de sincronia) se o prompt salvo já não bate com o que os campos gerariam hoje
   // — agente antigo com prompt editado à mão, ou configurado antes de algum campo ter sido adicionado.
   // Nesse caso NÃO regeramos sozinhos por cima (perderia uma customização de verdade), só avisamos.
@@ -254,6 +279,22 @@ export function AgentConfigForm({
   return (
     <div className="flex flex-col gap-5">
       <ToggleGooeyFilter />
+      <div role="tablist" className="flex flex-wrap gap-1.5 border-b border-border pb-3">
+        {AGENT_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => switchTab(t.key)}
+            className={`text-xs font-bold px-3 py-2 rounded-md cursor-pointer ${tab === t.key ? "bg-primary-strong text-white" : "text-text-muted hover:bg-bg"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "basico" && (
+        <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
         <span className="text-xs font-bold text-text-muted">Modo do agente (objetivo)</span>
         <div className="grid sm:grid-cols-3 gap-2">
@@ -279,77 +320,34 @@ export function AgentConfigForm({
           agente espera; pra ele abordar ativamente, use uma campanha no modo agente com esse mesmo objetivo.
         </p>
       </div>
-
       <div className="border-t border-border pt-4">
-        <ProviderField value={llmProvider} onChange={(v) => { setLlmProvider(v); setSaved(false); }} />
+        <ModelCards value={llmProvider} onChange={(v) => { setLlmProvider(v); setSaved(false); }} />
       </div>
-
       <div className="grid sm:grid-cols-2 gap-4 border-t border-border pt-4">
         <TextField label="Nome da empresa" value={config.companyName} onChange={(v) => set("companyName", v)} placeholder="Ex: Hotel Fazenda Ecoville" />
         <TextField label="Tipo de negócio" value={config.businessType} onChange={(v) => set("businessType", v)} placeholder="Ex: hotel fazenda" />
         <ToneField value={config.tone} onChange={(v) => set("tone", v)} />
         <TextField label="Endereço" value={config.address} onChange={(v) => set("address", v)} placeholder="Ex: Rod. BR-101, km 12" />
       </div>
-
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Personalização do tom (opcional)</span>
+        <textarea
+          value={config.toneCustom}
+          onChange={(e) => set("toneCustom", e.target.value)}
+          rows={2}
+          maxLength={1000}
+          placeholder="Ex: fala como se fosse a dona da loja, chama o cliente de querido(a)."
+          className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary resize-y"
+        />
+        <p className="text-xs text-text-muted">Escreva do seu jeito. Esse texto entra no prompt junto do tom escolhido acima.</p>
+      </div>
+        </div>
+      )}
+      {tab === "horario" && (
+        <div className="flex flex-col gap-5">
       <div className="border-t border-border pt-4">
         <HoursEditor hours={config.hours} onChange={(h) => set("hours", h)} />
       </div>
-
-      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-        <span className="text-xs font-bold text-text-muted">Comportamento de encaminhamento humano</span>
-        <textarea
-          value={config.handoffBehavior}
-          onChange={(e) => set("handoffBehavior", e.target.value)}
-          rows={2}
-          placeholder="Ex: quando o cliente pedir desconto fora da tabela ou reclamar, passe pra um humano."
-          className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary resize-y"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-        <span className="text-xs font-bold text-text-muted">Máximo de mensagens por resposta</span>
-        <div className="flex gap-2">
-          {[1, 2, 3].map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => set("maxBubbles", n)}
-              className={`flex-1 text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
-                config.maxBubbles === n ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
-              }`}
-            >
-              {n === 1 ? "1 (mensagem única)" : `até ${n}`}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-text-muted">
-          Quebrar a resposta em várias bolhas parece mais humano, mas a partir de 01/10/2026 a Meta cobra por mensagem
-          enviada — cada bolha extra vira uma cobrança. Use 1 pra cliente de alto volume onde o custo pesa mais que o estilo.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-        <span className="text-xs font-bold text-text-muted">Meta de caracteres por mensagem</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={BUBBLE_CHAR_LIMIT_MIN}
-            max={BUBBLE_CHAR_LIMIT_MAX}
-            value={config.bubbleCharLimit}
-            onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
-            className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-          <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
-        </div>
-        <p className="text-xs text-text-muted">
-          Isso entra pro agente de dois jeitos: (1) instrução no prompt pra ele tentar ficar dentro desse tamanho por mensagem
-          e ser mais objetivo — não é regra rígida, só uma mira; se a resposta natural for mais curta, sem problema.
-          {config.maxBubbles > 1
-            ? " (2) além disso, se mesmo assim uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não só instrução no prompt) — respeitando o teto de \"máximo de mensagens por resposta\" acima."
-            : ' (2) com "máximo de mensagens" em 1, não há corte automático — a mensagem sai inteira mesmo se passar da meta, então essa meta vira só a instrução de objetividade.'}
-        </p>
-      </div>
-
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-bold">Follow-up automático</span>
@@ -365,9 +363,11 @@ export function AgentConfigForm({
           Não vale pra todo lead: <strong className="text-text">não atua em quem já está concluído, descartado, com
           atendimento pausado (atenção humana) ou que pediu pra não receber mais mensagens.</strong>
         </p>
-        <p className="text-xs text-warning-text font-semibold">
-          Só funciona em número conectado por QR code. Na API oficial (Meta/360dialog), depois de 24h sem resposta do lead a
-          Meta só aceita mensagem de template — por isso o follow-up não roda nesses números.
+        <p className="text-xs text-text-muted leading-relaxed">
+          <strong className="text-text">Número por QR code:</strong> o follow-up é o normal, com texto gerado pelo agente.
+          <br />
+          <strong className="text-text">Número oficial (Meta):</strong> só envia depois de 24h sem resposta, usando o template
+          escolhido abaixo. Sem template configurado, esse número não recebe follow-up.
         </p>
         {config.followUp.enabled && (
           <div className="grid grid-cols-2 gap-3 mt-1">
@@ -395,10 +395,64 @@ export function AgentConfigForm({
             </label>
           </div>
         )}
+        {config.followUp.enabled && (
+          <div className="flex flex-col gap-2 mt-1">
+            <span className="text-xs font-bold text-text-muted">Template depois de 24h (número oficial)</span>
+            <WorkflowSendConfig
+              config={{ mode: "template", text: "", template: config.followUp.template }}
+              onChange={(next) => set("followUp", { ...config.followUp, template: next.template ?? null })}
+              textPlaceholder=""
+              lockTemplate
+            />
+          </div>
+        )}
       </div>
-
-      <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
-
+        </div>
+      )}
+      {tab === "info" && (
+        <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Máximo de mensagens por resposta</span>
+        <div className="flex gap-2">
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => set("maxBubbles", n)}
+              className={`flex-1 text-xs font-bold px-3 py-2 rounded-md border cursor-pointer ${
+                config.maxBubbles === n ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted"
+              }`}
+            >
+              {n === 1 ? "1 (mensagem única)" : `até ${n}`}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-text-muted">
+          Quebrar a resposta em várias bolhas parece mais humano, mas a partir de 01/10/2026 a Meta cobra por mensagem
+          enviada — cada bolha extra vira uma cobrança. Use 1 pra cliente de alto volume onde o custo pesa mais que o estilo.
+        </p>
+      </div>
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Meta de caracteres por mensagem</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={BUBBLE_CHAR_LIMIT_MIN}
+            max={BUBBLE_CHAR_LIMIT_MAX}
+            value={config.bubbleCharLimit}
+            onChange={(e) => set("bubbleCharLimit", Math.min(BUBBLE_CHAR_LIMIT_MAX, Math.max(BUBBLE_CHAR_LIMIT_MIN, Number(e.target.value) || 0)))}
+            className="w-28 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+          <span className="text-xs text-text-muted">caracteres (entre {BUBBLE_CHAR_LIMIT_MIN} e {BUBBLE_CHAR_LIMIT_MAX})</span>
+        </div>
+        <p className="text-xs text-text-muted">
+          Isso entra pro agente de dois jeitos: (1) instrução no prompt pra ele tentar ficar dentro desse tamanho por mensagem
+          e ser mais objetivo — não é regra rígida, só uma mira; se a resposta natural for mais curta, sem problema.
+          {config.maxBubbles > 1
+            ? " (2) além disso, se mesmo assim uma bolha passar desse tamanho, o sistema quebra ela sozinho pro próximo bloco (corte de verdade no código, não só instrução no prompt) — respeitando o teto de \"máximo de mensagens por resposta\" acima."
+            : ' (2) com "máximo de mensagens" em 1, não há corte automático — a mensagem sai inteira mesmo se passar da meta, então essa meta vira só a instrução de objetividade.'}
+        </p>
+      </div>
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <span className="text-sm font-bold">Informações que preciso</span>
         <p className="text-xs text-text-muted">
@@ -492,27 +546,10 @@ export function AgentConfigForm({
           );
         })}
       </div>
-
-      {mediaCategories.length > 0 && (
-        <div className="flex flex-col gap-2 border-t border-border pt-4">
-          <span className="text-sm font-bold">Quando usar cada pasta de arquivo</span>
-          <p className="text-xs text-text-muted">Ajuda o agente a escolher a pasta certa na hora de mandar arquivo pro cliente.</p>
-          {mediaCategories.map((cat) => (
-            <div key={cat} className="flex items-center gap-2">
-              <span className="text-xs font-mono font-semibold w-28 truncate shrink-0" title={cat}>
-                {cat}
-              </span>
-              <input
-                value={config.mediaFolderNotes[cat] || ""}
-                onChange={(e) => set("mediaFolderNotes", { ...config.mediaFolderNotes, [cat]: e.target.value })}
-                placeholder="Ex: usar quando perguntarem sobre preços de pratos"
-                className="flex-1 border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary"
-              />
-            </div>
-          ))}
         </div>
       )}
-
+      {tab === "prompt" && (
+        <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5 border-t border-border pt-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <span className="text-xs font-bold text-text-muted">Prompt final (você pode editar direto)</span>
@@ -561,7 +598,46 @@ export function AgentConfigForm({
           &quot;Regenerar&quot; quando quiser voltar a sincronizar).
         </p>
       </div>
-
+        </div>
+      )}
+      {tab === "humano" && (
+        <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <span className="text-xs font-bold text-text-muted">Comportamento de encaminhamento humano</span>
+        <textarea
+          value={config.handoffBehavior}
+          onChange={(e) => set("handoffBehavior", e.target.value)}
+          rows={2}
+          placeholder="Ex: quando o cliente pedir desconto fora da tabela ou reclamar, passe pra um humano."
+          className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary resize-y"
+        />
+      </div>
+      <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
+        </div>
+      )}
+      {tab === "material" && (
+        <div className="flex flex-col gap-5">
+      {mediaCategories.length > 0 && (
+        <div className="flex flex-col gap-2 border-t border-border pt-4">
+          <span className="text-sm font-bold">Quando usar cada pasta de arquivo</span>
+          <p className="text-xs text-text-muted">Ajuda o agente a escolher a pasta certa na hora de mandar arquivo pro cliente.</p>
+          {mediaCategories.map((cat) => (
+            <div key={cat} className="flex items-center gap-2">
+              <span className="text-xs font-mono font-semibold w-28 truncate shrink-0" title={cat}>
+                {cat}
+              </span>
+              <input
+                value={config.mediaFolderNotes[cat] || ""}
+                onChange={(e) => set("mediaFolderNotes", { ...config.mediaFolderNotes, [cat]: e.target.value })}
+                placeholder="Ex: usar quando perguntarem sobre preços de pratos"
+                className="flex-1 border border-border rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+        </div>
+      )}
       <div className="flex items-center gap-3 border-t border-border pt-4">
         <button
           type="button"

@@ -10,8 +10,19 @@ export type SendConfig = { mode?: SendMode; text: string; template?: SendTemplat
 
 // Passo "Enviar mensagem (WhatsApp)": escolhe entre texto livre (só dentro das 24h do lead) e template aprovado
 // (vale a qualquer momento). No template, cada variável é ligada a um campo da lista de contatos deste workspace.
-export function WorkflowSendConfig({ config, onChange, textPlaceholder }: { config: SendConfig; onChange: (next: SendConfig) => void; textPlaceholder: string }) {
-  const mode: SendMode = config.mode ?? "free";
+// lockTemplate: só template (ex.: follow-up do agente em número oficial), sem a escolha de texto livre.
+export function WorkflowSendConfig({
+  config,
+  onChange,
+  textPlaceholder,
+  lockTemplate = false,
+}: {
+  config: SendConfig;
+  onChange: (next: SendConfig) => void;
+  textPlaceholder: string;
+  lockTemplate?: boolean;
+}) {
+  const mode: SendMode = lockTemplate ? "template" : config.mode ?? "free";
   const [options, setOptions] = useState<{ templates: ApprovedTemplateOption[]; fields: TemplateField[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -48,6 +59,7 @@ export function WorkflowSendConfig({ config, onChange, textPlaceholder }: { conf
 
   return (
     <div className="flex flex-col gap-2.5">
+      {!lockTemplate && (
       <div className="grid grid-cols-2 gap-1.5">
         {([
           { key: "free", label: "Texto livre", hint: "Só vai se o lead falou nas últimas 24h" },
@@ -68,6 +80,7 @@ export function WorkflowSendConfig({ config, onChange, textPlaceholder }: { conf
           </button>
         ))}
       </div>
+      )}
 
       {mode === "free" && (
         <textarea
