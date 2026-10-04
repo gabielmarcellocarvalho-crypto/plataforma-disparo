@@ -190,19 +190,30 @@ export function AgentEditView({
             </div>
           </div>
 
-          {canManage && (
-            <button
-              type="button"
-              onClick={handleToggleStatus}
-              disabled={pending}
-              className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
-                agent.status === "ativo" ? "bg-primary-faint text-primary-strong" : "bg-bg text-text-muted"
-              }`}
-              aria-label={agent.status === "ativo" ? "Pausar agente" : "Reativar agente"}
-            >
-              {agent.status === "ativo" ? "Ativo" : "Pausado"}
-            </button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {canManage && (
+              <button
+                type="button"
+                onClick={handleToggleStatus}
+                disabled={pending}
+                className={`text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                  agent.status === "ativo" ? "bg-primary-faint text-primary-strong" : "bg-bg text-text-muted"
+                }`}
+                aria-label={agent.status === "ativo" ? "Pausar agente" : "Reativar agente"}
+              >
+                {agent.status === "ativo" ? "Ativo" : "Pausado"}
+              </button>
+            )}
+            {canManage && !confirmingDelete && (
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className="text-xs font-bold text-danger border border-danger/40 px-3 py-2 rounded-md cursor-pointer hover:bg-danger/10"
+              >
+                Remover agente
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -357,6 +368,37 @@ export function AgentEditView({
           </div>
         )}
       </div>
+      {canManage && confirmingDelete && (
+        <div className="bg-danger-soft border border-danger/30 rounded-2xl shadow-sm p-6 flex flex-col gap-2">
+          <h2 className="text-sm font-bold text-danger">Remover {agent.name}?</h2>
+          <p className="text-xs text-danger/80">
+            Apaga o agente e todo o histórico de conversa, biblioteca de mídia e material de estudo dele.
+            {isInstanceLinked
+              ? " O número em Configurações continua conectado, só deixa de ter agente vinculado."
+              : " A instância do WhatsApp fica desconectada."}
+            {" "}Não dá pra desfazer.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+              disabled={pending}
+              className="text-xs font-bold px-3 py-1.5 rounded-md text-text-muted hover:bg-bg cursor-pointer disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={pending}
+              className="text-xs font-bold px-3 py-1.5 rounded-md bg-danger text-white cursor-pointer disabled:opacity-60"
+            >
+              {pending ? "Removendo…" : "Sim, remover agente"}
+            </button>
+          </div>
+          {deleteError && <p className="text-xs text-danger font-medium">{deleteError}</p>}
+        </div>
+      )}
 
       {canManage && (
         <div className="bg-surface border border-border rounded-2xl shadow-sm p-6">
@@ -445,48 +487,6 @@ export function AgentEditView({
         </div>
       )}
 
-      {canManage && (
-        <div className="bg-danger-soft border border-danger/30 rounded-2xl shadow-sm p-6">
-          <h2 className="text-sm font-bold text-danger mb-1">Remover agente</h2>
-          <p className="text-xs text-danger/80 mb-3">
-            Apaga o agente e todo o histórico de conversa, biblioteca de mídia e material de estudo dele.
-            {isInstanceLinked
-              ? " O número em Configurações continua conectado, só deixa de ter agente vinculado."
-              : " A instância do WhatsApp fica desconectada."}
-            {" "}Não dá pra desfazer.
-          </p>
-          {!confirmingDelete ? (
-            <button
-              type="button"
-              onClick={() => setConfirmingDelete(true)}
-              className="text-xs font-bold text-danger border border-danger/40 px-3 py-2 rounded-md cursor-pointer hover:bg-danger/10"
-            >
-              Remover agente
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-danger">Tem certeza?</span>
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(false)}
-                disabled={pending}
-                className="text-xs font-bold px-3 py-1.5 rounded-md text-text-muted hover:bg-bg cursor-pointer disabled:opacity-60"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={pending}
-                className="text-xs font-bold px-3 py-1.5 rounded-md bg-danger text-white cursor-pointer disabled:opacity-60"
-              >
-                {pending ? "Removendo…" : "Sim, remover"}
-              </button>
-            </div>
-          )}
-          {deleteError && <p className="text-xs text-danger font-medium mt-2">{deleteError}</p>}
-        </div>
-      )}
     </div>
   );
 }

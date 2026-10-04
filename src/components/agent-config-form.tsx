@@ -637,9 +637,9 @@ export function AgentConfigForm({
               />
             </div>
           ))}
-        {materialSlot}
         </div>
       )}
+        {materialSlot}
         </div>
       )}
       <div className="flex items-center gap-3 border-t border-border pt-4">
