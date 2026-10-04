@@ -1,5 +1,6 @@
 "use server";
 
+import { getMetaCloudProfilePhotoUrl } from "@/lib/metacloud";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -177,8 +178,25 @@ export async function unlinkAgentInstance(agentId: string): Promise<LinkInstance
 export async function refreshAgentStatus(agentId: string) {
   await requireStaff();
   const supabase = await createClient();
-  const { data: agent } = await supabase.from("agents").select("evolution_instance_name").eq("id", agentId).maybeSingle();
-  if (!agent || !agent.evolution_instance_name) return; // sem instância Evolution — status vem de Configurações, não daqui
+  const { data: agent } = await supabase.from("agents").select("evolution_instance_name, whatsapp_instance_id").eq("id", agentId).maybeSingle();
+  if (!agent) return;
+
+  // Número oficial (Meta direto): a foto é a do perfil do próprio número na Meta.
+  if (agent.whatsapp_instance_id) {
+    const { data: inst } = await supabase.from("whatsapp_instances").select("channel, phone_number_id").eq("id", agent.whatsapp_instance_id).maybeSingle();
+    if (inst?.channel === "metacloud" && inst.phone_number_id) {
+      try {
+        const photoUrl = await getMetaCloudProfilePhotoUrl(inst.phone_number_id as string);
+        if (photoUrl) await supabase.from("agents").update({ photo_url: photoUrl }).eq("id", agentId);
+      } catch {
+        // foto é opcional: se a Meta não devolver, mantém a que já estava
+      }
+    }
+    revalidatePath("/agentes");
+    return;
+  }
+
+  if (!agent.evolution_instance_name) return; // sem número conectado — status vem de Configurações, não daqui
 
   try {
     const { connectionStatus, phoneNumber, photoUrl } = await fetchInstanceInfo(agent.evolution_instance_name);
