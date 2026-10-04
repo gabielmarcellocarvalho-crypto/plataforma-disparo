@@ -45,6 +45,7 @@ export type ImportTarget =
   | "filial"
   | "etapa"
   | "motivo_perda"
+  | "empresa"
   | `campo:${string}`;
 
 export type SheetPreview = {
@@ -133,6 +134,7 @@ export function suggestMapping(headers: string[], campos: { key: string; label: 
     const t = h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (/telefone|celular|whatsapp|fone|mobile|phone/.test(t)) marcar(h, "telefone");
     else if (/e-?mail/.test(t)) marcar(h, "email");
+    else if (/empresa|company|organiza|razao/.test(t)) marcar(h, "empresa");
     else if (/nome|cliente|contato|name/.test(t)) marcar(h, "nome");
     else if (/vendedor|responsavel|consultor|atendente/.test(t)) marcar(h, "responsavel");
     else if (/filial|loja|unidade/.test(t)) marcar(h, "filial");
@@ -155,6 +157,7 @@ export type MappedRow = {
   name: string;
   phone: string | null;
   email: string;
+  empresa: string;
   responsavel: string;
   filial: string;
   etapa: string;
@@ -184,7 +187,7 @@ export function parseWithMapping(buffer: Buffer, sheetName: string, mapping: Rec
   let puladas = 0;
 
   for (const linha of corpo) {
-    const row: MappedRow = { name: "", phone: null, email: "", responsavel: "", filial: "", etapa: "", motivoPerda: "", campos: {} };
+    const row: MappedRow = { name: "", phone: null, email: "", empresa: "", responsavel: "", filial: "", etapa: "", motivoPerda: "", campos: {} };
     for (let i = 0; i < alvos.length; i++) {
       const alvo = alvos[i];
       if (alvo === "ignorar") continue;
@@ -194,6 +197,7 @@ export function parseWithMapping(buffer: Buffer, sheetName: string, mapping: Rec
       if (alvo === "nome") row.name = valor;
       else if (alvo === "telefone") row.phone = normalizePhone(valor);
       else if (alvo === "email") row.email = valor;
+      else if (alvo === "empresa") row.empresa = valor;
       else if (alvo === "responsavel") row.responsavel = valor;
       else if (alvo === "filial") row.filial = valor;
       else if (alvo === "etapa") row.etapa = valor;

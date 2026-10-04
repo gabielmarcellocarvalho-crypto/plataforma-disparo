@@ -39,18 +39,6 @@ const NAV_ITEMS = [
     ),
   },
   {
-    href: "/empresas",
-    label: "Empresas",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="7" width="18" height="14" rx="1" />
-        <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
-        <line x1="9" y1="12" x2="9" y2="12" />
-        <line x1="15" y1="12" x2="15" y2="12" />
-      </svg>
-    ),
-  },
-  {
     href: "/agenda",
     label: "Agenda",
     icon: (
@@ -207,7 +195,7 @@ const COLABORADOR_NAV_ITEMS = [
 const NAV_GROUPS: { label: string; hrefs: string[] }[] = [
   { label: "", hrefs: ["/"] },
   { label: "Atendimento", hrefs: ["/conversas", "/agentes"] },
-  { label: "CRM", hrefs: ["/crm", "/contatos", "/empresas", "/equipe", "/agenda"] },
+  { label: "CRM", hrefs: ["/crm", "/contatos", "/equipe", "/agenda"] },
   { label: "Automação", hrefs: ["/automacoes", "/campanhas", "/templates", "/integracoes"] },
   { label: "Análise", hrefs: ["/metricas"] },
   { label: "", hrefs: ["/configuracoes"] },

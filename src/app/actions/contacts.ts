@@ -16,6 +16,7 @@ import { normalizeCity } from "@/lib/territories";
 import { buildCustomFields } from "@/lib/custom-fields";
 import { mergeTags, normalizeTags } from "@/lib/contact-tags";
 import { LOST_STAGE } from "@/lib/lost-reasons";
+import { companyKey } from "@/lib/company-name";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 
 export type ActionResult = { error: string | null; ok?: boolean };
@@ -222,6 +223,7 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
       branch_id: branchId,
       stage,
       lost_reason: r.motivoPerda || null,
+      empresa: r.empresa || "",
     };
   });
 
@@ -246,21 +248,48 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
   // No modo "atualizar", o custom_fields do lead que já existe é MESCLADO com o da planilha em vez
   // de substituído: a planilha costuma trazer só algumas colunas, e sobrescrever apagaria o que foi
   // preenchido na plataforma depois.
-  const existentes = new Map<string, { id: string; custom_fields: Record<string, unknown> | null; tags: string[] | null }>();
+  const existentes = new Map<string, { id: string; custom_fields: Record<string, unknown> | null; tags: string[] | null; company_id: string | null }>();
   if (modo === "atualizar") {
     let offset = 0;
     for (;;) {
       const { data } = await supabase
         .from("contacts")
-        .select("id, phone, custom_fields, tags")
+        .select("id, phone, custom_fields, tags, company_id")
         .eq("workspace_id", workspace.id)
         .not("phone", "is", null)
         .order("id", { ascending: true })
         .range(offset, offset + 999);
       if (!data || data.length === 0) break;
-      for (const c of data) if (c.phone) existentes.set(c.phone, { id: c.id, custom_fields: c.custom_fields, tags: c.tags });
+      for (const c of data) if (c.phone) existentes.set(c.phone, { id: c.id, custom_fields: c.custom_fields, tags: c.tags, company_id: c.company_id ?? null });
       if (data.length < 1000) break;
       offset += 1000;
+    }
+  }
+
+  // Empresa da planilha: nomes que batem pela chave (ignora maiúsculas, acento, pontuação e Ltda/ME/EPP)
+  // viram uma empresa só. Empresa que já existe no workspace é reaproveitada; as novas são criadas aqui.
+  const temEmpresa = linhas.some((l) => l.empresa);
+  const companyIdByKey = new Map<string, string>();
+  if (temEmpresa) {
+    const nomePorChave = new Map<string, string>();
+    for (const l of linhas) {
+      const k = companyKey(l.empresa || "");
+      if (k && !nomePorChave.has(k)) nomePorChave.set(k, l.empresa.trim().slice(0, 200));
+    }
+    for (let offset = 0; ; offset += 1000) {
+      const { data } = await supabase.from("companies").select("id, name").eq("workspace_id", workspace.id).order("id", { ascending: true }).range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      for (const c of data) {
+        const k = companyKey(c.name as string);
+        if (k && !companyIdByKey.has(k)) companyIdByKey.set(k, c.id as string);
+      }
+      if (data.length < 1000) break;
+    }
+    const novas = [...nomePorChave.entries()].filter(([k]) => !companyIdByKey.has(k)).map(([, nome]) => ({ workspace_id: workspace.id, name: nome }));
+    for (let i = 0; i < novas.length; i += 500) {
+      const { data, error } = await supabase.from("companies").insert(novas.slice(i, i + 500)).select("id, name");
+      if (error) console.error("importContacts: falha ao criar empresas:", error.message);
+      for (const c of data || []) companyIdByKey.set(companyKey(c.name as string), c.id as string);
     }
   }
 
@@ -286,6 +315,8 @@ export async function importContacts(_prevState: ImportResult, formData: FormDat
       branch_id: l.branch_id,
       lost_reason: l.lost_reason,
       whatsapp_instance_id: whatsappInstanceId,
+      // Mesma chave em todas as linhas do lote (exigência do PostgREST): só entra quando a planilha tem empresa.
+      ...(temEmpresa ? { company_id: l.empresa ? companyIdByKey.get(companyKey(l.empresa)) ?? null : jaExiste?.company_id ?? null } : {}),
     };
     // Etapa só entra quando a planilha mandou uma: sem isso, todo lead importado voltaria pra
     // "não abordado" a cada reimportação, desfazendo o trabalho do time no Kanban.
