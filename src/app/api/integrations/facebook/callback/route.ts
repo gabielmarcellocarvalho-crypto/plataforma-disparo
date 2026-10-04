@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptToken } from "@/lib/calendar/crypto";
-import { appId, appSecret, graphAll, graphGet, graphPost } from "@/lib/facebook/graph";
+import { appId, appSecret, graphAll, graphGet } from "@/lib/facebook/graph";
 import { verifyFacebookState } from "@/lib/facebook/state";
 
 // Retorno do login do Facebook. Troca o código por um token de usuário de longa duração, lista as
@@ -62,25 +62,22 @@ export async function GET(req: Request) {
       .single();
     if (connError || !connection) throw new Error(connError?.message || "Não foi possível salvar a conexão.");
 
+    // Página nova entra desligada: a pessoa escolhe quais ligar na tela. Página que já existia mantém o
+    // status que ela tinha. A assinatura do aviso de lead só acontece quando a página é ligada.
+    const { data: known } = await admin.from("facebook_pages").select("page_id").eq("workspace_id", state.workspaceId);
+    const knownIds = new Set((known || []).map((k) => k.page_id as string));
     for (const page of pages) {
       if (!page.access_token) continue;
-      const { error } = await admin.from("facebook_pages").upsert(
-        {
-          workspace_id: state.workspaceId,
-          connection_id: connection.id,
-          page_id: page.id,
-          page_name: page.name ?? null,
-          page_token_enc: encryptToken(page.access_token),
-          status: "ativa",
-        },
-        { onConflict: "workspace_id,page_id" }
-      );
-      if (error) continue;
-      // Assina a página pra receber o aviso de lead novo. Se falhar, a página continua salva e pode ser
-      // assinada de novo depois; não derruba a conexão das outras.
-      await graphPost(`${page.id}/subscribed_apps`, page.access_token, { subscribed_fields: "leadgen" }).catch((err) =>
-        console.error("Falha ao assinar página no leadgen:", page.id, err instanceof Error ? err.message : err)
-      );
+      const fields = {
+        connection_id: connection.id,
+        page_name: page.name ?? null,
+        page_token_enc: encryptToken(page.access_token),
+      };
+      if (knownIds.has(page.id)) {
+        await admin.from("facebook_pages").update(fields).eq("workspace_id", state.workspaceId).eq("page_id", page.id);
+      } else {
+        await admin.from("facebook_pages").insert({ workspace_id: state.workspaceId, page_id: page.id, status: "inativa", ...fields });
+      }
     }
 
     return back("ok");

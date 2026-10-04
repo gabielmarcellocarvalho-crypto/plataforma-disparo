@@ -13,7 +13,7 @@ export default async function FacebookLeadsPage({ searchParams }: { searchParams
 
   const admin = createAdminClient();
   const { data: fbConn } = await admin.from("facebook_connections").select("id, fb_user_name").eq("workspace_id", workspace.id).order("connected_at").limit(1).maybeSingle();
-  const { data: fbPages } = await admin.from("facebook_pages").select("page_id, page_name").eq("workspace_id", workspace.id).eq("status", "ativa").order("page_name");
+  const { data: fbPages } = await admin.from("facebook_pages").select("page_id, page_name, status").eq("workspace_id", workspace.id).order("page_name");
   const { data: fbForms } = await admin.from("facebook_lead_forms").select("page_id, form_id, form_name, enabled, tag").eq("workspace_id", workspace.id);
 
   const formsByPage = new Map<string, FacebookForm[]>();
@@ -26,6 +26,7 @@ export default async function FacebookLeadsPage({ searchParams }: { searchParams
   const pages: FacebookPageRow[] = (fbPages || []).map((p) => ({
     id: p.page_id as string,
     name: (p.page_name as string) || (p.page_id as string),
+    active: p.status === "ativa",
     forms: formsByPage.get(p.page_id as string) ?? [],
   }));
 

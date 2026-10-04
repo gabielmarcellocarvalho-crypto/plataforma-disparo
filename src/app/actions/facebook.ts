@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { decryptToken } from "@/lib/calendar/crypto";
-import { graphAll } from "@/lib/facebook/graph";
+import { graphAll, graphPost } from "@/lib/facebook/graph";
 
 export type FacebookForm = { id: string; name: string; enabled: boolean; tag: string };
 type Result<T = object> = ({ error: null } & T) | { error: string };
@@ -21,6 +21,31 @@ async function pageOfWorkspace(pageId: string) {
     .eq("page_id", pageId)
     .maybeSingle();
   return data ? { workspaceId: workspace.id, token: decryptToken(data.page_token_enc as string) } : null;
+}
+
+// Liga ou desliga uma página. Ligar assina o aviso de lead da página na Meta; se a Meta recusar, a página
+// continua desligada e o erro vai pra tela. Desligar só para de processar os leads dela (o webhook ignora
+// páginas desligadas), sem mexer na assinatura da Meta.
+export async function setFacebookPageActive(pageId: string, active: boolean): Promise<Result> {
+  const page = await pageOfWorkspace(pageId);
+  if (!page) return { error: "Página não encontrada." };
+  if (active) {
+    try {
+      await graphPost(`${pageId}/subscribed_apps`, page.token, { subscribed_fields: "leadgen" });
+    } catch (err) {
+      return { error: `O Facebook não aceitou ligar os leads dessa página: ${err instanceof Error ? err.message : "erro desconhecido"}` };
+    }
+  }
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("facebook_pages")
+    .update({ status: active ? "ativa" : "inativa" })
+    .eq("workspace_id", page.workspaceId)
+    .eq("page_id", pageId);
+  if (error) return { error: "Não foi possível salvar a página." };
+  revalidatePath("/integracoes");
+  revalidatePath("/integracoes/facebook-leads");
+  return { error: null };
 }
 
 // Busca os formulários da página na Meta e junta com o que já foi escolhido (ligado/etiqueta).

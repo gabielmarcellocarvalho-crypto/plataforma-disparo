@@ -2,10 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { ChevronDown, RefreshCw, Unplug } from "lucide-react";
-import { disconnectFacebook, fetchFacebookForms, saveFacebookForm, type FacebookForm } from "@/app/actions/facebook";
+import { disconnectFacebook, fetchFacebookForms, saveFacebookForm, setFacebookPageActive, type FacebookForm } from "@/app/actions/facebook";
 import { cn } from "@/lib/utils";
 
-export type FacebookPageRow = { id: string; name: string; forms: FacebookForm[] };
+export type FacebookPageRow = { id: string; name: string; active: boolean; forms: FacebookForm[] };
 export type FacebookConnectionRow = { id: string; name: string | null } | null;
 
 const STATUS_TEXT: Record<string, { tone: "ok" | "warn"; text: string }> = {
@@ -92,6 +92,49 @@ function PageForms({ page, canManage }: { page: FacebookPageRow; canManage: bool
   );
 }
 
+// Página da conta: liga ou desliga os leads dela. Só página ligada tem formulários pra escolher.
+function PageRow({ page, canManage }: { page: FacebookPageRow; canManage: boolean }) {
+  const [active, setActive] = useState(page.active);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function toggle() {
+    setError(null);
+    startTransition(async () => {
+      const r = await setFacebookPageActive(page.id, !active);
+      if (r.error !== null) setError(r.error);
+      else setActive(!active);
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3 border border-border rounded-lg px-3.5 py-2.5">
+        <span className="text-sm font-semibold flex-1 truncate">{page.name}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={active}
+          onClick={toggle}
+          disabled={!canManage || pending}
+          className={cn(
+            "text-xs font-bold px-3 py-1.5 rounded-full border cursor-pointer disabled:opacity-60",
+            active ? "bg-success-soft border-success text-success" : "border-border text-text-muted"
+          )}
+        >
+          {pending ? "Salvando…" : active ? "Ligada" : "Desligada"}
+        </button>
+      </div>
+      {active ? (
+        <PageForms page={page} canManage={canManage} />
+      ) : (
+        <p className="text-xs text-text-muted px-1">Ligue a página para escolher de quais formulários receber leads.</p>
+      )}
+      {error && <p className="text-xs text-danger font-semibold px-1">{error}</p>}
+    </div>
+  );
+}
+
 export function FacebookLeadsSection({
   connection,
   pages,
@@ -174,7 +217,7 @@ export function FacebookLeadsSection({
           {pages.length === 0 ? (
             <p className="text-sm text-text-muted">Nenhuma página autorizada. Conecte de novo e marque as páginas na tela do Facebook.</p>
           ) : (
-            pages.map((p) => <PageForms key={p.id} page={p} canManage={canManage} />)
+            pages.map((p) => <PageRow key={p.id} page={p} canManage={canManage} />)
           )}
           {error && <p className="text-xs text-danger font-semibold">{error}</p>}
         </div>
