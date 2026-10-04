@@ -8,9 +8,9 @@
 // esse token passa a ter permissão de enviar/gerenciar templates no WABA dele automaticamente; o passo
 // que efetivamente liga isso é subscribeMetaCloudWebhook (POST /{waba_id}/subscribed_apps).
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
-const BASE_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
+export const BASE_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
-function systemUserToken(): string {
+export function systemUserToken(): string {
   const token = process.env.META_SYSTEM_USER_TOKEN;
   if (!token) throw new Error("META_SYSTEM_USER_TOKEN não configurado.");
   return token;
