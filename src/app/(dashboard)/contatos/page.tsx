@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { AddCompanyForm } from "@/components/add-company-form";
 import { CompaniesTable } from "@/components/companies-table";
@@ -37,7 +36,6 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
       <div className="flex flex-col gap-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <ViewToggle active="empresas" />
             <h1 className="text-2xl font-extrabold tracking-tight">Empresas</h1>
             <p className="text-text-muted text-sm mt-1">{companies.length} empresa(s) em {workspace?.name}.</p>
           </div>
@@ -104,7 +102,6 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <ViewToggle active="contatos" />
           <h1 className="text-2xl font-extrabold tracking-tight">Contatos</h1>
           <p className="text-text-muted text-sm mt-1">
             {total} contato(s) {filtering ? "no filtro" : `em ${workspace?.name}`}
@@ -142,25 +139,3 @@ export default async function ContatosPage({ searchParams }: { searchParams: Pro
   );
 }
 
-// Seletor "Contatos | Empresas" no topo da página.
-function ViewToggle({ active }: { active: "contatos" | "empresas" }) {
-  const items: { key: "contatos" | "empresas"; label: string; href: string }[] = [
-    { key: "contatos", label: "Contatos", href: "/contatos" },
-    { key: "empresas", label: "Empresas", href: "/contatos?view=empresas" },
-  ];
-  return (
-    <div className="inline-flex gap-1 mb-2 bg-bg rounded-lg p-1" role="tablist">
-      {items.map((it) => (
-        <Link
-          key={it.key}
-          href={it.href}
-          role="tab"
-          aria-selected={active === it.key}
-          className={`text-xs font-bold px-3 py-1.5 rounded-md ${active === it.key ? "bg-primary-strong text-white" : "text-text-muted hover:text-text"}`}
-        >
-          {it.label}
-        </Link>
-      ))}
-    </div>
-  );
-}

@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Fragment } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { canAccessPage, type AccessType } from "@/lib/access-types";
 
 const NAV_ITEMS = [
@@ -288,6 +289,7 @@ export function Sidebar({
   onToggleCollapse?: () => void;
 }) {
   const pathname = usePathname();
+  const emEmpresas = useSearchParams().get("view") === "empresas";
 
   const podeVer = (href: string) =>
     !hiddenPages.includes(href) && (isStaff || (!STAFF_ONLY_PATHS.has(href) && canAccessPage(accessType, href, hiddenPages)));
@@ -335,13 +337,25 @@ export function Sidebar({
                 <GroupLabel>{grupo.label}</GroupLabel>
               ))}
             {grupo.itens.map((item) => (
-              <NavLink
-                key={item.href}
-                {...item}
-                active={pathname === item.href}
-                collapsed={collapsed}
-                badge={item.href === "/conversas" ? attentionCount : undefined}
-              />
+              <Fragment key={item.href}>
+                <NavLink
+                  {...item}
+                  active={pathname === item.href && !(item.href === "/contatos" && emEmpresas)}
+                  collapsed={collapsed}
+                  badge={item.href === "/conversas" ? attentionCount : undefined}
+                />
+                {item.href === "/contatos" && !collapsed && (
+                  <Link
+                    href="/contatos?view=empresas"
+                    aria-current={pathname === "/contatos" && emEmpresas ? "page" : undefined}
+                    className={`ml-7 flex items-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      pathname === "/contatos" && emEmpresas ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
+                    }`}
+                  >
+                    Empresas
+                  </Link>
+                )}
+              </Fragment>
             ))}
           </div>
         ))}
