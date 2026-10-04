@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition, type ReactNode } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
@@ -182,6 +182,7 @@ export function AgentConfigForm({
   mediaCategories,
   fieldDefs = [],
   closers = [],
+  materialSlot,
 }: {
   agentId: string;
   initialConfig: AgentConfig;
@@ -190,6 +191,8 @@ export function AgentConfigForm({
   mediaCategories: string[];
   fieldDefs?: CustomFieldDef[];
   closers?: SchedulingCloserOption[];
+  // Arquivos que o agente manda e material de estudo: ficam na aba Material.
+  materialSlot?: ReactNode;
 }) {
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
   const [finalPrompt, setFinalPrompt] = useState(initialSystemPrompt || buildSystemPrompt(initialConfig));
@@ -634,6 +637,7 @@ export function AgentConfigForm({
               />
             </div>
           ))}
+        {materialSlot}
         </div>
       )}
         </div>

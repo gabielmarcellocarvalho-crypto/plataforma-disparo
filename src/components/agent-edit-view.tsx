@@ -429,21 +429,19 @@ export function AgentEditView({
             mediaCategories={mediaCategories}
             fieldDefs={fieldDefs}
             closers={schedulingClosers}
+            materialSlot={
+              <>
+                <div className="flex flex-col gap-2 border-t border-border pt-4">
+                  <span className="text-sm font-bold">Arquivos que o agente manda pro cliente ({media.length})</span>
+                  <AgentMediaLibrary agentId={agent.id} media={media} />
+                </div>
+                <div className="flex flex-col gap-2 border-t border-border pt-4">
+                  <span className="text-sm font-bold">Material de estudo do agente ({knowledge.length})</span>
+                  <AgentKnowledgeLibrary agentId={agent.id} docs={knowledge} />
+                </div>
+              </>
+            }
           />
-        </div>
-      )}
-
-      {canManage && (
-        <div className="bg-surface border border-border rounded-2xl shadow-sm p-6">
-          <h2 className="text-sm font-bold mb-3">Arquivos que o agente manda pro cliente ({media.length})</h2>
-          <AgentMediaLibrary agentId={agent.id} media={media} />
-        </div>
-      )}
-
-      {canManage && (
-        <div className="bg-surface border border-border rounded-2xl shadow-sm p-6">
-          <h2 className="text-sm font-bold mb-3">Material de estudo do agente ({knowledge.length})</h2>
-          <AgentKnowledgeLibrary agentId={agent.id} docs={knowledge} />
         </div>
       )}
 
