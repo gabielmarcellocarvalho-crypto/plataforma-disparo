@@ -1,7 +1,9 @@
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { createClient } from "@/lib/supabase/server";
 import { getCostByAgentInRange, getDailyCostInRange, getConversationsInRange, COST_USD_TO_BRL } from "@/lib/cost-monitor";
-import { resolvePeriod } from "@/lib/period";
+import { resolvePeriod, dayKeyBrt } from "@/lib/period";
+import { getWhatsappCostInRange } from "@/lib/whatsapp-cost";
+import { WHATSAPP_PRICE_BRL } from "@/lib/whatsapp-pricing";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { CostBudgetCard } from "@/components/cost-budget-card";
 import { CostStackedBarChart } from "@/components/charts/cost-stacked-bar-chart";
@@ -26,7 +28,7 @@ export default async function MetricasPage({
   // Custo (por agente) e orçamento só fazem sentido pra colaborador — cliente nunca vê custo/margem.
   const showCost = Boolean(workspace && isStaff);
 
-  const [agentCosts, budgetRow, dailyCost, conversationsInPeriod] = showCost
+  const [agentCosts, budgetRow, dailyCost, conversationsInPeriod, whatsappCost] = showCost
     ? await Promise.all([
         getCostByAgentInRange(workspace!.id, period),
         createClient().then((s) =>
@@ -34,8 +36,19 @@ export default async function MetricasPage({
         ),
         getDailyCostInRange(workspace!.id, period),
         getConversationsInRange(workspace!.id, period),
+        getWhatsappCostInRange(workspace!.id, period),
       ])
-    : [[], { data: null }, [], 0];
+    : [[], { data: null }, [], 0, null];
+
+  // Gráfico: IA (Claude e Gemini) + WhatsApp oficial, empilhados por dia.
+  const chartData = dailyCost.map((d) => ({
+    ...d,
+    whatsapp: Math.round((whatsappCost?.byDay.get(dayKeyBrt(d.date)) || 0) * 100) / 100,
+  }));
+  const claudeBrl = dailyCost.reduce((sum, d) => sum + d.claude, 0);
+  const geminiBrl = dailyCost.reduce((sum, d) => sum + d.gemini, 0);
+  const whatsappBrl = whatsappCost?.totalBrl || 0;
+  const grandTotalBrl = claudeBrl + geminiBrl + whatsappBrl;
 
   const totalCostUsd = agentCosts.reduce((sum, a) => sum + a.costUsd, 0);
   const totalCostBrl = totalCostUsd * COST_USD_TO_BRL;
@@ -101,12 +114,72 @@ export default async function MetricasPage({
       )}
 
       {showCost && (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">IA Claude ({period.label})</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {claudeBrl.toFixed(2)}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">IA Gemini (estimado) ({period.label})</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {geminiBrl.toFixed(2)}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">WhatsApp oficial ({period.label})</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {whatsappBrl.toFixed(2)}</b>
+          </div>
+          <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold text-text-muted">Custo total ({period.label})</span>
+            <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">R$ {grandTotalBrl.toFixed(2)}</b>
+          </div>
+        </div>
+      )}
+
+      {showCost && (
         <div className="bg-surface border border-border rounded-2xl p-6 shadow-sm">
           <h3 className="font-bold text-[15px] mb-1">Custo por dia ({period.label})</h3>
           <p className="text-xs text-text-muted mb-4">
-            Custo de IA medido de verdade (tokens Anthropic) — ajuda a ver se algum dia teve pico fora do padrão.
+            IA Claude e Gemini pelos tokens de cada agente, e WhatsApp oficial pela tarifa da Meta. Ajuda a ver de onde vem o gasto de cada dia.
           </p>
-          <CostStackedBarChart data={dailyCost} />
+          <CostStackedBarChart data={chartData} />
+        </div>
+      )}
+
+      {showCost && whatsappCost && (
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
+          <h3 className="font-bold text-[15px]">WhatsApp oficial — cobrança da Meta ({period.label})</h3>
+          <p className="text-xs text-text-muted mt-0.5 mb-4">
+            Serviço: 1.000 respostas grátis por número por mês, depois R$ {WHATSAPP_PRICE_BRL.service.toFixed(3)}. Quem clicou em anúncio nas últimas 72h não paga.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-text-muted text-xs font-bold uppercase">
+                  <th className="px-3 py-2">Categoria</th>
+                  <th className="px-3 py-2 text-right">Mensagens</th>
+                  <th className="px-3 py-2 text-right">Tarifa</th>
+                  <th className="px-3 py-2 text-right">Custo</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-border">
+                  <td className="px-3 py-2.5 font-semibold">Serviço (resposta do agente)</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {whatsappCost.serviceMessages} <span className="text-text-muted">({whatsappCost.serviceFree} grátis)</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-text-muted">R$ {WHATSAPP_PRICE_BRL.service.toFixed(4)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums font-bold">R$ {whatsappCost.serviceCostBrl.toFixed(2)}</td>
+                </tr>
+                {(["utility", "marketing", "authentication"] as const).map((k) => (
+                  <tr key={k} className="border-b border-border last:border-0">
+                    <td className="px-3 py-2.5 font-semibold">{k === "utility" ? "Utilidade (template)" : k === "marketing" ? "Marketing (template)" : "Autenticação (template)"}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{whatsappCost.templates[k].count}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-text-muted">R$ {WHATSAPP_PRICE_BRL[k].toFixed(4)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-bold">R$ {whatsappCost.templates[k].costBrl.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -32,7 +32,7 @@ async function getProviderByAgent(supabase: AnySupabaseClient, workspaceId: stri
 }
 
 export type AgentCostRow = { agentId: string; name: string; costUsd: number; messages: number; conversations: number };
-export type DailyCostPoint = { date: string; ia: number };
+export type DailyCostPoint = { date: string; claude: number; gemini: number };
 export type Range = { from: Date; to: Date };
 
 function costRowUsd(
@@ -127,18 +127,22 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
   ]);
 
   const days = eachDayBrt(range.from, range.to);
-  const usdByDay = new Map(days.map((d) => [d, 0]));
+  // Um total por dia para cada provedor: Claude e Gemini têm preços por token bem diferentes.
+  const usdByDay = new Map(days.map((d) => [d, { claude: 0, gemini: 0 }]));
 
   for (const row of data || []) {
     const key = dayKeyBrt(row.created_at as string);
-    if (!usdByDay.has(key)) continue;
-    usdByDay.set(key, (usdByDay.get(key) || 0) + costRowUsd(row, providerByAgent.get(row.agent_id as string)));
+    const bucket = usdByDay.get(key);
+    if (!bucket) continue;
+    const provider = providerByAgent.get(row.agent_id as string) || "claude";
+    bucket[provider] += costRowUsd(row, provider);
   }
 
-  return days.map((d) => ({
-    date: `${d}T12:00:00.000Z`,
-    ia: Math.round((usdByDay.get(d) || 0) * COST_USD_TO_BRL * 100) / 100,
-  }));
+  const toBrl = (usd: number) => Math.round(usd * COST_USD_TO_BRL * 100) / 100;
+  return days.map((d) => {
+    const bucket = usdByDay.get(d)!;
+    return { date: `${d}T12:00:00.000Z`, claude: toBrl(bucket.claude), gemini: toBrl(bucket.gemini) };
+  });
 }
 
 // Conversas (par único contato+agente) que tiveram resposta de agente dentro do período — mesma

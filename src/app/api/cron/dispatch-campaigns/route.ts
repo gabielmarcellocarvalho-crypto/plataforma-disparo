@@ -79,7 +79,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, template_category, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
@@ -346,6 +346,8 @@ export async function GET(req: Request) {
           agent_id: campaign.mode === "agent" ? campaign.agent_id : null,
           role: "assistant",
           content: loggedContent,
+          // Template da API oficial é cobrado pela categoria (texto livre fica null = serviço).
+          billing_category: isOfficialBlast ? campaign.template_category || "marketing" : null,
         });
         const contactUpdates: Record<string, unknown> = {};
         if (contact.stage === "nao_abordado") {

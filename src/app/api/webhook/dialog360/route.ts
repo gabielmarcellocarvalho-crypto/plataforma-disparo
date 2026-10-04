@@ -137,6 +137,11 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
     }
     if (!instance) continue; // número não cadastrado em nenhum workspace — ignora
 
+    // Clique em anúncio Click-to-WhatsApp: abre a janela de 72h grátis pra este contato (cobrança da Meta).
+    if (msg.referral) {
+      await supabase.from("contacts").update({ ctwa_at: new Date().toISOString() }).eq("workspace_id", instance.workspace_id).eq("phone", msg.from);
+    }
+
     // Número com agente de IA vinculado (1 número servindo disparo + SDR, ex.: campanha manda o
     // template e o mesmo número depois conduz a conversa) — passa pro núcleo compartilhado do agente
     // em vez de só logar. Sem agente vinculado, segue o comportamento de sempre (linha abaixo).

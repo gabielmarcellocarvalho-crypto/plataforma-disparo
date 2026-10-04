@@ -8,16 +8,20 @@ import { Group } from "@visx/group";
 import { GridRows } from "@visx/grid";
 import { localPoint } from "@visx/event";
 
-export type CostBarDatum = { date: string; ia: number };
+export type CostBarDatum = { date: string; claude: number; gemini: number; whatsapp: number };
 
-const KEYS = ["ia"] as const;
+const KEYS = ["claude", "gemini", "whatsapp"] as const;
 type Key = (typeof KEYS)[number];
 
 const COLORS: Record<Key, string> = {
-  ia: "var(--chart-line-primary)",
+  claude: "var(--chart-line-primary)",
+  gemini: "var(--chart-line-secondary, #6366f1)",
+  whatsapp: "var(--chart-label, #22c55e)",
 };
 const LABELS: Record<Key, string> = {
-  ia: "Custo de IA",
+  claude: "IA Claude",
+  gemini: "IA Gemini",
+  whatsapp: "WhatsApp (oficial)",
 };
 
 function formatDay(iso: string) {
@@ -48,7 +52,7 @@ function Chart({ width, height, data }: { width: number; height: number; data: C
   const xMax = Math.max(0, width - margin.left - margin.right);
   const yMax = Math.max(0, height - margin.top - margin.bottom);
 
-  const maxTotal = useMemo(() => Math.max(1, ...data.map((d) => d.ia)), [data]);
+  const maxTotal = useMemo(() => Math.max(1, ...data.map((d) => d.claude + d.gemini + d.whatsapp)), [data]);
   const xScale = useMemo(() => scaleBand<string>({ domain: data.map((d) => d.date), range: [0, xMax], padding: 0.3 }), [data, xMax]);
   const yScale = useMemo(() => scaleLinear<number>({ domain: [0, maxTotal * 1.15], range: [yMax, 0] }), [maxTotal, yMax]);
   const labelStep = Math.max(1, Math.ceil(data.length / 8));
@@ -103,10 +107,12 @@ function Chart({ width, height, data }: { width: number; height: number; data: C
           className="pointer-events-none bg-popover text-popover-foreground text-xs rounded-md shadow-md border border-border px-2.5 py-2 min-w-[140px]"
         >
           <div className="font-bold mb-1">{new Date(tooltip.datum.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-1.5 text-text-muted"><span className="w-2 h-2 rounded-full" style={{ background: COLORS.ia }} />IA</span>
-            <span className="font-semibold">R$ {tooltip.datum.ia.toFixed(2)}</span>
-          </div>
+          {KEYS.map((k) => (
+            <div key={k} className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-text-muted"><span className="w-2 h-2 rounded-full" style={{ background: COLORS[k] }} />{LABELS[k]}</span>
+              <span className="font-semibold">R$ {tooltip.datum[k].toFixed(2)}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -168,6 +168,8 @@ export type Dialog360WebhookBody = {
           text?: { body?: string };
           audio?: { id?: string; mime_type?: string };
           image?: { id?: string; mime_type?: string; caption?: string };
+          // Presente quando a conversa começou num anúncio Click-to-WhatsApp.
+          referral?: { source_type?: string; ctwa_clid?: string };
           // Clique em botão de quick reply de um TEMPLATE (type "button") ou de uma mensagem
           // interativa (type "interactive"). São formatos diferentes pro mesmo gesto: a pessoa
           // tocou num botão que a gente mandou.
@@ -202,6 +204,8 @@ export type Dialog360IncomingMessage = {
   // wamid da Meta — único por mensagem, usado pra dedup (retry/replay do webhook não deveria gerar 2ª
   // resposta do agente nem cobrar o LLM 2x pela mesma mensagem, ver messages.external_id).
   messageId: string | null;
+  // Veio de anúncio Click-to-WhatsApp (a Meta manda o objeto `referral`): abre a janela de 72h grátis.
+  referral: boolean;
 };
 
 // Extrai as mensagens recebidas — texto, áudio e imagem viram entrada pro agente (runAgentTurn
@@ -218,7 +222,7 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
       for (const m of value.messages || []) {
         if (!m.from) continue;
         const contactName = nameByWaId.get(m.from) ?? null;
-        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null, rawType: m.type || null };
+        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null, rawType: m.type || null, referral: Boolean(m.referral) };
         // Clique em botão vira TEXTO da conversa, com o rótulo que a pessoa viu na tela. Antes caía
         // em "other" → "arquivo não suportado": o lead clicava no CTA do template e o agente recebia
         // um arquivo que não existe, em vez da resposta dele. Pro resto do sistema (agente, CRM,
