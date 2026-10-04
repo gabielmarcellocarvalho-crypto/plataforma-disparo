@@ -67,7 +67,9 @@ export type AgentConfig = {
   // uma retomada a cada `intervalDays` dias, até `maxCount` vezes — depois disso desiste (o worker de
   // cron move o contato pra "descartado" sozinho). Roda fora da geração normal do prompt (não é texto
   // injetado no system_prompt); é configuração operacional lida direto pelo cron.
-  followUp: { enabled: boolean; intervalDays: number; maxCount: number };
+  // template: usado só em número oficial, quando a janela de 24h do lead já fechou. Sem template, follow-up
+  // em número oficial não é enviado (texto livre fora da janela é recusado pela Meta).
+  followUp: { enabled: boolean; intervalDays: number; maxCount: number; template: FollowUpTemplate | null };
   // Agendamento de reunião na agenda do closer (Integrações → Google Agenda). Desligado por padrão:
   // sem isso ligado, o agente nem recebe as ferramentas de agenda. Duração e horário não ficam aqui —
   // vêm dos próprios eventos "Marque aqui" que o closer cria.
@@ -176,7 +178,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   mediaFolderNotes: {},
   maxBubbles: MAX_BUBBLES_DEFAULT,
   bubbleCharLimit: BUBBLE_CHAR_LIMIT_DEFAULT,
-  followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT },
+  followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT, template: null },
   scheduling: { ...SCHEDULING_DEFAULTS },
 };
 
@@ -249,6 +251,20 @@ export function normalizeScheduling(raw: unknown): SchedulingConfig {
   };
 }
 
+export type FollowUpTemplate = { name: string; language: string; category: string; variables: string[] };
+
+function normalizeFollowUpTemplate(raw: unknown): FollowUpTemplate | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as Record<string, unknown>;
+  if (typeof t.name !== "string" || !t.name) return null;
+  return {
+    name: t.name,
+    language: typeof t.language === "string" && t.language ? t.language : "pt_BR",
+    category: typeof t.category === "string" ? t.category : "MARKETING",
+    variables: Array.isArray(t.variables) ? t.variables.map((v) => (typeof v === "string" ? v : "")) : [],
+  };
+}
+
 function normalizeFollowUp(raw: unknown): AgentConfig["followUp"] {
   const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const intervalDays = typeof f.intervalDays === "number" && Number.isFinite(f.intervalDays) ? f.intervalDays : FOLLOWUP_INTERVAL_DEFAULT;
@@ -257,6 +273,7 @@ function normalizeFollowUp(raw: unknown): AgentConfig["followUp"] {
     enabled: Boolean(f.enabled),
     intervalDays: Math.min(FOLLOWUP_INTERVAL_MAX, Math.max(1, Math.floor(intervalDays))),
     maxCount: Math.min(FOLLOWUP_MAX_COUNT_CAP, Math.max(0, Math.floor(maxCount))),
+    template: normalizeFollowUpTemplate(f.template),
   };
 }
 

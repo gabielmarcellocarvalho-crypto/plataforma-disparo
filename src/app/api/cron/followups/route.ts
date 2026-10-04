@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendText } from "@/lib/evolution";
+import { agentSendText } from "@/lib/agent-channel";
+import { sendMetaCloudTemplate } from "@/lib/metacloud";
+import { fieldValue } from "@/lib/template-send";
 import { generateReply, capBubbles, type ConversationMessage } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -50,7 +52,9 @@ export async function GET(req: Request) {
     // teria sido registrada como enviada e o lead iria pra "descartado" sem nunca ter recebido nada.
     // Então só roda em número por QR code (Evolution). Agente sem número também é pulado.
     const channel = await resolveAgentChannel(supabase, agent);
-    if (!channel || channel.kind !== "evolution") continue;
+    if (!channel) continue;
+    // Número oficial só recebe follow-up com template configurado: fora das 24h a Meta recusa texto livre.
+    if (channel.kind !== "evolution" && !agentConfig.followUp.template) continue;
     if (!isWithinBusinessHours(agentConfig.hours)) continue;
 
     const { intervalDays, maxCount } = agentConfig.followUp;
@@ -75,7 +79,7 @@ export async function GET(req: Request) {
 
     const { data: contacts } = await supabase
       .from("contacts")
-      .select("id, name, custom_fields, needs_attention, opt_out_whatsapp, stage, phone")
+      .select("id, name, email, custom_fields, needs_attention, opt_out_whatsapp, stage, phone, companies(name)")
       .in("id", [...byContact.keys()]);
     const contactById = new Map((contacts || []).map((c) => [c.id, c]));
 
@@ -125,6 +129,43 @@ export async function GET(req: Request) {
 
       if (sent >= MAX_SENDS_PER_RUN) {
         skipped++;
+        continue;
+      }
+
+      // Número oficial: se a janela de 24h do lead fechou, só template. Dentro da janela, segue o texto normal.
+      const lastUserAt = [...arr].reverse().find((m) => m.role === "user");
+      const windowOpen = lastUserAt ? Date.now() - new Date(lastUserAt.created_at).getTime() < 86400_000 : false;
+      if (channel.kind !== "evolution" && !windowOpen) {
+        const tpl = agentConfig.followUp.template!;
+        if (channel.kind !== "metacloud") {
+          skipped++;
+          continue;
+        }
+        const joined = (contact as { companies?: { name: string } | { name: string }[] | null }).companies;
+        const companyName = Array.isArray(joined) ? joined[0]?.name ?? null : joined?.name ?? null;
+        const params = tpl.variables.map((f) => fieldValue(f, contact, companyName));
+        if (params.some((p) => !p)) {
+          // Lead sem um dos campos do template: não manda mensagem com variável vazia.
+          skipped++;
+          continue;
+        }
+        try {
+          await sendMetaCloudTemplate(channel.phoneNumberId, contact.phone!, tpl.name, tpl.language, params);
+        } catch (err) {
+          console.error("Erro ao enviar template de follow-up:", err instanceof Error ? err.message : err);
+          skipped++;
+          continue;
+        }
+        await supabase.from("messages").insert({
+          workspace_id: agent.workspace_id,
+          contact_id: contactId,
+          agent_id: agent.id,
+          role: "assistant",
+          content: `[Template: ${tpl.name}]`,
+          is_followup: true,
+          billing_category: tpl.category || "MARKETING",
+        });
+        sent++;
         continue;
       }
 
@@ -179,7 +220,7 @@ export async function GET(req: Request) {
           cache_creation_input_tokens: i === 0 ? gen.cacheCreationInputTokens : null,
           cache_read_input_tokens: i === 0 ? gen.cacheReadInputTokens : null,
         });
-        await sendText(channel.instanceName, contact.phone, part).catch((err) =>
+        await agentSendText(channel, contact.phone, part).catch((err) =>
           console.error("Erro ao enviar follow-up:", err)
         );
         if (i < replyParts.length - 1) await sleep(MESSAGE_GAP_MS);

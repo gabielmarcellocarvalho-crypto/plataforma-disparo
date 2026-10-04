@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudTemplate } from "@/lib/metacloud";
+import { fieldValue } from "@/lib/template-send";
 import {
   interpolateVariables,
   type ActionConfig,
@@ -370,19 +371,6 @@ async function evaluateCondition(supabase: AdminClient, contact: Contact, run: {
   return false;
 }
 
-// Valor de um campo da lista de contatos pra preencher uma variável de template ({{1}}, {{2}}…).
-function fieldValue(field: string, contact: Contact, vars: { company_name?: string | null }): string {
-  if (field === "name") return contact.name || "";
-  if (field === "company") return vars.company_name || "";
-  if (field === "phone") return contact.phone || "";
-  if (field === "email") return contact.email || "";
-  if (field.startsWith("cf:")) {
-    const v = contact.custom_fields?.[field.slice(3)];
-    return v == null ? "" : String(v);
-  }
-  return "";
-}
-
 async function executeAction(supabase: AdminClient, contact: Contact, action: ActionConfig): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
   const vars = await resolveVariableContext(supabase, contact);
 
@@ -424,7 +412,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
         const tpl = action.template;
         if (!tpl?.name) return { ok: false, detail: { error: "nenhum template escolhido nesse passo" } };
         if (!instance.phone_number_id) return { ok: false, detail: { error: "número sem phone_number_id" } };
-        const params = tpl.variables.map((field) => fieldValue(field, contact, vars));
+        const params = tpl.variables.map((field) => fieldValue(field, contact, vars.company_name));
         const empty = params.findIndex((v) => !v);
         if (empty >= 0) return { ok: false, detail: { error: `o lead não tem o campo da variável {{${empty + 1}}} (${tpl.variables[empty]})` } };
         await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params);
