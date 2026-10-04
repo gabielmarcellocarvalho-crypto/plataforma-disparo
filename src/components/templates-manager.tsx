@@ -28,7 +28,9 @@ function variablesIn(text: string): number {
   return nums.length ? Math.max(...nums) : 0;
 }
 
-export function TemplatesManager({ templates, error }: { templates: MetaTemplateRow[]; error: string | null }) {
+export type CategoryAlert = { id: string; name: string; previous: string | null; next: string | null; correct: string | null; at: string };
+
+export function TemplatesManager({ templates, error, alerts }: { templates: MetaTemplateRow[]; error: string | null; alerts: CategoryAlert[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [category, setCategory] = useState<"UTILITY" | "MARKETING">("UTILITY");
@@ -59,6 +61,19 @@ export function TemplatesManager({ templates, error }: { templates: MetaTemplate
 
   return (
     <div className="flex flex-col gap-5">
+      {alerts.length > 0 && (
+        <section className="bg-warning-soft border border-warning rounded-xl p-5 flex flex-col gap-2">
+          <h2 className="text-base font-bold text-warning-text">A Meta reclassificou templates</h2>
+          {alerts.map((a) => (
+            <p key={a.id} className="text-sm text-warning-text">
+              <b>{a.name}</b>: {CATEGORY_LABEL[a.previous ?? ""] ?? a.previous ?? "?"} → {CATEGORY_LABEL[a.next ?? ""] ?? a.next ?? "?"}
+              {a.correct && a.correct !== a.next ? ` (a Meta indica ${CATEGORY_LABEL[a.correct] ?? a.correct})` : ""}
+              <span className="text-xs opacity-75"> · {new Date(a.at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}</span>
+            </p>
+          ))}
+        </section>
+      )}
+
       <section className="bg-surface border border-border rounded-xl shadow-sm p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>

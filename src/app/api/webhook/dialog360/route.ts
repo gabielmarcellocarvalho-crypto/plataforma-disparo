@@ -10,6 +10,7 @@ import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { secureEqual } from "@/lib/secure-compare";
 import { handleChatbotInbound } from "@/lib/chatbot-engine";
+import { parseTemplateCategoryChanges, saveTemplateCategoryChanges } from "@/lib/meta-template-events";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -99,6 +100,8 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as Dialog360WebhookBody | null;
   after(() => processDialog360Webhook(body).catch((err) => console.error("Erro no webhook 360dialog:", err)));
+  // Mesmo endpoint recebe a reclassificação de template da Meta (field template_category_update).
+  after(() => saveTemplateCategoryChanges(createAdminClient(), parseTemplateCategoryChanges(body)).catch((err) => console.error("Erro no alerta de template:", err)));
   return NextResponse.json({ ok: true });
 }
 
