@@ -221,14 +221,14 @@ export function AgentEditView({
             <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} aria-hidden />
             {style.label}
           </span>
-          {!isInstanceLinked && (
+          {canManage && (
             <button
               type="button"
               onClick={handleRefresh}
               disabled={pending}
               className="text-xs font-semibold text-primary-strong hover:underline disabled:opacity-60 cursor-pointer"
             >
-              Atualizar status
+              {isInstanceLinked ? "Atualizar foto" : "Atualizar status"}
             </button>
           )}
         </div>
