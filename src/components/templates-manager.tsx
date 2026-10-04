@@ -3,8 +3,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
-import { createWorkspaceTemplate } from "@/app/actions/templates";
+import { createWorkspaceTemplate, type TemplateMappings } from "@/app/actions/templates";
 import type { MetaTemplateRow } from "@/lib/metacloud-templates";
+import { mappingLegend, previewText, variableCount, type TemplateField } from "@/lib/template-variables";
 import { cn } from "@/lib/utils";
 
 const CATEGORY_LABEL: Record<string, string> = { UTILITY: "Utilidade", MARKETING: "Marketing", AUTHENTICATION: "Autenticação" };
@@ -22,31 +23,47 @@ const TONE: Record<"ok" | "wait" | "bad" | "muted", string> = {
   muted: "bg-bg text-text-muted",
 };
 
-// Variáveis {{1}}, {{2}}... no texto: a tela pede um exemplo pra cada uma (a Meta exige).
-function variablesIn(text: string): number {
-  const nums = [...text.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
-  return nums.length ? Math.max(...nums) : 0;
-}
-
 export type CategoryAlert = { id: string; name: string; previous: string | null; next: string | null; correct: string | null; at: string };
 
-export function TemplatesManager({ templates, error, alerts }: { templates: MetaTemplateRow[]; error: string | null; alerts: CategoryAlert[] }) {
+export function TemplatesManager({
+  templates,
+  mappings,
+  fields,
+  error,
+  alerts,
+}: {
+  templates: MetaTemplateRow[];
+  mappings: TemplateMappings;
+  fields: TemplateField[];
+  error: string | null;
+  alerts: CategoryAlert[];
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [category, setCategory] = useState<"UTILITY" | "MARKETING">("UTILITY");
   const [bodyText, setBodyText] = useState("");
-  const [samples, setSamples] = useState<string[]>([]);
+  const [variableFields, setVariableFields] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const varCount = useMemo(() => variablesIn(bodyText), [bodyText]);
+  const varCount = useMemo(() => variableCount(bodyText), [bodyText]);
+  const chosen = variableFields.slice(0, varCount);
+  const allChosen = varCount > 0 ? chosen.length === varCount && chosen.every(Boolean) : true;
+
+  function setField(i: number, value: string) {
+    setVariableFields((prev) => {
+      const next = [...prev];
+      next[i] = value;
+      return next;
+    });
+  }
 
   function submit() {
     setFormError(null);
     setNotice(null);
     startTransition(async () => {
-      const r = await createWorkspaceTemplate({ name, category, language: "pt_BR", bodyText, sampleValues: samples.slice(0, varCount) });
+      const r = await createWorkspaceTemplate({ name, category, language: "pt_BR", bodyText, variableFields: chosen });
       if (r.error !== null) {
         setFormError(r.error);
         return;
@@ -54,7 +71,7 @@ export function TemplatesManager({ templates, error, alerts }: { templates: Meta
       setNotice(`Template enviado para análise da Meta (${STATUS_LABEL[r.status]?.text ?? r.status}). Acompanhe o status abaixo.`);
       setName("");
       setBodyText("");
-      setSamples([]);
+      setVariableFields([]);
       router.refresh();
     });
   }
@@ -95,6 +112,7 @@ export function TemplatesManager({ templates, error, alerts }: { templates: Meta
             {templates.map((t) => {
               const st = STATUS_LABEL[t.status] ?? { text: t.status, tone: "muted" as const };
               const willChange = t.correctCategory && t.correctCategory !== t.category;
+              const legend = mappingLegend(mappings[`${t.name}|${t.language}`] || [], fields);
               return (
                 <div key={t.id} className="py-3 flex flex-col gap-1.5">
                   <div className="flex flex-wrap items-center gap-2">
@@ -111,6 +129,7 @@ export function TemplatesManager({ templates, error, alerts }: { templates: Meta
                     )}
                   </div>
                   {t.bodyText && <p className="text-xs text-text-muted line-clamp-2">{t.bodyText}</p>}
+                  {legend.length > 0 && <p className="text-xs text-text-muted">{legend.join(" · ")}</p>}
                   {t.status === "REJECTED" && t.rejectedReason && <p className="text-xs text-danger">Motivo: {t.rejectedReason}</p>}
                 </div>
               );
@@ -150,31 +169,42 @@ export function TemplatesManager({ templates, error, alerts }: { templates: Meta
             onChange={(e) => setBodyText(e.target.value)}
             rows={4}
             maxLength={1024}
-            placeholder="Oi {{1}}, tudo bem? Passando pra saber se ainda posso te ajudar."
+            placeholder="Oi {{1}}, tudo bem? Passando pra saber se ainda posso te ajudar da {{2}}."
             className="border border-border rounded-md px-3 py-2 text-sm font-normal outline-none focus:border-primary bg-surface"
           />
-          <span className="text-xs text-text-muted font-normal">Use {"{{1}}"}, {"{{2}}"}… para variáveis. Não pode começar nem terminar com variável.</span>
+          <span className="text-xs text-text-muted font-normal">Use {"{{1}}"}, {"{{2}}"}… para variáveis, em sequência. Não pode começar nem terminar com variável.</span>
         </label>
 
         {varCount > 0 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {Array.from({ length: varCount }, (_, i) => (
-              <label key={i} className="flex flex-col gap-1.5 text-xs font-semibold">
-                Exemplo para {`{{${i + 1}}}`}
-                <input
-                  value={samples[i] ?? ""}
-                  onChange={(e) =>
-                    setSamples((prev) => {
-                      const next = [...prev];
-                      next[i] = e.target.value;
-                      return next;
-                    })
-                  }
-                  placeholder={i === 0 ? "ex.: Maria" : "ex.: R$ 1.200"}
-                  className="border border-border rounded-md px-3 py-2 text-sm font-normal outline-none focus:border-primary bg-surface"
-                />
-              </label>
-            ))}
+          <div className="flex flex-col gap-3 rounded-lg bg-bg p-4">
+            <p className="text-sm font-semibold">O que cada variável vai preencher</p>
+            <p className="text-xs text-text-muted">
+              Escolha um campo da lista de contatos deste workspace. Na hora do envio, a mensagem leva o valor desse campo de cada contato.
+            </p>
+            {Array.from({ length: varCount }, (_, i) => {
+              const current = fields.find((f) => f.value === chosen[i]);
+              return (
+                <label key={i} className="flex flex-col gap-1.5 text-sm font-semibold">
+                  {`{{${i + 1}}}`} vai ser preenchido com
+                  <select value={chosen[i] || ""} onChange={(e) => setField(i, e.target.value)} className="border border-border rounded-md px-3 py-2 text-sm font-normal outline-none focus:border-primary bg-surface cursor-pointer">
+                    <option value="">Escolha um campo…</option>
+                    {fields.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  {current && <span className="text-xs text-text-muted font-normal">Exemplo: {current.example}</span>}
+                </label>
+              );
+            })}
+
+            {allChosen && bodyText && (
+              <div className="rounded-md bg-surface border border-border p-3">
+                <p className="text-xs font-semibold text-text-muted mb-1">Prévia com os exemplos</p>
+                <p className="text-sm whitespace-pre-wrap">{previewText(bodyText, chosen, fields)}</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -182,7 +212,12 @@ export function TemplatesManager({ templates, error, alerts }: { templates: Meta
         {notice && <p className="text-sm text-success font-medium">{notice}</p>}
 
         <div>
-          <button type="button" onClick={submit} disabled={pending || !name || !bodyText} className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer disabled:opacity-60">
+          <button
+            type="button"
+            onClick={submit}
+            disabled={pending || !name || !bodyText || !allChosen}
+            className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer disabled:opacity-60"
+          >
             {pending ? "Enviando para a Meta…" : "Enviar para análise da Meta"}
           </button>
         </div>

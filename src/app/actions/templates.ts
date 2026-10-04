@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { listAllMetaCloudTemplates, createMetaCloudTemplate, type MetaTemplateRow, type MetaTemplateCategory } from "@/lib/metacloud-templates";
+import { fieldOptionsFor, variableCount, validateMapping, type TemplateField } from "@/lib/template-variables";
+import type { CustomFieldDef } from "@/lib/custom-fields";
 
 type Result<T = object> = ({ error: null } & T) | { error: string };
 
@@ -23,11 +25,32 @@ async function wabaOfWorkspace(): Promise<{ workspaceId: string; wabaId: string 
   return data?.meta_waba_id ? { workspaceId: workspace.id, wabaId: data.meta_waba_id as string } : null;
 }
 
-export async function listWorkspaceTemplates(): Promise<Result<{ templates: MetaTemplateRow[] }>> {
+// Campos que existem nesse workspace (fixos + personalizados). É daqui que a tela escolhe.
+async function fieldsOfWorkspace(workspaceId: string): Promise<TemplateField[]> {
+  const { data } = await createAdminClient()
+    .from("custom_field_defs")
+    .select("key, label, options")
+    .eq("workspace_id", workspaceId)
+    .order("position", { ascending: true });
+  const defs = (data || []).map((d) => ({ key: d.key as string, label: d.label as string, options: (d.options as string[]) || [] })) as unknown as CustomFieldDef[];
+  return fieldOptionsFor(defs);
+}
+
+export type TemplateMappings = Record<string, string[]>; // chave: "nome|idioma"
+const mappingKey = (name: string, language: string) => `${name}|${language}`;
+
+export async function listWorkspaceTemplates(): Promise<Result<{ templates: MetaTemplateRow[]; mappings: TemplateMappings; fields: TemplateField[] }>> {
   const waba = await wabaOfWorkspace();
   if (!waba) return { error: "Nenhum número conectado direto pela Meta neste workspace." };
   try {
-    return { error: null, templates: await listAllMetaCloudTemplates(waba.wabaId) };
+    const [templates, fields, maps] = await Promise.all([
+      listAllMetaCloudTemplates(waba.wabaId),
+      fieldsOfWorkspace(waba.workspaceId),
+      createAdminClient().from("template_variable_maps").select("template_name, language, variables").eq("workspace_id", waba.workspaceId),
+    ]);
+    const mappings: TemplateMappings = {};
+    for (const m of maps.data || []) mappings[mappingKey(m.template_name as string, m.language as string)] = (m.variables as string[]) || [];
+    return { error: null, templates, mappings, fields };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
   }
@@ -41,7 +64,7 @@ export async function createWorkspaceTemplate(input: {
   category: string;
   language: string;
   bodyText: string;
-  sampleValues: string[];
+  variableFields: string[]; // um valor de campo por variável, na ordem {{1}}, {{2}}…
 }): Promise<Result<{ status: string }>> {
   const waba = await wabaOfWorkspace();
   if (!waba) return { error: "Nenhum número conectado direto pela Meta neste workspace." };
@@ -52,24 +75,34 @@ export async function createWorkspaceTemplate(input: {
   const bodyText = input.bodyText.trim();
   if (!bodyText || bodyText.length > 1024) return { error: "O texto precisa ter de 1 a 1024 caracteres." };
 
-  // Variáveis precisam ser {{1}}, {{2}}... sem pular número, e cada uma precisa de um exemplo (regra da Meta).
+  // Variáveis precisam ser {{1}}, {{2}}... sem pular número (regra da Meta).
   const vars = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
-  const unique = [...new Set(vars)].sort((a, b) => a - b);
-  const sequential = unique.every((n, i) => n === i + 1);
+  const count = variableCount(bodyText);
+  const sequential = [...new Set(vars)].sort((a, b) => a - b).every((n, i) => n === i + 1);
   if (!sequential) return { error: "As variáveis precisam ser {{1}}, {{2}}… em sequência, sem pular número." };
-  const samples = input.sampleValues.map((s) => s.trim());
-  if (unique.length > 0 && (samples.length < unique.length || samples.slice(0, unique.length).some((s) => !s))) {
-    return { error: "Preencha um exemplo para cada variável ({{1}}, {{2}}…)." };
-  }
 
+  // Cada variável tem que ser um campo que existe nesse workspace. O exemplo que vai pra Meta vem do próprio campo.
+  const options = await fieldsOfWorkspace(waba.workspaceId);
+  const mapping = input.variableFields.slice(0, count);
+  const mappingError = validateMapping(count, mapping, options);
+  if (mappingError) return { error: mappingError };
+  const samples = mapping.map((value) => options.find((o) => o.value === value)!.example);
+
+  const language = input.language || "pt_BR";
   try {
     const created = await createMetaCloudTemplate(waba.wabaId, {
       name,
-      language: input.language || "pt_BR",
+      language,
       category: input.category as MetaTemplateCategory,
       bodyText,
-      sampleValues: samples.slice(0, unique.length),
+      sampleValues: samples,
     });
+    if (count > 0) {
+      const { error } = await createAdminClient()
+        .from("template_variable_maps")
+        .upsert({ workspace_id: waba.workspaceId, template_name: name, language, variables: mapping, updated_at: new Date().toISOString() }, { onConflict: "workspace_id,template_name,language" });
+      if (error) console.error("Falha ao gravar o mapeamento de variáveis:", error.message);
+    }
     revalidatePath("/templates");
     return { error: null, status: created.status };
   } catch (err) {

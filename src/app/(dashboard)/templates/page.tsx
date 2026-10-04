@@ -32,7 +32,13 @@ export default async function TemplatesPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Templates</h1>
         <p className="text-text-muted text-sm mt-1">Mensagens da conta oficial do WhatsApp usadas em automações e no follow-up do agente.</p>
       </div>
-      <TemplatesManager templates={r.error === null ? r.templates : []} error={r.error} alerts={alerts} />
+      <TemplatesManager
+        templates={r.error === null ? r.templates : []}
+        mappings={r.error === null ? r.mappings : {}}
+        fields={r.error === null ? r.fields : []}
+        error={r.error}
+        alerts={alerts}
+      />
     </div>
   );
 }
