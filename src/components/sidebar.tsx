@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useSearchParams } from "next/navigation";
 import { canAccessPage, type AccessType } from "@/lib/access-types";
 
@@ -209,7 +210,7 @@ const NAV_GROUPS: { label: string; hrefs: string[] }[] = [
 const STAFF_ONLY_PATHS = new Set(["/agentes"]);
 
 export const SIDEBAR_WIDTH = 236;
-export const SIDEBAR_WIDTH_COLLAPSED = 68;
+export const SIDEBAR_WIDTH_COLLAPSED = 80;
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 
@@ -292,6 +293,26 @@ export function Sidebar({
   const emEmpresas = useSearchParams().get("view") === "empresas";
   // Subcaixas do Pipeline (Contatos e Empresas): só aparecem quando a setinha é aberta.
   const [pipelineAberto, setPipelineAberto] = useState(false);
+  // Recolhido: Pipeline abre um painel ao lado da sidebar (portal, pra não ser cortado pelo overflow).
+  const [flyoutRect, setFlyoutRect] = useState<DOMRect | null>(null);
+  const pipelineBtnRef = useRef<HTMLButtonElement>(null);
+  const flyoutRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!flyoutRect) return;
+    const fechaFora = (e: MouseEvent) => {
+      const alvo = e.target as Node;
+      if (!pipelineBtnRef.current?.contains(alvo) && !flyoutRef.current?.contains(alvo)) setFlyoutRect(null);
+    };
+    const fechaEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFlyoutRect(null);
+    };
+    document.addEventListener("mousedown", fechaFora);
+    document.addEventListener("keydown", fechaEsc);
+    return () => {
+      document.removeEventListener("mousedown", fechaFora);
+      document.removeEventListener("keydown", fechaEsc);
+    };
+  }, [flyoutRect]);
 
   const podeVer = (href: string) =>
     !hiddenPages.includes(href) && (isStaff || (!STAFF_ONLY_PATHS.has(href) && canAccessPage(accessType, href, hiddenPages)));
@@ -340,7 +361,24 @@ export function Sidebar({
               ))}
             {grupo.itens.map((item) => (
               <Fragment key={item.href}>
-                {item.href === "/crm" && !collapsed ? (
+                {item.href === "/crm" && collapsed ? (
+                  <button
+                    ref={pipelineBtnRef}
+                    type="button"
+                    onClick={() => setFlyoutRect(flyoutRect ? null : pipelineBtnRef.current?.getBoundingClientRect() ?? null)}
+                    aria-expanded={flyoutRect !== null}
+                    aria-label={item.label}
+                    title={item.label}
+                    className={`group relative flex w-full justify-center rounded-lg py-2.5 cursor-pointer transition-colors ${
+                      pathname === "/crm" || pathname === "/contatos" ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
+                    }`}
+                  >
+                    {pathname === "/crm" || pathname === "/contatos" ? (
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full bg-primary" aria-hidden />
+                    ) : null}
+                    <span className={`relative ${pathname === "/crm" || pathname === "/contatos" ? "text-white" : "text-sidebar-muted group-hover:text-white"}`}>{item.icon}</span>
+                  </button>
+                ) : item.href === "/crm" && !collapsed ? (
                   <div className="flex items-center">
                     <div className="flex-1 min-w-0">
                       <NavLink {...item} active={pathname === item.href} collapsed={collapsed} />
@@ -365,6 +403,35 @@ export function Sidebar({
                     badge={item.href === "/conversas" ? attentionCount : undefined}
                   />
                 )}
+                {item.href === "/crm" && collapsed && flyoutRect &&
+                  createPortal(
+                    <div
+                      ref={flyoutRef}
+                      role="menu"
+                      className="fixed z-[60] flex flex-col gap-0.5 min-w-[170px] rounded-xl border border-sidebar-border p-2 shadow-xl"
+                      style={{ top: flyoutRect.top, left: flyoutRect.right + 8, background: "var(--color-sidebar)" }}
+                    >
+                      {[
+                        { label: "Pipeline", href: "/crm", active: pathname === "/crm" },
+                        { label: "Contatos", href: "/contatos", active: pathname === "/contatos" && !emEmpresas },
+                        { label: "Empresas", href: "/contatos?view=empresas", active: pathname === "/contatos" && emEmpresas },
+                      ].map((sub) => (
+                        <Link
+                          key={sub.label}
+                          href={sub.href}
+                          role="menuitem"
+                          onClick={() => setFlyoutRect(null)}
+                          aria-current={sub.active ? "page" : undefined}
+                          className={`flex items-center rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${
+                            sub.active ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"
+                          }`}
+                        >
+                          {sub.label}
+                        </Link>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
                 {item.href === "/crm" && !collapsed && pipelineAberto && (
                   <div className="ml-7 flex flex-col gap-0.5">
                     {[
