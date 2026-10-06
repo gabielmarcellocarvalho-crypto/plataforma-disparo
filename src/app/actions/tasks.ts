@@ -16,6 +16,18 @@ export type TaskRow = {
   company_id: string | null;
   responsible_user_id: string | null;
   created_at: string;
+  // Tarefa criada pelo agente pro vendedor (source = 'agente'); manuais deixam tudo isso nulo.
+  source?: string;
+  team_member_id?: string | null;
+  conversation_summary?: string | null;
+};
+
+export type AgendaTask = TaskRow & {
+  contact_name: string | null;
+  contact_phone: string | null;
+  contact_custom_fields: Record<string, unknown> | null;
+  company_name: string | null;
+  team_member_name: string | null;
 };
 
 function revalidateTaskPaths() {
@@ -77,28 +89,38 @@ export async function quickCreateTask(
 }
 
 // Lista de tarefas do workspace inteiro (com nomes dos vínculos, via join) — usada em /agenda.
-export async function getTasksForOwner(responsibleUserId?: string): Promise<
-  (TaskRow & { contact_name: string | null; company_name: string | null })[]
-> {
+export async function getTasksForOwner(responsibleUserId?: string): Promise<AgendaTask[]> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return [];
 
   const supabase = await createClient();
   let query = supabase
     .from("tasks")
-    .select("id, title, description, due_at, completed_at, contact_id, company_id, responsible_user_id, created_at, contacts(name), companies(name)")
+    .select(
+      "id, title, description, due_at, completed_at, contact_id, company_id, responsible_user_id, created_at, source, team_member_id, conversation_summary, contacts(name, phone, custom_fields), companies(name), team_members(name)"
+    )
     .eq("workspace_id", workspace.id)
-    .order("due_at", { ascending: true, nullsFirst: false });
+    // Mesma data/hora de vencimento desempata por ordem de chegada.
+    .order("due_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
 
   if (responsibleUserId) query = query.eq("responsible_user_id", responsibleUserId);
 
   const { data } = await query;
   return (data || []).map((t) => {
-    const { contacts, companies, ...rest } = t as typeof t & {
-      contacts: { name: string | null } | null;
+    const { contacts, companies, team_members, ...rest } = t as typeof t & {
+      contacts: { name: string | null; phone: string | null; custom_fields: Record<string, unknown> | null } | null;
       companies: { name: string } | null;
+      team_members: { name: string } | null;
     };
-    return { ...rest, contact_name: contacts?.name ?? null, company_name: companies?.name ?? null };
+    return {
+      ...rest,
+      contact_name: contacts?.name ?? null,
+      contact_phone: contacts?.phone ?? null,
+      contact_custom_fields: contacts?.custom_fields ?? null,
+      company_name: companies?.name ?? null,
+      team_member_name: team_members?.name ?? null,
+    };
   });
 }
 

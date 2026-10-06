@@ -11,6 +11,7 @@ import { getSchedulingContext } from "@/lib/scheduling";
 import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
 import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-channel";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
+import { createSellerTaskIfNeeded } from "@/lib/seller-tasks";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -640,6 +641,12 @@ export async function runAgentTurn(
         if (r.motivo) console.warn(`handoff ${agent.id} -> ${agent.handoff_to_agent_id}: ${r.motivo}`);
       }
     }
+
+    // Tarefa na Agenda do vendedor. Melhor esforço: erro aqui não pode atrapalhar a resposta ao cliente.
+    // Quem classificou foi o cérebro da conversa, então é a config dele que vale.
+    await createSellerTaskIfNeeded(supabase, cerebro, contact, stage).catch((err) =>
+      console.error(`seller-tasks ${cerebro.id}:`, (err as Error).message)
+    );
   }
 
   if (replyParts.length > 0) {

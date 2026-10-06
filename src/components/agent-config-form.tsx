@@ -4,6 +4,7 @@ import { useRef, useState, useTransition, type ReactNode } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
+import { AgentSellerTasksSection } from "@/components/agent-seller-tasks-section";
 import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
@@ -616,6 +617,7 @@ export function AgentConfigForm({
         />
       </div>
       <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
+      <AgentSellerTasksSection value={config.sellerTasks} onChange={(v) => set("sellerTasks", v)} sellers={closers} />
         </div>
       )}
       {tab === "material" && (

@@ -137,6 +137,19 @@ contra agenda real + conversa real no WhatsApp com o agente Eduardo Vendedor/Orb
 `calendar.events`). Até lá: só usuários de teste, aviso de "app não verificado" e autorização que
 expira a cada 7 dias. Trocar o `GOOGLE_CLIENT_SECRET` (foi colado no chat) antes de liberar.
 
+## Tarefas do agente na Agenda do vendedor (código pronto, NÃO commitado — 2026-10-05)
+
+Alternativa/complemento ao Google Agenda: em Agentes → "Humano e agenda" → "Tarefas na agenda do vendedor"
+(`config.sellerTasks`: `enabled`, `signal`, `memberIds`). Quando o lead alcança a fase (`atingiuGatilho`,
+mesma regra do handoff), `src/lib/seller-tasks.ts` cria uma linha em `tasks` (`source='agente'`) pro dono do
+lead se estiver na lista, senão rodízio, com resumo da conversa (Haiku; cai nas 6 últimas mensagens se
+falhar). Um índice único (`contact_id, agent_id`) evita tarefa duplicada. `/agenda` mostra o card do lead
+(campos mapeados, resumo, Ver conversa, Abrir WhatsApp, copiar número). Desligado por padrão.
+
+**Antes de subir:** rodar `supabase/migrations/0076_tasks_seller_agenda.sql` no Supabase e conferir as
+colunas (`/agenda` seleciona `source`, `team_member_id`, `conversation_summary` — sem a migration a página
+fica vazia). Só dispara em transição de fase nova; lead que já está na fase ao ligar não gera tarefa.
+
 ## Roadmap
 
 | | Bloco | Situação |

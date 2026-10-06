@@ -76,7 +76,20 @@ export type AgentConfig = {
   // sem isso ligado, o agente nem recebe as ferramentas de agenda. Duração e horário não ficam aqui —
   // vêm dos próprios eventos "Marque aqui" que o closer cria.
   scheduling: SchedulingConfig;
+  // Tarefa na Agenda do vendedor quando o lead chega numa fase. Alternativa (ou complemento) ao Google
+  // Agenda, pra quem vende só pelo WhatsApp. Desligado por padrão.
+  sellerTasks: SellerTasksConfig;
 };
+
+export type SellerTasksConfig = {
+  enabled: boolean;
+  // Um dos sinais fixos de contacts.stage; o gatilho compara por posição (alcançou ou passou).
+  signal: string;
+  // Vendedores (team_members) que recebem tarefa, na ordem de desempate do rodízio.
+  memberIds: string[];
+};
+
+export const SELLER_TASKS_DEFAULTS: SellerTasksConfig = { enabled: false, signal: "encaminhamento", memberIds: [] };
 
 export type SchedulingConfig = {
   enabled: boolean;
@@ -183,6 +196,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   bubbleCharLimit: BUBBLE_CHAR_LIMIT_DEFAULT,
   followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT, template: null },
   scheduling: { ...SCHEDULING_DEFAULTS },
+  sellerTasks: { ...SELLER_TASKS_DEFAULTS },
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -238,6 +252,16 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     bubbleCharLimit: clampBubbleCharLimit(r.bubbleCharLimit),
     followUp: normalizeFollowUp(r.followUp),
     scheduling: normalizeScheduling(r.scheduling),
+    sellerTasks: normalizeSellerTasks(r.sellerTasks),
+  };
+}
+
+export function normalizeSellerTasks(raw: unknown): SellerTasksConfig {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    enabled: Boolean(f.enabled),
+    signal: typeof f.signal === "string" && f.signal ? f.signal : SELLER_TASKS_DEFAULTS.signal,
+    memberIds: Array.isArray(f.memberIds) ? [...new Set((f.memberIds as unknown[]).map((v) => String(v ?? "")).filter(Boolean))] : [],
   };
 }
 

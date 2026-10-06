@@ -3,6 +3,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { getTasksForOwner } from "@/app/actions/tasks";
 import { AddTaskForm } from "@/components/add-task-form";
 import { AgendaList } from "@/components/agenda-list";
+import type { CustomFieldType } from "@/lib/custom-fields";
 
 export default async function AgendaPage() {
   const { workspace } = await getCurrentWorkspace();
@@ -15,9 +16,21 @@ export default async function AgendaPage() {
     );
   }
 
-  const [tasks, members] = await Promise.all([
+  const admin = createAdminClient();
+  const [tasks, sellers, defs, members] = await Promise.all([
     getTasksForOwner(),
-    createAdminClient()
+    admin
+      .from("team_members")
+      .select("id, name")
+      .eq("workspace_id", workspace.id)
+      .order("name")
+      .then(({ data }) => (data || []).map((m) => ({ id: m.id as string, name: m.name as string }))),
+    admin
+      .from("custom_field_defs")
+      .select("key, label, type")
+      .eq("workspace_id", workspace.id)
+      .then(({ data }) => (data || []) as { key: string; label: string; type: CustomFieldType }[]),
+    admin
       .from("workspace_members")
       .select("user_id, profiles(full_name)")
       .eq("workspace_id", workspace.id)
@@ -34,7 +47,7 @@ export default async function AgendaPage() {
         <AddTaskForm workspaceId={workspace.id} responsibles={members} />
       </div>
 
-      <AgendaList tasks={tasks} responsibles={members} />
+      <AgendaList tasks={tasks} responsibles={members} sellers={sellers} fieldDefs={defs} />
     </div>
   );
 }
