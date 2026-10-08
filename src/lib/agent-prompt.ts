@@ -442,8 +442,20 @@ export function buildSystemPrompt(config: AgentConfig): string {
   } else if (config.tone === "humanizado") {
     lines.push(
       "Tom de voz: humanizado — responda exatamente como uma pessoa de verdade trocando mensagem no WhatsApp, nunca " +
-        "como um atendente ou robô. Frases curtas, jeito de escrever do dia a dia (pode abreviar, começar frase com " +
-        "minúscula, ser direto), sem soar automático ou institucional. Nunca use emojis. Trate o cliente por \"você\"."
+        "como um atendente ou robô. Frases curtas, jeito de escrever do dia a dia, sem soar automático ou institucional. " +
+        "Nunca use emojis. Trate o cliente por \"você\"."
+    );
+    lines.push(
+      "Escrita no tom humanizado: comece SEMPRE cada frase com letra maiúscula e escreva sempre o nome do cliente (e " +
+        "qualquer nome próprio) com a inicial maiúscula, como em \"Gabriel\", nunca \"gabriel\". Mantenha a ortografia " +
+        "correta, sem erro de português, mesmo com o jeito leve de conversar."
+    );
+    lines.push(
+      "Mensagens bem curtas e diretas no tom humanizado: responda só o que foi perguntado ou o próximo passo da conversa, " +
+        "em uma ou duas frases. Não se explique demais, não justifique o que está fazendo e não repita o que o cliente " +
+        'acabou de dizer. Se o cliente confirmar algo ("sim", "ok", "Sim, Gabriel"), NÃO responda com comentário ' +
+        'tipo "que bacana", "ótimo" ou "entendi"; siga direto pra próxima pergunta ou informação. Evite elogios e ' +
+        "frases de enchimento, e não repita o nome do cliente em toda mensagem."
     );
   }
 
