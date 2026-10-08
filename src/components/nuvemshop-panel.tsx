@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Lock, Store } from "lucide-react";
+import { Lock } from "lucide-react";
+import { NuvemshopLogo } from "@/components/nuvemshop-logo";
 import { ToggleSwitch } from "@/components/toggle-switch";
 import { cn } from "@/lib/utils";
 import { connectNuvemshop, disconnectNuvemshop, testNuvemshop, updateNuvemshopCapabilities } from "@/app/actions/nuvemshop";
@@ -90,7 +91,7 @@ export function NuvemshopPanel({ state, capabilities }: { state: NuvemshopState;
       <section className="bg-surface border border-border rounded-xl shadow-sm">
         <div className="flex items-start gap-3 px-4 py-4 border-b border-border">
           <span className="grid place-items-center w-10 h-10 rounded-lg bg-surface-2 border border-border shrink-0" aria-hidden>
-            <Store className="w-5 h-5" />
+            <NuvemshopLogo size={24} />
           </span>
           <div className="min-w-0">
             <h2 className="text-base font-bold">Loja Nuvemshop</h2>

@@ -3,10 +3,11 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarClock, Check, Copy, Link2, Store, Unplug, Webhook } from "lucide-react";
+import { CalendarClock, Check, Copy, Link2, Unplug, Webhook } from "lucide-react";
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { GoogleLogo } from "@/components/google-logo";
 import { FacebookLogo } from "@/components/facebook-logo";
+import { NuvemshopLogo } from "@/components/nuvemshop-logo";
 import { createConnectLink, disconnectCalendar } from "@/app/actions/integrations";
 import { cn } from "@/lib/utils";
 
@@ -236,7 +237,7 @@ export function IntegrationsView({
               {nuvemshop.connected ? nuvemshop.storeName || "Conectada" : "Não conectada"}
             </span>
           }
-          art={<Store className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
+          art={<NuvemshopLogo size={112} />}
         />
         <IntegrationCard
           title="Webhooks"
