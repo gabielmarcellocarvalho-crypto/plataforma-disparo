@@ -3,7 +3,9 @@
 export const GRAPH = "https://graph.facebook.com/v21.0";
 
 // Permissões pedidas na conexão. `leads_retrieval` é a que lê os leads; as de página listam e assinam.
-export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "leads_retrieval"];
+// `pages_manage_ads` é exigida pela Meta só pra LER a lista de formulários de lead da página
+// (GET {page}/leadgen_forms responde 403 #200 sem ela). O app não cria nem altera anúncio nem formulário.
+export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "leads_retrieval", "pages_manage_ads"];
 
 export function appId(): string {
   const id = process.env.NEXT_PUBLIC_META_APP_ID;
