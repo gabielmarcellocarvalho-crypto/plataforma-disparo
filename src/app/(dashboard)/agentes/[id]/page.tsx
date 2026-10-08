@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 import { AgentEditView } from "@/components/agent-edit-view";
+import type { IntegrationOption } from "@/components/agent-integrations-section";
+import { listIntegrations } from "@/lib/integrations/connections";
+import { NUVEMSHOP_CAPABILITIES, NUVEMSHOP_PROVIDER } from "@/lib/integrations/nuvemshop/capabilities";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listConnections } from "@/lib/calendar/connections";
@@ -76,6 +79,20 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
     status: connByMember.get(m.id) ?? "desconectado",
   }));
 
+  // Integrações conectadas no workspace e, dentro de cada uma, só as permissões que o workspace liberou.
+  // Lido pelo servidor: a tabela guarda o token e não é legível pelo usuário.
+  const integrations = await listIntegrations(createAdminClient(), agent.workspace_id).catch(() => []);
+  const integrationOptions: IntegrationOption[] = integrations
+    .filter((c) => c.provider === NUVEMSHOP_PROVIDER)
+    .map((c) => ({
+      provider: c.provider,
+      label: "Nuvemshop",
+      status: c.status,
+      capabilities: NUVEMSHOP_CAPABILITIES.filter((cap) => cap.available && c.enabled_capabilities.includes(cap.id)).map(
+        ({ id, label, agentNote }) => ({ id, label, agentNote })
+      ),
+    }));
+
   // Candidatos a receber a conversa: os outros agentes do mesmo workspace. "Tem número" decide se o
   // modo "outro número" é viável — sem número conectado, o agente que assume não consegue se apresentar.
   const { data: outrosAgentes } = await supabase
@@ -137,6 +154,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       <AgentEditView
         fieldDefs={fieldDefs}
         schedulingClosers={schedulingClosers}
+        integrationOptions={integrationOptions}
         availableInstances={availableInstances}
         handoffOptions={handoffOptions}
         agent={agent}

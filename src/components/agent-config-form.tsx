@@ -4,6 +4,7 @@ import { useRef, useState, useTransition, type ReactNode } from "react";
 import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
+import { AgentIntegrationsSection, type IntegrationOption } from "@/components/agent-integrations-section";
 import { AgentSellerTasksSection } from "@/components/agent-seller-tasks-section";
 import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
@@ -165,13 +166,14 @@ const PRESET_FIELDS: { key: string; display: string; label: string; mode: Collec
   { key: "email", display: "E-mail", label: "e-mail para cadastro", mode: "perguntar" },
 ];
 
-type AgentTab = "basico" | "horario" | "info" | "prompt" | "humano" | "material";
+type AgentTab = "basico" | "horario" | "info" | "prompt" | "humano" | "integracoes" | "material";
 const AGENT_TABS: { key: AgentTab; label: string }[] = [
   { key: "basico", label: "Básico" },
   { key: "horario", label: "Horário e follow-up" },
   { key: "info", label: "Informações" },
   { key: "prompt", label: "Prompt" },
   { key: "humano", label: "Humano e agenda" },
+  { key: "integracoes", label: "Integrações" },
   { key: "material", label: "Material" },
 ];
 
@@ -183,6 +185,7 @@ export function AgentConfigForm({
   mediaCategories,
   fieldDefs = [],
   closers = [],
+  integrationOptions = [],
   materialSlot,
 }: {
   agentId: string;
@@ -192,6 +195,7 @@ export function AgentConfigForm({
   mediaCategories: string[];
   fieldDefs?: CustomFieldDef[];
   closers?: SchedulingCloserOption[];
+  integrationOptions?: IntegrationOption[];
   // Arquivos que o agente manda e material de estudo: ficam na aba Material.
   materialSlot?: ReactNode;
 }) {
@@ -618,6 +622,11 @@ export function AgentConfigForm({
       </div>
       <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
       <AgentSellerTasksSection value={config.sellerTasks} onChange={(v) => set("sellerTasks", v)} sellers={closers} />
+        </div>
+      )}
+      {tab === "integracoes" && (
+        <div className="flex flex-col gap-5">
+          <AgentIntegrationsSection value={config.integrations} onChange={(v) => set("integrations", v)} options={integrationOptions} />
         </div>
       )}
       {tab === "material" && (

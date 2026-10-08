@@ -9,6 +9,7 @@ import { fetchContactProfilePicture } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
 import { getSchedulingContext } from "@/lib/scheduling";
 import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
+import { buildNuvemshopTools, getNuvemshopContext, makeNuvemshopExecutor, nuvemshopPromptBlock, NUVEMSHOP_TOOL_NAMES } from "@/lib/integrations/nuvemshop/tools";
 import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-channel";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { createSellerTaskIfNeeded } from "@/lib/seller-tasks";
@@ -489,11 +490,27 @@ export async function runAgentTurn(
   const schedulingExecutor = scheduling
     ? makeSchedulingExecutor(supabase, scheduling, cerebro, { ...contact, phone })
     : undefined;
-  const tools = [...mediaTools, ...(scheduling ? buildSchedulingTools(scheduling) : [])];
+  // Loja Nuvemshop (Integrações → Nuvemshop): só leitura. null quando a integração não está conectada
+  // ou não está ligada neste agente — aí nada muda: nem ferramenta, nem instrução no prompt.
+  const nuvemshop = await getNuvemshopContext(supabase, cerebro).catch((err) => {
+    console.error("Nuvemshop indisponível neste turno:", err instanceof Error ? err.message : err);
+    return null;
+  });
+  const nuvemshopExecutor = nuvemshop
+    ? makeNuvemshopExecutor(supabase, nuvemshop, { phone, email: contact.email ?? null })
+    : undefined;
+  const tools = [
+    ...mediaTools,
+    ...(scheduling ? buildSchedulingTools(scheduling) : []),
+    ...(nuvemshop ? buildNuvemshopTools(nuvemshop) : []),
+  ];
   const executor: ToolExecutor | undefined =
-    mediaExecutor || schedulingExecutor
-      ? (name, input) =>
-          SCHEDULING_TOOL_NAMES.has(name) && schedulingExecutor ? schedulingExecutor(name, input) : mediaExecutor ? mediaExecutor(name, input) : Promise.resolve(`Ferramenta "${name}" não implementada.`)
+    mediaExecutor || schedulingExecutor || nuvemshopExecutor
+      ? (name, input) => {
+          if (SCHEDULING_TOOL_NAMES.has(name) && schedulingExecutor) return schedulingExecutor(name, input);
+          if (NUVEMSHOP_TOOL_NAMES.has(name) && nuvemshopExecutor) return nuvemshopExecutor(name, input);
+          return mediaExecutor ? mediaExecutor(name, input) : Promise.resolve(`Ferramenta "${name}" não implementada.`);
+        }
       : undefined;
 
   const { data: knowledgeRows } = await supabase.from("agent_knowledge").select("file_name, content").eq("agent_id", agent.id);
@@ -503,7 +520,7 @@ export async function runAgentTurn(
 
   const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : ""),
+    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : ""),
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,

@@ -6,6 +6,7 @@ import { connectAgent, linkAgentInstance, unlinkAgentInstance, refreshAgentStatu
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
+import type { IntegrationOption } from "@/components/agent-integrations-section";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import { AgentHandoffForm, type HandoffAgentOption } from "@/components/agent-handoff-form";
 import { AgentMediaLibrary } from "@/components/agent-media-library";
@@ -80,6 +81,7 @@ export function AgentEditView({
   handoffOptions,
   availableInstances = [],
   schedulingClosers = [],
+  integrationOptions = [],
 }: {
   agent: Agent;
   model: string;
@@ -91,6 +93,7 @@ export function AgentEditView({
   handoffOptions: HandoffAgentOption[];
   availableInstances?: AvailableInstance[];
   schedulingClosers?: SchedulingCloserOption[];
+  integrationOptions?: IntegrationOption[];
 }) {
   const router = useRouter();
   const [qr, setQr] = useState<string | null>(null);
@@ -471,6 +474,7 @@ export function AgentEditView({
             mediaCategories={mediaCategories}
             fieldDefs={fieldDefs}
             closers={schedulingClosers}
+            integrationOptions={integrationOptions}
             materialSlot={
               <>
                 <div className="flex flex-col gap-2 border-t border-border pt-4">

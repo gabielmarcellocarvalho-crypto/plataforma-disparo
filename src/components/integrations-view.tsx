@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarClock, Check, Copy, Link2, Unplug, Webhook } from "lucide-react";
+import { CalendarClock, Check, Copy, Link2, Store, Unplug, Webhook } from "lucide-react";
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { GoogleLogo } from "@/components/google-logo";
 import { FacebookLogo } from "@/components/facebook-logo";
@@ -169,10 +169,12 @@ export function IntegrationsView({
   workspaceName,
   googleConnected,
   facebook,
+  nuvemshop,
 }: {
   workspaceName: string;
   googleConnected: number;
   facebook: { connected: boolean; pages: number };
+  nuvemshop: { connected: boolean; storeName: string | null };
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -217,6 +219,24 @@ export function IntegrationsView({
             </span>
           }
           art={<FacebookLogo size={112} />}
+        />
+        <IntegrationCard
+          title="Nuvemshop"
+          description="O agente consulta pedidos e produtos da loja durante a conversa."
+          cta={nuvemshop.connected ? "Configurar" : "Conectar"}
+          href="/integracoes/nuvemshop"
+          variant="default"
+          badge={
+            <span
+              className={cn(
+                "text-[11px] font-bold px-2 py-0.5 rounded-full",
+                nuvemshop.connected ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
+              )}
+            >
+              {nuvemshop.connected ? nuvemshop.storeName || "Conectada" : "Não conectada"}
+            </span>
+          }
+          art={<Store className="w-24 h-24 text-text-muted" strokeWidth={1.25} />}
         />
         <IntegrationCard
           title="Webhooks"

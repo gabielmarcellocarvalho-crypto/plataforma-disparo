@@ -79,6 +79,10 @@ export type AgentConfig = {
   // Tarefa na Agenda do vendedor quando o lead chega numa fase. Alternativa (ou complemento) ao Google
   // Agenda, pra quem vende só pelo WhatsApp. Desligado por padrão.
   sellerTasks: SellerTasksConfig;
+  // Permissões de integrações externas que ESTE agente usa, por provedor (ex.: { nuvemshop: ["nuvemshop.pedidos.consultar"] }).
+  // Só vale o que o workspace também liberou em Integrações. Não entra no texto do prompt: as ferramentas
+  // e a instrução são montadas em tempo de execução. Desligado por padrão.
+  integrations: Record<string, string[]>;
 };
 
 export type SellerTasksConfig = {
@@ -197,6 +201,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT, template: null },
   scheduling: { ...SCHEDULING_DEFAULTS },
   sellerTasks: { ...SELLER_TASKS_DEFAULTS },
+  integrations: {},
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -253,7 +258,19 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     followUp: normalizeFollowUp(r.followUp),
     scheduling: normalizeScheduling(r.scheduling),
     sellerTasks: normalizeSellerTasks(r.sellerTasks),
+    integrations: normalizeIntegrations(r.integrations),
   };
+}
+
+export function normalizeIntegrations(raw: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [provider, ids] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[a-z0-9_-]{1,40}$/.test(provider) || !Array.isArray(ids)) continue;
+    const clean = [...new Set(ids.map((v) => String(v ?? "")).filter((id) => /^[a-z0-9_.-]{1,80}$/.test(id)))];
+    if (clean.length) out[provider] = clean;
+  }
+  return out;
 }
 
 export function normalizeSellerTasks(raw: unknown): SellerTasksConfig {
