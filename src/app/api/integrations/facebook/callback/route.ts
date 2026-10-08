@@ -62,24 +62,42 @@ export async function GET(req: Request) {
       .single();
     if (connError || !connection) throw new Error(connError?.message || "Não foi possível salvar a conexão.");
 
+    // Uma Página pertence a UM workspace só. A Meta devolve todas as páginas que a conta do Facebook já
+    // autorizou ao app (inclusive as de outros clientes da agência); as que já estão em outro workspace
+    // não entram aqui, senão o lead de um cliente poderia cair no outro.
+    const ids = pages.map((p) => p.id);
+    const { data: taken } = ids.length ? await admin.from("facebook_pages").select("workspace_id, page_id").in("page_id", ids) : { data: [] };
+    const ownerByPage = new Map((taken || []).map((t) => [t.page_id as string, t.workspace_id as string]));
+
     // Página nova entra desligada: a pessoa escolhe quais ligar na tela. Página que já existia mantém o
     // status que ela tinha. A assinatura do aviso de lead só acontece quando a página é ligada.
-    const { data: known } = await admin.from("facebook_pages").select("page_id").eq("workspace_id", state.workspaceId);
-    const knownIds = new Set((known || []).map((k) => k.page_id as string));
+    let kept = 0;
+    let skipped = 0;
     for (const page of pages) {
       if (!page.access_token) continue;
+      const owner = ownerByPage.get(page.id);
+      if (owner && owner !== state.workspaceId) {
+        skipped++;
+        continue;
+      }
       const fields = {
         connection_id: connection.id,
         page_name: page.name ?? null,
         page_token_enc: encryptToken(page.access_token),
       };
-      if (knownIds.has(page.id)) {
+      if (owner) {
         await admin.from("facebook_pages").update(fields).eq("workspace_id", state.workspaceId).eq("page_id", page.id);
+        kept++;
       } else {
-        await admin.from("facebook_pages").insert({ workspace_id: state.workspaceId, page_id: page.id, status: "inativa", ...fields });
+        const { error: insertError } = await admin.from("facebook_pages").insert({ workspace_id: state.workspaceId, page_id: page.id, status: "inativa", ...fields });
+        // 23505 = outro workspace gravou a mesma página neste instante: a trava do banco venceu.
+        if (insertError?.code === "23505") skipped++;
+        else if (insertError) throw new Error(insertError.message);
+        else kept++;
       }
     }
 
+    if (skipped > 0) return back(kept > 0 ? "parcial" : "ocupada");
     return back("ok");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

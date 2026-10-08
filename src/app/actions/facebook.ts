@@ -30,6 +30,10 @@ export async function setFacebookPageActive(pageId: string, active: boolean): Pr
   const page = await pageOfWorkspace(pageId);
   if (!page) return { error: "Página não encontrada." };
   if (active) {
+    // Defesa em profundidade: Página de outro workspace nunca liga aqui (a trava do banco já impede a cópia).
+    const admin = createAdminClient();
+    const { data: elsewhere } = await admin.from("facebook_pages").select("workspace_id").eq("page_id", pageId).neq("workspace_id", page.workspaceId).limit(1);
+    if (elsewhere && elsewhere.length > 0) return { error: "Esta página já está conectada em outro cliente e não pode ser ligada aqui." };
     try {
       await graphPost(`${pageId}/subscribed_apps`, page.token, { subscribed_fields: "leadgen" });
     } catch (err) {
@@ -110,5 +114,21 @@ export async function disconnectFacebook(connectionId: string): Promise<Result> 
   }
   await admin.from("facebook_connections").delete().eq("id", connectionId);
   revalidatePath("/integracoes");
+  return { error: null };
+}
+
+// Tira uma página deste workspace (a que entrou por engano, ou que o cliente não usa mais). Apaga a página
+// e os formulários dela daqui. Os leads já recebidos ficam. Não mexe na assinatura da Meta nem em outros workspaces.
+export async function removeFacebookPage(pageId: string): Promise<Result> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+  const admin = createAdminClient();
+  const { data: page } = await admin.from("facebook_pages").select("page_id").eq("workspace_id", workspace.id).eq("page_id", pageId).maybeSingle();
+  if (!page) return { error: "Página não encontrada." };
+  await admin.from("facebook_lead_forms").delete().eq("workspace_id", workspace.id).eq("page_id", pageId);
+  const { error } = await admin.from("facebook_pages").delete().eq("workspace_id", workspace.id).eq("page_id", pageId);
+  if (error) return { error: "Não foi possível remover a página." };
+  revalidatePath("/integracoes");
+  revalidatePath("/integracoes/facebook-leads");
   return { error: null };
 }

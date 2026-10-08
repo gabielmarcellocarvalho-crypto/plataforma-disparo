@@ -68,8 +68,14 @@ export async function POST(req: Request) {
 async function processLeads(leads: { leadgenId: string; pageId: string; formId: string }[]) {
   const admin = createAdminClient();
   for (const lead of leads) {
-    // A mesma página pode estar conectada em mais de um workspace: o lead vai pra cada um que ligou o formulário.
+    // Uma página pertence a um workspace só (índice único no banco). Se por qualquer motivo houver mais de
+    // uma linha ativa, o dono é ambíguo: não entrega pra ninguém, melhor perder o aviso do que mandar o
+    // lead de um cliente pra outro.
     const { data: pages } = await admin.from("facebook_pages").select("workspace_id, page_token_enc").eq("page_id", lead.pageId).eq("status", "ativa");
+    if ((pages || []).length > 1) {
+      console.error(`Página ${lead.pageId} ativa em mais de um workspace; lead não entregue.`);
+      continue;
+    }
     for (const page of pages || []) {
       await saveLeadForWorkspace(admin, page.workspace_id as string, page.page_token_enc as string, lead.leadgenId, lead.formId).catch((err) =>
         console.error("Gravar lead do Facebook falhou:", err instanceof Error ? err.message : err)

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { ChevronDown, RefreshCw, Unplug } from "lucide-react";
-import { disconnectFacebook, fetchFacebookForms, saveFacebookForm, setFacebookPageActive, type FacebookForm } from "@/app/actions/facebook";
+import { disconnectFacebook, fetchFacebookForms, removeFacebookPage, saveFacebookForm, setFacebookPageActive, type FacebookForm } from "@/app/actions/facebook";
 import { cn } from "@/lib/utils";
 
 export type FacebookPageRow = { id: string; name: string; active: boolean; forms: FacebookForm[] };
@@ -10,6 +10,8 @@ export type FacebookConnectionRow = { id: string; name: string | null } | null;
 
 const STATUS_TEXT: Record<string, { tone: "ok" | "warn"; text: string }> = {
   ok: { tone: "ok", text: "Conta do Facebook conectada. Escolha as páginas e os formulários abaixo." },
+  parcial: { tone: "warn", text: "Conta conectada. Algumas páginas dessa conta do Facebook já pertencem a outro cliente e não foram adicionadas aqui." },
+  ocupada: { tone: "warn", text: "As páginas dessa conta do Facebook já estão conectadas em outro cliente. Nada foi adicionado aqui." },
   cancelado: { tone: "warn", text: "Conexão cancelada na tela do Facebook. Nada foi alterado." },
   expirado: { tone: "warn", text: "O link de conexão expirou. Clique em Conectar Facebook de novo." },
   config: { tone: "warn", text: "A conexão com o Facebook ainda não está configurada no servidor." },
@@ -97,6 +99,16 @@ function PageRow({ page, canManage }: { page: FacebookPageRow; canManage: boolea
   const [active, setActive] = useState(page.active);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  function remove() {
+    setError(null);
+    startTransition(async () => {
+      const r = await removeFacebookPage(page.id);
+      if (r.error !== null) setError(r.error);
+      setConfirmingRemove(false);
+    });
+  }
 
   function toggle() {
     setError(null);
@@ -111,6 +123,21 @@ function PageRow({ page, canManage }: { page: FacebookPageRow; canManage: boolea
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3 border border-border rounded-lg px-3.5 py-2.5">
         <span className="text-sm font-semibold flex-1 truncate">{page.name}</span>
+        {canManage &&
+          (confirmingRemove ? (
+            <>
+              <button type="button" onClick={remove} disabled={pending} className="text-xs font-bold px-2.5 py-1.5 rounded-md bg-danger text-white cursor-pointer disabled:opacity-60">
+                Confirmar remoção
+              </button>
+              <button type="button" onClick={() => setConfirmingRemove(false)} disabled={pending} className="text-xs font-bold px-2.5 py-1.5 rounded-md border border-border cursor-pointer">
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setConfirmingRemove(true)} disabled={pending} className="text-xs font-bold px-2.5 py-1.5 rounded-md border border-border text-text-muted hover:text-danger cursor-pointer disabled:opacity-60">
+              Remover
+            </button>
+          ))}
         <button
           type="button"
           role="switch"
