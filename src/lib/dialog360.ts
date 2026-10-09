@@ -126,6 +126,8 @@ export type Dialog360Template = {
   category: string;
   bodyText: string | null;
   bodyVarCount: number; // quantas variáveis {{1}}, {{2}}... o corpo tem
+  // Formato do cabeçalho (IMAGE, DOCUMENT...). Só o canal metacloud preenche; ausente = sem cabeçalho de mídia.
+  headerFormat?: string | null;
 };
 
 export async function listDialog360Templates(apiKey: string): Promise<Dialog360Template[]> {

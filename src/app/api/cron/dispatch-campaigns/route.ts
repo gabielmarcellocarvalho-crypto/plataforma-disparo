@@ -79,7 +79,7 @@ export async function GET(req: Request) {
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select(
-      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, template_category, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, message_templates, cta_label, cta_url, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
+      "id, workspace_id, channel, subject, name, mode, agent_id, whatsapp_instance_id, template_category, dialog360_template_name, dialog360_template_lang, dialog360_template_var_count, template_header_format, template_header_media_url, template_header_media_name, message_templates, cta_label, cta_url, banner_url, preheader, tags, show_brand_header, accent_color, ramp_config, dispatch_days, next_dispatch_at, agents(evolution_instance_name)"
     )
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
@@ -237,6 +237,13 @@ export async function GET(req: Request) {
         pararCampanha = true;
         break;
       }
+      // Template com cabeçalho de mídia exige o arquivo em cada envio. Campanha criada antes disso (ou sem o
+      // arquivo) para aqui, com motivo claro, em vez de a Meta recusar contato por contato (#132012).
+      if (isOfficialBlast && campaign.template_header_format && !campaign.template_header_media_url) {
+        await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Template com cabeçalho de mídia, mas a campanha não tem o arquivo." }).eq("id", recipient.id);
+        pararCampanha = true;
+        break;
+      }
 
       const instanceName =
         isEmail
@@ -334,7 +341,14 @@ export async function GET(req: Request) {
             contact.phone!,
             campaign.dialog360_template_name!,
             campaign.dialog360_template_lang || "pt_BR",
-            bodyParams
+            bodyParams,
+            campaign.template_header_format && campaign.template_header_media_url
+              ? {
+                  format: campaign.template_header_format as "IMAGE" | "DOCUMENT",
+                  url: campaign.template_header_media_url as string,
+                  fileName: (campaign.template_header_media_name as string | null) || null,
+                }
+              : null
           );
         } else {
           await sendText(instanceName!, contact.phone!, text as string);

@@ -45,27 +45,45 @@ export async function sendMetaCloudText(phoneNumberId: string, to: string, body:
   });
 }
 
+// Cabeçalho de mídia do template (imagem/documento). A Meta pede a mídia em cada envio, por link público.
+export type TemplateHeaderMedia = { format: "IMAGE" | "DOCUMENT"; url: string; fileName?: string | null };
+
+// Corpo da requisição de template. Separado do envio pra poder ser testado sem rede.
+export function buildTemplatePayload(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  bodyParams: string[] = [],
+  header?: TemplateHeaderMedia | null
+) {
+  const components: unknown[] = [];
+  if (header) {
+    const parameter =
+      header.format === "IMAGE"
+        ? { type: "image", image: { link: header.url } }
+        : { type: "document", document: { link: header.url, ...(header.fileName ? { filename: header.fileName } : {}) } };
+    components.push({ type: "header", parameters: [parameter] });
+  }
+  if (bodyParams.length) components.push({ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) });
+  return {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "template",
+    template: { name: templateName, language: { code: languageCode }, ...(components.length ? { components } : {}) },
+  };
+}
+
 // Template aprovado — obrigatório pra primeira mensagem de um disparo frio (fora da janela de 24h).
 export async function sendMetaCloudTemplate(
   phoneNumberId: string,
   to: string,
   templateName: string,
   languageCode: string,
-  bodyParams: string[] = []
+  bodyParams: string[] = [],
+  header?: TemplateHeaderMedia | null
 ): Promise<SendResult> {
-  return post(`/${phoneNumberId}/messages`, {
-    messaging_product: "whatsapp",
-    recipient_type: "individual",
-    to,
-    type: "template",
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-      ...(bodyParams.length
-        ? { components: [{ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) }] }
-        : {}),
-    },
-  });
+  return post(`/${phoneNumberId}/messages`, buildTemplatePayload(to, templateName, languageCode, bodyParams, header));
 }
 
 export async function sendMetaCloudMedia(
@@ -308,6 +326,8 @@ export type MetaCloudTemplate = {
   category: string;
   bodyText: string | null;
   bodyVarCount: number;
+  // Formato do cabeçalho (TEXT, IMAGE, VIDEO, DOCUMENT...) ou null se o template não tem cabeçalho.
+  headerFormat: string | null;
 };
 
 export async function listMetaCloudTemplates(wabaId: string): Promise<MetaCloudTemplate[]> {
@@ -322,7 +342,7 @@ export async function listMetaCloudTemplates(wabaId: string): Promise<MetaCloudT
       language: string;
       category: string;
       status: string;
-      components?: Array<{ type: string; text?: string }>;
+      components?: Array<{ type: string; text?: string; format?: string }>;
     }>;
   };
   return (data.data || [])
@@ -330,6 +350,7 @@ export async function listMetaCloudTemplates(wabaId: string): Promise<MetaCloudT
     .map((t) => {
       const bodyText = t.components?.find((c) => c.type === "BODY")?.text ?? null;
       const bodyVarCount = bodyText ? new Set([...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])).size : 0;
-      return { name: t.name, language: t.language, category: t.category, bodyText, bodyVarCount };
+      const headerFormat = t.components?.find((c) => c.type === "HEADER")?.format ?? null;
+      return { name: t.name, language: t.language, category: t.category, bodyText, bodyVarCount, headerFormat };
     });
 }

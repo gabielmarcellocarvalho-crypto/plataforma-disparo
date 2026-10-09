@@ -8,6 +8,7 @@ import { isContactStage } from "@/lib/crm-stages";
 import { normalizeTags, toPostgrestArrayLiteral } from "@/lib/contact-tags";
 import { listDialog360Templates } from "@/lib/dialog360";
 import { listMetaCloudTemplates } from "@/lib/metacloud";
+import { campaignHeaderPath, headerSupport, isOwnHeaderPath, validateHeaderFile, type HeaderMediaFormat } from "@/lib/template-header";
 import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
 
 export type ActionResult = { error: string | null; ok?: boolean };
@@ -23,6 +24,8 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   const agentId = String(formData.get("agent_id") || "").trim() || null;
   const whatsappInstanceId = String(formData.get("whatsapp_instance_id") || "").trim() || null;
   const dialog360TemplateName = String(formData.get("dialog360_template_name") || "").trim() || null;
+  const headerMediaPath = String(formData.get("header_media_path") || "").trim() || null;
+  const headerMediaName = String(formData.get("header_media_name") || "").trim().slice(0, 120) || null;
   const dialog360TemplateLang = String(formData.get("dialog360_template_lang") || "").trim() || null;
   const templatesRaw = String(formData.get("templates") || "");
   const delayMin = parseInt(String(formData.get("delay_min") || "60"), 10);
@@ -163,6 +166,9 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
   // mostra o seletor, mas ainda manda o id no hidden input.
   let whatsappInstance: { id: string; channel: string; dialog360_api_key: string | null; meta_waba_id: string | null } | null = null;
   let dialog360TemplateVarCount = 0;
+  let templateHeaderFormat: HeaderMediaFormat | null = null;
+  let templateHeaderMediaUrl: string | null = null;
+  let templateHeaderMediaName: string | null = null;
   if (mode === "blast" && channel === "whatsapp") {
     if (!whatsappInstanceId) return { error: "Nenhum número de WhatsApp conectado pra esse workspace (conecte em Configurações)." };
     const { data } = await supabase
@@ -190,6 +196,21 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       if (!match) return { error: "Template não encontrado entre os aprovados desse número — atualize a lista e escolha de novo." };
       if (match.bodyVarCount > 1) return { error: "Esse template tem mais de 1 variável no corpo — ainda não suportado (só {{1}} = primeiro nome)." };
       dialog360TemplateVarCount = match.bodyVarCount;
+
+      // Cabeçalho de mídia: a Meta exige a imagem/documento em cada envio. Decide pelo formato real do
+      // template (lista da Meta), não pelo que o formulário mandou.
+      const support = headerSupport((match as { headerFormat?: string | null }).headerFormat);
+      if (support.kind === "unsupported") {
+        return { error: `Esse template tem cabeçalho de ${support.format.toLowerCase()}, ainda não suportado. Escolha um template sem cabeçalho ou com imagem/documento.` };
+      }
+      if (support.kind === "media") {
+        if (!headerMediaPath) return { error: `Esse template tem cabeçalho de ${support.format === "IMAGE" ? "imagem" : "documento"}: envie o arquivo antes de criar a campanha.` };
+        if (!isOwnHeaderPath(workspace.id, headerMediaPath)) return { error: "Arquivo do cabeçalho inválido. Envie de novo." };
+        const { data: pub } = createAdminClient().storage.from("conversation-media").getPublicUrl(headerMediaPath);
+        templateHeaderFormat = support.format;
+        templateHeaderMediaUrl = pub.publicUrl;
+        templateHeaderMediaName = support.format === "DOCUMENT" ? headerMediaName : null;
+      }
     }
   }
 
@@ -232,6 +253,9 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       dialog360_template_name: isOfficialWhatsappChannel(whatsappInstance?.channel || "") ? dialog360TemplateName : null,
       dialog360_template_lang: isOfficialWhatsappChannel(whatsappInstance?.channel || "") ? dialog360TemplateLang || "pt_BR" : null,
       dialog360_template_var_count: dialog360TemplateVarCount,
+      template_header_format: templateHeaderFormat,
+      template_header_media_url: templateHeaderMediaUrl,
+      template_header_media_name: templateHeaderMediaName,
       subject: channel === "email" && mode === "blast" ? subject : null,
       message_templates: templates,
       sequence_steps: mode === "sequence" ? sequenceSteps : [],
@@ -424,4 +448,25 @@ export async function pauseCampaign(campaignId: string) {
   const supabase = await createClient();
   await supabase.from("campaigns").update({ status: "pausada" }).eq("id", campaignId).eq("workspace_id", workspace.id);
   revalidatePath("/campanhas");
+}
+
+// Prepara o upload da imagem/documento do cabeçalho de um template. O arquivo NÃO passa pelo server
+// action (na Vercel o corpo é cortado em ~4,5MB antes do nosso código): aqui só sai uma URL assinada,
+// o navegador sobe direto pro bucket e a criação da campanha recebe só o caminho.
+export async function prepareCampaignHeaderUpload(
+  format: HeaderMediaFormat,
+  fileName: string,
+  mimeType: string,
+  size: number
+): Promise<{ error: string | null; path?: string; token?: string }> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum workspace ativo." };
+  if (format !== "IMAGE" && format !== "DOCUMENT") return { error: "Formato de cabeçalho não suportado." };
+  const invalid = validateHeaderFile(format, mimeType, size);
+  if (invalid) return { error: invalid };
+
+  const path = campaignHeaderPath(workspace.id, mimeType);
+  const { data, error } = await createAdminClient().storage.from("conversation-media").createSignedUploadUrl(path);
+  if (error || !data) return { error: `Não foi possível preparar o envio de ${fileName || "arquivo"}.` };
+  return { error: null, path: data.path, token: data.token };
 }

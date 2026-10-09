@@ -1,8 +1,10 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { createCampaign, type ActionResult } from "@/app/actions/campaigns";
+import { createCampaign, prepareCampaignHeaderUpload, type ActionResult } from "@/app/actions/campaigns";
 import { listWhatsappTemplates } from "@/app/actions/whatsapp";
+import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
+import { headerMediaRule, headerSupport, validateHeaderFile } from "@/lib/template-header";
 import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 import { EmailPreview } from "@/components/email-preview";
 import { TagPicker } from "@/components/tag-picker";
@@ -23,7 +25,7 @@ const WEEK_DAY_LABELS: { value: number; label: string }[] = [
 
 type AgentOption = { id: string; name: string; connection_status: string };
 type WhatsappInstanceOption = { id: string; channel: WhatsappChannel; department: string };
-type Dialog360Template = { name: string; language: string; category: string; bodyText: string | null; bodyVarCount: number };
+type Dialog360Template = { name: string; language: string; category: string; bodyText: string | null; bodyVarCount: number; headerFormat?: string | null };
 type SequenceStep = { dayOffset: number; subject: string; body: string; ctaLabel: string };
 
 let stepKeySeq = 0;
@@ -101,7 +103,42 @@ export function CreateCampaignForm({
   const isDialog360Blast = channel === "whatsapp" && mode === "blast" && isOfficialWhatsappChannel(selectedInstance?.channel || "");
   // Bloqueia o envio quando o número é API oficial e não tem um template válido escolhido (sem
   // template não sai nada em disparo frio) ou o template tem mais de 1 variável (ainda não suportado).
-  const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || selectedTemplate.bodyVarCount > 1);
+  // Template com cabeçalho de imagem/documento: a Meta exige o arquivo em cada envio, então ele sobe junto
+  // com a campanha. Vídeo e outros formatos ainda não são suportados.
+  const headerInfo = headerSupport(selectedTemplate?.headerFormat);
+  const [headerUpload, setHeaderUpload] = useState<{ path: string; name: string } | null>(null);
+  const [headerError, setHeaderError] = useState<string | null>(null);
+  const [uploadingHeader, setUploadingHeader] = useState(false);
+  useEffect(() => {
+    // Trocar de template zera o arquivo: cada template pede um tipo de mídia.
+    setHeaderUpload(null);
+    setHeaderError(null);
+  }, [templateKey]);
+  const headerBlocked =
+    headerInfo.kind === "unsupported" || (headerInfo.kind === "media" && !headerUpload) || uploadingHeader;
+  const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || selectedTemplate.bodyVarCount > 1 || headerBlocked);
+
+  async function onHeaderFile(file: File | null) {
+    setHeaderError(null);
+    setHeaderUpload(null);
+    if (!file || headerInfo.kind !== "media") return;
+    const invalid = validateHeaderFile(headerInfo.format, file.type, file.size);
+    if (invalid) return setHeaderError(invalid);
+    setUploadingHeader(true);
+    try {
+      const prep = await prepareCampaignHeaderUpload(headerInfo.format, file.name, file.type, file.size);
+      if (prep.error || !prep.path || !prep.token) return setHeaderError(prep.error || "Não foi possível preparar o envio.");
+      const { error } = await createBrowserSupabase()
+        .storage.from("conversation-media")
+        .uploadToSignedUrl(prep.path, prep.token, file, { contentType: file.type.split(";")[0] });
+      if (error) return setHeaderError(`Falha ao subir o arquivo: ${error.message}`);
+      setHeaderUpload({ path: prep.path, name: file.name });
+    } catch {
+      setHeaderError("Falha de conexão ao subir o arquivo. Tente de novo.");
+    } finally {
+      setUploadingHeader(false);
+    }
+  }
 
   useEffect(() => {
     if (state.ok) dialogRef.current?.close();
@@ -562,6 +599,37 @@ export function CreateCampaignForm({
                           </button>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {headerInfo.kind === "unsupported" && (
+                    <p className="text-xs text-danger font-medium">
+                      Esse template tem cabeçalho de {headerInfo.format.toLowerCase()}, ainda não suportado. Escolha um template sem
+                      cabeçalho ou com imagem ou documento.
+                    </p>
+                  )}
+                  {headerInfo.kind === "media" && (
+                    <div className="flex flex-col gap-1.5 border border-border rounded-lg p-3 bg-bg">
+                      <span className="text-sm font-semibold">
+                        {headerInfo.format === "IMAGE" ? "Imagem do cabeçalho" : "Documento do cabeçalho"}
+                      </span>
+                      <p className="text-xs text-text-muted">
+                        Esse template exige {headerMediaRule(headerInfo.format).label} em cada envio. Escolha o arquivo que vai
+                        no disparo.
+                      </p>
+                      <input type="hidden" name="header_media_path" value={headerUpload?.path ?? ""} />
+                      <input type="hidden" name="header_media_name" value={headerUpload?.name ?? ""} />
+                      <input
+                        type="file"
+                        accept={headerMediaRule(headerInfo.format).accept}
+                        onChange={(e) => onHeaderFile(e.target.files?.[0] ?? null)}
+                        disabled={uploadingHeader}
+                        aria-label="Arquivo do cabeçalho do template"
+                        className="text-xs"
+                      />
+                      {uploadingHeader && <p className="text-xs text-text-muted">Enviando arquivo…</p>}
+                      {headerUpload && !uploadingHeader && <p className="text-xs text-success font-semibold">Arquivo pronto: {headerUpload.name}</p>}
+                      {headerError && <p className="text-xs text-danger font-semibold">{headerError}</p>}
                     </div>
                   )}
 
