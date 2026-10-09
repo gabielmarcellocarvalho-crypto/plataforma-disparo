@@ -6,6 +6,7 @@ import { runAgentTurn, AGENT_COLUMNS, type Agent, type ResolvedIncoming, type Ra
 import { type AgentChannel } from "@/lib/agent-channel";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+import { createInboundLead } from "@/lib/inbound-lead";
 import { secureEqual } from "@/lib/secure-compare";
 import { handleChatbotInbound } from "@/lib/chatbot-engine";
 
@@ -185,13 +186,26 @@ async function processWebhook(body: {
   if (handledByBot) return;
   if (!text) return;
 
-  const { data: contact } = await supabase
+  let { data: contact } = await supabase
     .from("contacts")
     .select("id, photo_url, stage")
     .eq("workspace_id", instance.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
-  if (!contact) return; // número fora da base — sem agente de IA aqui, não há o que fazer
+  let createdNow = false;
+  if (!contact) {
+    // Número novo que escreveu primeiro (sem agente neste número): vira contato já em andamento
+    // ("abordado") e a mensagem entra em Conversas, em vez de sumir.
+    contact = await createInboundLead(supabase, {
+      workspaceId: instance.workspace_id,
+      instanceId: instance.id,
+      phone,
+      name: data.pushName ?? null,
+      optOut: OPT_OUT.test(text),
+    });
+    createdNow = Boolean(contact);
+  }
+  if (!contact) return;
 
   if (!contact.photo_url) {
     const photoUrl = await fetchContactProfilePicture(instanceName, phone);
@@ -216,7 +230,7 @@ async function processWebhook(body: {
 
   if (OPT_OUT.test(text)) {
     await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
-  } else if (canAdvanceStage(contact.stage as ContactStage, "interessado")) {
+  } else if (!createdNow && canAdvanceStage(contact.stage as ContactStage, "interessado")) {
     // Sem agente de IA lendo a resposta, não tem como classificar o que o lead disse — mas responder
     // já é o sinal mais forte que dá pra captar automaticamente num disparo em massa puro. Avança pra
     // "interessado" (nunca regride, respeitando a ordem normal do funil).

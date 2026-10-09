@@ -8,6 +8,7 @@ import { type AgentChannel } from "@/lib/agent-channel";
 import { brPhoneVariant } from "@/lib/import-contacts";
 import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+import { createInboundLead } from "@/lib/inbound-lead";
 import { secureEqual } from "@/lib/secure-compare";
 import { handleChatbotInbound } from "@/lib/chatbot-engine";
 import { parseTemplateCategoryChanges, saveTemplateCategoryChanges } from "@/lib/meta-template-events";
@@ -186,7 +187,21 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
         contact = byVariant;
       }
     }
-    if (!contact) continue; // número fora da base — sem agente aqui, não há o que fazer
+    let createdNow = false;
+    if (!contact) {
+      // Número novo que escreveu primeiro (sem agente neste número): vira contato já em andamento
+      // ("abordado") e a mensagem entra em Conversas, em vez de sumir.
+      const created = await createInboundLead(supabase, {
+        workspaceId: instance.workspace_id,
+        instanceId: instance.id,
+        phone: msg.from,
+        name: msg.contactName ?? null,
+        optOut: OPT_OUT.test(msg.text || ""),
+      });
+      contact = created ? { id: created.id, stage: created.stage } : null;
+      createdNow = Boolean(created);
+    }
+    if (!contact) continue;
     if (!msg.text) continue; // sem agente, esse caminho só registra texto passivo — áudio/imagem não são baixados aqui
 
     // Mesma dedup de messages.external_id do caminho com agente (migration 0045) — retry/replay do
@@ -211,7 +226,7 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
 
     if (OPT_OUT.test(msg.text)) {
       await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
-    } else if (canAdvanceStage(contact.stage as ContactStage, "interessado")) {
+    } else if (!createdNow && canAdvanceStage(contact.stage as ContactStage, "interessado")) {
       // Sem agente de IA lendo a resposta, não tem como classificar o que o lead disse — mas
       // responder já é o sinal mais forte que dá pra captar automaticamente num disparo em massa
       // puro. Avança pra "interessado" (nunca regride, respeitando a ordem normal do funil).
