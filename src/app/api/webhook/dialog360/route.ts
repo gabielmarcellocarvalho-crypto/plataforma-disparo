@@ -79,8 +79,8 @@ async function resolveOfficialIncoming(
 // usa esse handshake (registra a URL via API, não pela tela) — o handler GET só entra em ação pro
 // canal metacloud, mas não atrapalha o 360dialog em nada.
 // A resposta do agente roda dentro desta invocação: delay humanizado + chamada ao LLM + envio. O teto
-// da função é 300s (plano pago, Fluid Compute), mas o delay do agente segue limitado a 40s em
-// MAX_REPLY_DELAY_SECONDS (actions/agents.ts) até alguém decidir subir os dois juntos.
+// da função é 300s (plano pago, Fluid Compute) e o delay do agente é limitado a 120s em
+// MAX_REPLY_DELAY_SECONDS (actions/agents.ts), deixando 180s pro LLM e o envio. Os dois andam juntos.
 export const maxDuration = 300;
 
 export async function GET(req: Request) {

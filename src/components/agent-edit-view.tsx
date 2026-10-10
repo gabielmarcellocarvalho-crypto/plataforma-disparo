@@ -440,7 +440,7 @@ export function AgentEditView({
           </div>
           {delayError && <p className="text-xs text-danger font-medium mt-1.5">{delayError}</p>}
           <p className="text-xs text-text-muted mt-1.5">
-            Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo. Máximo de 40s: a
+            Espera aleatória nesse intervalo antes de mandar a resposta — evita parecer um bot instantâneo. Máximo de 120s: a
             espera acontece dentro da mesma execução que chama a IA, e o resto do tempo é dela.
           </p>
         </div>
