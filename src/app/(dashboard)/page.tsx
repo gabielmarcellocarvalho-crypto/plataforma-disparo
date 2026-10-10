@@ -76,6 +76,14 @@ export default async function OverviewPage({
         [],
       ];
 
+  // Período sem nenhum lead novo (ex.: dias em que não houve disparo): em vez de um funil vazio, mostra
+  // o funil de todos os leads, como está no Pipeline. Só roda quando o do período veio zerado, então
+  // nos períodos com leads nada muda.
+  const periodFunnelEmpty = funnel.points.length === 0 || funnel.points[0]?.value === 0;
+  const showingPipelineFunnel = Boolean(workspace) && hasConversion && periodFunnelEmpty;
+  const shownFunnel =
+    showingPipelineFunnel && workspace ? await getFunnelData(workspace.id, { from: new Date(0), to: new Date() }, funnelEnd) : funnel;
+
   // Distribui as mensagens do período por dia.
   const days = eachDayBrt(period.from, period.to);
   const msgByDay = new Map(days.map((d) => [d, msgByDayRaw[d] || 0]));
@@ -190,18 +198,25 @@ export default async function OverviewPage({
             <div>
               <h3 className="font-bold text-[15px]">Funil {planLabel(plan)}</h3>
               <p className="text-xs text-text-muted mt-0.5">
-                Leads recebidos {period.label}. O número grande é cumulativo (quantos já chegaram
+                {showingPipelineFunnel
+                  ? `Nenhum lead novo ${period.label}. Mostrando o funil de todos os leads, como está no Pipeline. `
+                  : `Leads recebidos ${period.label}. `}
+                O número grande é cumulativo (quantos já chegaram
                 nessa fase ou passaram dela); abaixo do nome da fase, quantos estão nela agora — esse
                 é o que bate com o Pipeline.
-                {funnel.descartados > 0 ? ` ${funnel.descartados} descartado(s) nesse período, fora do funil.` : ""}
+                {shownFunnel.descartados > 0
+                  ? showingPipelineFunnel
+                    ? ` ${shownFunnel.descartados} descartado(s), fora do funil.`
+                    : ` ${shownFunnel.descartados} descartado(s) nesse período, fora do funil.`
+                  : ""}
               </p>
             </div>
           </div>
-          {funnel.points.length === 0 || funnel.points[0]?.value === 0 ? (
-            <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido nesse período ainda.</p>
+          {shownFunnel.points.length === 0 || shownFunnel.points[0]?.value === 0 ? (
+            <p className="text-sm text-text-muted text-center py-10">Nenhum lead recebido ainda.</p>
           ) : (
             <FunnelChart
-              data={funnel.points.map((p) => ({
+              data={shownFunnel.points.map((p) => ({
                 label: p.label,
                 value: p.value,
                 currentLabel: `${p.current.toLocaleString("pt-BR")} aqui agora`,
