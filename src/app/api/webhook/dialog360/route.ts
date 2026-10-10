@@ -78,9 +78,10 @@ async function resolveOfficialIncoming(
 // (nível de app — 1 assinatura só cobre todos os WABAs conectados via Embedded Signup). 360dialog não
 // usa esse handshake (registra a URL via API, não pela tela) — o handler GET só entra em ação pro
 // canal metacloud, mas não atrapalha o 360dialog em nada.
-// 60s (teto do plano Hobby): a resposta do agente roda dentro desta invocação — delay humanizado de
-// até 40s + chamada ao LLM + envio. Ver MAX_REPLY_DELAY_SECONDS em actions/agents.ts.
-export const maxDuration = 60;
+// A resposta do agente roda dentro desta invocação: delay humanizado + chamada ao LLM + envio. O teto
+// da função é 300s (plano pago, Fluid Compute), mas o delay do agente segue limitado a 40s em
+// MAX_REPLY_DELAY_SECONDS (actions/agents.ts) até alguém decidir subir os dois juntos.
+export const maxDuration = 300;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
