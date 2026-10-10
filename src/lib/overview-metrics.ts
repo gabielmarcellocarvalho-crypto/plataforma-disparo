@@ -8,6 +8,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
 import type { Range } from "@/lib/cost-monitor";
+import { dayKeyBrt } from "@/lib/period";
+
+type ServerClient = Awaited<ReturnType<typeof createClient>>;
 
 // O Supabase tem "Max Rows" travado em 1000 na API: um `.limit(20000)` do client é silenciosamente
 // IGNORADO e a resposta volta cortada em 1000 linhas, sem erro nenhum — a métrica sai errada pra
@@ -53,17 +56,18 @@ export type EmailClickMetrics = { sent: number; clicked: number; clickRatePct: n
 // pro WhatsApp).
 export async function getEmailClickMetrics(workspaceId: string, range: Range): Promise<EmailClickMetrics> {
   const supabase = await createClient();
-  const [rows, { count: failedNow }] = await Promise.all([
-    fetchAllPaged<{ clicked_at: string | null }>((from, to) =>
-      supabase
-        .from("email_clicks")
-        .select("clicked_at")
-        .eq("workspace_id", workspaceId)
-        .gte("sent_at", range.from.toISOString())
-        .lte("sent_at", range.to.toISOString())
-        .order("sent_at", { ascending: true })
-        .range(from, to)
-    ),
+  const fromIso = range.from.toISOString();
+  const toIso = range.to.toISOString();
+  // Só contagens: antes isso trazia cada linha de email_clicks (em páginas seguidas) só pra contar.
+  const [{ count: sent }, { count: clicked }, { count: failedNow }] = await Promise.all([
+    supabase.from("email_clicks").select("sent_at", { count: "exact", head: true }).eq("workspace_id", workspaceId).gte("sent_at", fromIso).lte("sent_at", toIso),
+    supabase
+      .from("email_clicks")
+      .select("sent_at", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .gte("sent_at", fromIso)
+      .lte("sent_at", toIso)
+      .not("clicked_at", "is", null),
     // Sem período aqui de propósito: campaign_recipients não guarda quando a falha aconteceu (só
     // sent_at, que fica nulo em falha), então "falhando agora" é o estado atual, não um recorte do
     // período selecionado — é um alerta de "tem algo travado", não uma métrica histórica.
@@ -75,9 +79,9 @@ export async function getEmailClickMetrics(workspaceId: string, range: Range): P
       .eq("status", "falhou"),
   ]);
 
-  const sent = rows.length;
-  const clicked = rows.filter((r) => r.clicked_at).length;
-  return { sent, clicked, clickRatePct: sent > 0 ? Math.round((clicked / sent) * 1000) / 10 : null, failedNow: failedNow ?? 0 };
+  const sentN = sent ?? 0;
+  const clickedN = clicked ?? 0;
+  return { sent: sentN, clicked: clickedN, clickRatePct: sentN > 0 ? Math.round((clickedN / sentN) * 1000) / 10 : null, failedNow: failedNow ?? 0 };
 }
 
 export type VolumeMetrics = {
@@ -127,8 +131,8 @@ function pct(numerator: number, denominator: number): number | null {
   return Math.round((numerator / denominator) * 1000) / 10;
 }
 
-export async function getVolumeMetrics(workspaceId: string, range: Range): Promise<VolumeMetrics> {
-  const supabase = await createClient();
+export async function legacyVolumeMetrics(workspaceId: string, range: Range, client?: unknown): Promise<VolumeMetrics> {
+  const supabase = ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
@@ -193,8 +197,8 @@ export async function getVolumeMetrics(workspaceId: string, range: Range): Promi
 
 // Tempo de resposta (latência entre o contato mandar mensagem e o agente responder), conversas sem
 // resposta nossa ainda pendente, e a maior espera atual — tudo dentro do período filtrado.
-export async function getResponseMetrics(workspaceId: string, range: Range): Promise<ResponseMetrics> {
-  const supabase = await createClient();
+export async function legacyResponseMetrics(workspaceId: string, range: Range, client?: unknown): Promise<ResponseMetrics> {
+  const supabase = ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
@@ -248,8 +252,8 @@ export async function getResponseMetrics(workspaceId: string, range: Range): Pro
 // Fontes de lead (custom_fields.origem) entre os leads recebidos no período — quem entrou via
 // /api/v1/leads já grava isso; quem chegou direto pelo WhatsApp (sem origem explícita) cai em
 // "WhatsApp direto", pra o gráfico nunca ficar vazio/quebrado só por falta desse campo.
-export async function getLeadSources(workspaceId: string, range: Range): Promise<LeadSource[]> {
-  const supabase = await createClient();
+export async function legacyLeadSources(workspaceId: string, range: Range, client?: unknown): Promise<LeadSource[]> {
+  const supabase = ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
   const data = await fetchAllPaged<{ custom_fields: Record<string, unknown> | null }>((from, to) =>
     supabase
       .from("contacts")
@@ -271,8 +275,8 @@ export async function getLeadSources(workspaceId: string, range: Range): Promise
   return [...counts.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
 }
 
-export async function getConversionMetrics(workspaceId: string, range: Range): Promise<ConversionMetrics> {
-  const supabase = await createClient();
+export async function legacyConversionMetrics(workspaceId: string, range: Range, client?: unknown): Promise<ConversionMetrics> {
+  const supabase = ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
   const fromIso = range.from.toISOString();
   const toIso = range.to.toISOString();
 
@@ -326,12 +330,13 @@ export async function getConversionMetrics(workspaceId: string, range: Range): P
 // quantos desses leads já chegaram ali (ou além) até agora — leitura cumulativa, igual todo funil de
 // CRM (Pipedrive/HubSpot etc. fazem o mesmo: mostram o estágio mais avançado já alcançado, não
 // exigem que o contato tenha passado por cada degrau em ordem perfeita).
-export async function getFunnelData(
+export async function legacyFunnelData(
   workspaceId: string,
   range: Range,
-  funnelEnd: ContactStage = "concluido"
+  funnelEnd: ContactStage = "concluido",
+  client?: unknown
 ): Promise<{ points: FunnelPoint[]; descartados: number }> {
-  const supabase = await createClient();
+  const supabase = ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
   const [contacts, { data: workspaceRow }] = await Promise.all([
     fetchAllPaged<{ stage: string }>((from, to) =>
       supabase
@@ -384,4 +389,190 @@ export async function getFunnelData(
     current: currentAtStage[i],
   }));
   return { points, descartados };
+}
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Cálculo no banco (migration 0085_overview_metrics.sql).
+//
+// Os `legacy*` acima puxam as linhas e somam em memória. Os `sql*` abaixo pedem o resultado pronto ao
+// Postgres. As funções públicas (`get*`) tentam o SQL e, se a função não existir ou falhar, caem no
+// cálculo antigo: aplicar (ou não) a migration nunca derruba a Visão geral.
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+
+async function rpc<T>(supabase: ServerClient, fn: string, workspaceId: string, range: Range): Promise<T | null> {
+  const { data, error } = await supabase.rpc(fn, {
+    p_workspace: workspaceId,
+    p_from: range.from.toISOString(),
+    p_to: range.to.toISOString(),
+  });
+  if (error || data === null || data === undefined) {
+    console.warn(`Visão geral: ${fn} indisponível, usando o cálculo antigo (${error?.message ?? "sem retorno"}).`);
+    return null;
+  }
+  return data as T;
+}
+
+const num = (v: unknown): number => Number(v) || 0;
+
+async function clientOf(client?: unknown): Promise<ServerClient> {
+  return ((client as ServerClient | undefined) ?? (await createClient())) as ServerClient;
+}
+
+export async function sqlVolumeMetrics(workspaceId: string, range: Range, client?: unknown): Promise<VolumeMetrics | null> {
+  const r = await rpc<Record<string, unknown>>(await clientOf(client), "overview_volume", workspaceId, range);
+  if (!r) return null;
+  return {
+    leadsRecebidos: num(r.leads_recebidos),
+    leadsAbordados: num(r.leads_abordados),
+    mensagensEnviadas: num(r.mensagens_enviadas),
+    mensagensRecebidas: num(r.mensagens_recebidas),
+    conversasIniciadas: num(r.conversas_iniciadas),
+    conversasEmAndamento: num(r.conversas_em_andamento),
+  };
+}
+
+export async function sqlResponseMetrics(workspaceId: string, range: Range, client?: unknown): Promise<ResponseMetrics | null> {
+  const r = await rpc<Record<string, unknown>>(await clientOf(client), "overview_response", workspaceId, range);
+  if (!r) return null;
+  const latCount = num(r.lat_count);
+  const unanswered = num(r.unanswered);
+  const oldest = typeof r.oldest_unanswered_at === "string" ? new Date(r.oldest_unanswered_at).getTime() : null;
+  return {
+    // Mesmo arredondamento do cálculo antigo: soma em ms -> média em minutos, uma casa decimal.
+    tempoMedioRespostaMin: latCount > 0 ? Math.round((num(r.lat_sum_ms) / latCount / 60000) * 10) / 10 : null,
+    conversasNaoRespondidas: unanswered,
+    maisTempoEsperandoMin: unanswered > 0 && oldest !== null ? Math.round((Date.now() - oldest) / 60000) : null,
+  };
+}
+
+export async function sqlConversionMetrics(workspaceId: string, range: Range, client?: unknown): Promise<ConversionMetrics | null> {
+  const r = await rpc<Record<string, unknown>>(await clientOf(client), "overview_conversion", workspaceId, range);
+  if (!r) return null;
+  const abordados = num(r.abordados);
+  if (abordados === 0) return { taxaResposta: null, taxaInteresse: null, taxaQualificacao: null, taxaFechamento: null };
+  return {
+    taxaResposta: pct(num(r.responderam), abordados),
+    taxaInteresse: pct(num(r.interessados), abordados),
+    taxaQualificacao: pct(num(r.qualificados), abordados),
+    taxaFechamento: pct(num(r.fechados), abordados),
+  };
+}
+
+// A mesma regra do funil antigo (que percorria contato por contato), aplicada sobre "quantos contatos
+// há em cada fase". Pura, pra poder ser testada sem banco.
+export function buildFunnel(
+  stageCounts: Record<string, number>,
+  workspaceRow: { crm_stage_labels?: unknown; crm_hidden_stages?: unknown } | null,
+  funnelEnd: ContactStage = "concluido"
+): { points: FunnelPoint[]; descartados: number } {
+  const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
+  const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
+  const visibleStages = getVisibleStages(hiddenStages);
+  const endIdx = FUNNEL_HAPPY_PATH.indexOf(funnelEnd);
+  const happyPathForPlan = endIdx === -1 ? FUNNEL_HAPPY_PATH : FUNNEL_HAPPY_PATH.slice(0, endIdx + 1);
+  const funnelStages = happyPathForPlan.filter((s) => visibleStages.includes(s));
+
+  let descartados = 0;
+  const cumulative: number[] = new Array(funnelStages.length).fill(0);
+  const currentAtStage: number[] = new Array(funnelStages.length).fill(0);
+  for (const [rawStage, count] of Object.entries(stageCounts)) {
+    const stage = rawStage as ContactStage;
+    if (stage === "descartado") {
+      descartados += count;
+      continue;
+    }
+    const display = displayStageFor(stage, visibleStages);
+    let idx = funnelStages.indexOf(display as ContactStage);
+    if (idx === -1) {
+      if (FUNNEL_HAPPY_PATH.indexOf(display as ContactStage) === -1) continue;
+      idx = funnelStages.length - 1;
+    }
+    for (let i = 0; i <= idx; i++) cumulative[i] += count;
+    currentAtStage[idx] += count;
+  }
+
+  const points: FunnelPoint[] = funnelStages.map((stage, i) => ({ stage, label: stageLabels[stage], value: cumulative[i], current: currentAtStage[i] }));
+  return { points, descartados };
+}
+
+export async function sqlFunnelData(
+  workspaceId: string,
+  range: Range,
+  funnelEnd: ContactStage = "concluido",
+  client?: unknown
+): Promise<{ points: FunnelPoint[]; descartados: number } | null> {
+  const supabase = await clientOf(client);
+  const [counts, { data: workspaceRow }] = await Promise.all([
+    rpc<Record<string, unknown>>(supabase, "overview_funnel", workspaceId, range),
+    supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", workspaceId).maybeSingle(),
+  ]);
+  if (!counts) return null;
+  const stageCounts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(counts)) stageCounts[k] = num(v);
+  return buildFunnel(stageCounts, workspaceRow, funnelEnd);
+}
+
+export async function sqlLeadSources(workspaceId: string, range: Range, client?: unknown): Promise<LeadSource[] | null> {
+  const r = await rpc<Array<{ label: string; value: unknown }>>(await clientOf(client), "overview_lead_sources", workspaceId, range);
+  if (!r) return null;
+  return r.map((x) => ({ label: x.label, value: num(x.value) }));
+}
+
+// Mensagens enviadas por dia (chave AAAA-MM-DD em Brasília). O cálculo antigo trazia no máximo 1000
+// linhas (o servidor corta em 1000 mesmo com .limit(20000)), então o gráfico saía errado pra baixo em
+// período com mais de mil mensagens. Aqui a contagem é completa.
+export async function sqlMessagesByDay(workspaceId: string, range: Range, client?: unknown): Promise<Record<string, number> | null> {
+  const r = await rpc<Record<string, unknown>>(await clientOf(client), "overview_messages_by_day", workspaceId, range);
+  if (!r) return null;
+  const out: Record<string, number> = {};
+  for (const [day, n] of Object.entries(r)) out[day] = num(n);
+  return out;
+}
+
+export async function legacyMessagesByDay(workspaceId: string, range: Range, client?: unknown): Promise<Record<string, number>> {
+  const supabase = await clientOf(client);
+  const { data } = await supabase
+    .from("messages")
+    .select("created_at")
+    .eq("workspace_id", workspaceId)
+    .eq("role", "assistant")
+    .gte("created_at", range.from.toISOString())
+    .lte("created_at", range.to.toISOString())
+    .limit(20000);
+  const out: Record<string, number> = {};
+  for (const m of data || []) {
+    const key = dayKeyBrt(m.created_at as string);
+    out[key] = (out[key] || 0) + 1;
+  }
+  return out;
+}
+
+// ── API pública: SQL primeiro, cálculo antigo como reserva ──────────────────────────────────────
+
+export async function getVolumeMetrics(workspaceId: string, range: Range): Promise<VolumeMetrics> {
+  return (await sqlVolumeMetrics(workspaceId, range)) ?? legacyVolumeMetrics(workspaceId, range);
+}
+
+export async function getResponseMetrics(workspaceId: string, range: Range): Promise<ResponseMetrics> {
+  return (await sqlResponseMetrics(workspaceId, range)) ?? legacyResponseMetrics(workspaceId, range);
+}
+
+export async function getConversionMetrics(workspaceId: string, range: Range): Promise<ConversionMetrics> {
+  return (await sqlConversionMetrics(workspaceId, range)) ?? legacyConversionMetrics(workspaceId, range);
+}
+
+export async function getFunnelData(
+  workspaceId: string,
+  range: Range,
+  funnelEnd: ContactStage = "concluido"
+): Promise<{ points: FunnelPoint[]; descartados: number }> {
+  return (await sqlFunnelData(workspaceId, range, funnelEnd)) ?? legacyFunnelData(workspaceId, range, funnelEnd);
+}
+
+export async function getLeadSources(workspaceId: string, range: Range): Promise<LeadSource[]> {
+  return (await sqlLeadSources(workspaceId, range)) ?? legacyLeadSources(workspaceId, range);
+}
+
+export async function getMessagesByDay(workspaceId: string, range: Range): Promise<Record<string, number>> {
+  return (await sqlMessagesByDay(workspaceId, range)) ?? legacyMessagesByDay(workspaceId, range);
 }

@@ -7,6 +7,7 @@ import { ConversationsPanel, type Conversation } from "@/components/conversation
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { getConversationTickets } from "@/app/actions/conversation-tickets";
 import { conversationKey } from "@/lib/conversation-tickets";
+import { fetchAllParallel } from "@/lib/paged-fetch";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
@@ -17,31 +18,33 @@ const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro:
 const MESSAGE_LIMIT = 5000;
 const PAGE_SIZE = 1000;
 
-async function fetchRecentMessages(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string) {
-  const all: {
-    id: string;
-    contact_id: string;
-    agent_id: string | null;
-    role: string;
-    content: string;
-    media_url: string | null;
-    media_type: "image" | "audio" | "document" | null;
-    created_at: string;
-  }[] = [];
-  let offset = 0;
-  while (all.length < MESSAGE_LIMIT) {
-    const { data } = await supabase
-      .from("messages")
-      .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (!data || data.length === 0) break;
-    all.push(...data);
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return all;
+type MessageRow = {
+  id: string;
+  contact_id: string;
+  agent_id: string | null;
+  role: string;
+  content: string;
+  media_url: string | null;
+  media_type: "image" | "audio" | "document" | null;
+  created_at: string;
+};
+
+async function fetchRecentMessages(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<MessageRow[]> {
+  // Páginas em paralelo (antes: 5 esperas seguidas). Mesmas colunas e ordem; id desempata.
+  const { count } = await supabase.from("messages").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId);
+  return fetchAllParallel<MessageRow>({
+    total: count,
+    maxRows: MESSAGE_LIMIT,
+    key: (m) => m.id,
+    page: (from, to) =>
+      supabase
+        .from("messages")
+        .select("id, contact_id, agent_id, role, content, media_url, media_type, created_at")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to) as unknown as PromiseLike<{ data: MessageRow[] | null }>,
+  });
 }
 
 type ContactRow = {
@@ -57,23 +60,24 @@ type ContactRow = {
   whatsapp_instance_id: string | null;
 };
 
-// Mesma paginação de 1000 em 1000 de fetchRecentMessages — filtrar por workspace_id direto em vez de
-// `.in("id", contactIds)` evita depender do tamanho da lista de ids (ver comentário mais abaixo).
+// Mesma busca em páginas paralelas de fetchRecentMessages — filtrar por workspace_id direto em vez de
+// `.in("id", contactIds)` evita depender do tamanho da lista de ids. Com centenas de ids (ex.: workspace
+// com disparo em massa recente) isso virava uma URL gigante que estourava o limite do servidor e
+// falhava calada (o erro nunca era checado), fazendo a lista parecer vazia mesmo com mensagens reais.
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
-  const all: ContactRow[] = [];
-  let offset = 0;
-  while (true) {
-    const { data } = await supabase
-      .from("contacts")
-      .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
-      .eq("workspace_id", workspaceId)
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (!data || data.length === 0) break;
-    all.push(...data);
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return all;
+  const { count } = await supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId);
+  return fetchAllParallel<ContactRow>({
+    total: count,
+    maxRows: 20000,
+    key: (c) => c.id,
+    page: (from, to) =>
+      supabase
+        .from("contacts")
+        .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
+        .eq("workspace_id", workspaceId)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: ContactRow[] | null }>,
+  });
 }
 
 export default async function ConversasPage({ searchParams }: { searchParams: Promise<{ contact?: string }> }) {
@@ -89,7 +93,9 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
     );
   }
 
-  const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets] = await Promise.all([
+  // Tudo que não depende das mensagens sai junto com elas (antes os contatos, a origem e os vendedores
+  // só começavam depois que as mensagens terminavam, e o tempo de espera somava).
+  const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets, contacts, { data: originRows }, vendors] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
@@ -101,6 +107,23 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
     fetchRecentMessages(supabase, workspace.id),
     supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, plan").eq("id", workspace.id).maybeSingle(),
     getConversationTickets(workspace.id),
+    fetchAllContacts(supabase, workspace.id),
+    supabase
+      .from("campaign_recipients")
+      .select("contact_id, sent_at, campaigns!inner(name, workspace_id)")
+      .eq("campaigns.workspace_id", workspace.id)
+      .eq("status", "enviado")
+      .order("sent_at", { ascending: true }),
+    // Vendedores atribuíveis = pessoas com login de cliente vinculado a esse workspace (não é um
+    // cargo separado). RLS de profiles só deixa ver o próprio perfil, então usa o client admin —
+    // mesma técnica já usada em /acessos. Buscado sempre agora (não só quando showResponsavel):
+    // a atribuição de responsável do TICKET de atendimento é liberada pra todo plano, diferente do
+    // responsável do CONTATO/CRM (esse sim continua só em planos com SDR).
+    createAdminClient()
+      .from("workspace_members")
+      .select("user_id, profiles(full_name)")
+      .eq("workspace_id", workspace.id)
+      .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" }))),
   ]);
 
   // Vindo do CRM (?contact=<id>): a conversa desse lead precisa existir aqui mesmo que ela não esteja
@@ -125,36 +148,6 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
   const visibleStages = getVisibleStages(resolveHiddenStages(workspaceRow?.crm_hidden_stages));
   const plan = resolveWorkspacePlan(workspaceRow?.plan);
   const showResponsavel = planHasSdr(plan);
-
-  const contactIds = Array.from(new Set((messages || []).map((m) => m.contact_id)));
-
-  // Antes filtrava por `.in("id", contactIds)`/`.in("contact_id", contactIds)` — com centenas de ids
-  // (ex.: workspace com disparo em massa recente) isso vira uma URL gigante (cada uuid tem 36
-  // caracteres) que estoura o limite de tamanho de URL do servidor e falha calada (o erro nunca era
-  // checado), fazendo a lista de Conversas parecer vazia mesmo com mensagens reais no banco. Filtrar
-  // direto por workspace_id evita esse teto por completo, com a mesma paginação de 1000 já usada pras
-  // mensagens (Max Rows do Supabase).
-  const [contacts, { data: originRows }, vendors] = await Promise.all([
-    fetchAllContacts(supabase, workspace.id),
-    contactIds.length > 0
-      ? supabase
-          .from("campaign_recipients")
-          .select("contact_id, sent_at, campaigns!inner(name, workspace_id)")
-          .eq("campaigns.workspace_id", workspace.id)
-          .eq("status", "enviado")
-          .order("sent_at", { ascending: true })
-      : Promise.resolve({ data: [] }),
-    // Vendedores atribuíveis = pessoas com login de cliente vinculado a esse workspace (não é um
-    // cargo separado). RLS de profiles só deixa ver o próprio perfil, então usa o client admin —
-    // mesma técnica já usada em /acessos. Buscado sempre agora (não só quando showResponsavel):
-    // a atribuição de responsável do TICKET de atendimento é liberada pra todo plano, diferente do
-    // responsável do CONTATO/CRM (esse sim continua só em planos com SDR).
-    createAdminClient()
-      .from("workspace_members")
-      .select("user_id, profiles(full_name)")
-      .eq("workspace_id", workspace.id)
-      .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" }))),
-  ]);
 
   // Primeira campanha (mais antiga) que efetivamente mandou mensagem pra esse contato — "origem".
   const originByContact = new Map<string, string>();

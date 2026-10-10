@@ -7,6 +7,7 @@ import { listBranches, listTeamMembers } from "@/app/actions/team";
 import { listPipelines } from "@/app/actions/pipelines";
 import { getContactActivity } from "@/lib/contact-activity";
 import { CrmBoard } from "@/components/crm-board";
+import { fetchAllParallel } from "@/lib/paged-fetch";
 
 // O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
 // qualquer .limit() pedido pelo client. Um cliente com base grande (ex.: TB Rio, 2100+ contatos)
@@ -36,23 +37,24 @@ type ContactRow = {
 };
 
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
-  const all: ContactRow[] = [];
-  let offset = 0;
-  while (all.length < CONTACT_LIMIT) {
-    const { data } = await supabase
-      .from("contacts")
-      .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id, tags"
-      )
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (!data || data.length === 0) break;
-    all.push(...(data as ContactRow[]));
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return all;
+  // Páginas em paralelo (antes: uma depois da outra). Mesmas colunas, mesmo filtro, mesma ordem — o
+  // desempate por id deixa a ordem estável entre páginas.
+  const { count } = await supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId);
+  return fetchAllParallel<ContactRow>({
+    total: count,
+    maxRows: CONTACT_LIMIT,
+    key: (c) => c.id,
+    page: (from, to) =>
+      supabase
+        .from("contacts")
+        .select(
+          "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id, tags"
+        )
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: ContactRow[] | null }>,
+  });
 }
 
 // Reuniões marcadas pelo agente que ainda vão acontecer — viram o selo "Reunião dd/mm hh:mm" no card.

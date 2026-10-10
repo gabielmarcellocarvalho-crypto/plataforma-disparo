@@ -4,8 +4,8 @@ import { FunnelChart } from "@/components/charts/funnel-chart";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { OverviewInsightsBox } from "@/components/overview-insights-box";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
-import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources, getEmailClickMetrics } from "@/lib/overview-metrics";
-import { resolvePeriod, eachDayBrt, dayKeyBrt } from "@/lib/period";
+import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources, getEmailClickMetrics, getMessagesByDay } from "@/lib/overview-metrics";
+import { resolvePeriod, eachDayBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel, planHasConversion } from "@/lib/workspace-plan";
 import { getAttentionAlerts } from "@/lib/attention-center";
 import { AttentionCenterCard } from "@/components/attention-center-card";
@@ -54,18 +54,11 @@ export default async function OverviewPage({
   const EMPTY_FUNNEL = { points: [], descartados: 0 };
   const EMPTY_RESPONSE = { tempoMedioRespostaMin: null, conversasNaoRespondidas: 0, maisTempoEsperandoMin: null };
 
-  const [{ count: contatos }, { count: campanhasAtivas }, { data: periodMsgs }, volume, conversion, funnel, response, leadSources] = workspace
+  const [{ count: contatos }, { count: campanhasAtivas }, msgByDayRaw, volume, conversion, funnel, response, leadSources] = workspace
     ? await Promise.all([
         supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id),
         supabase.from("campaigns").select("id", { count: "exact", head: true }).eq("workspace_id", workspace.id).eq("status", "ativa"),
-        supabase
-          .from("messages")
-          .select("created_at")
-          .eq("workspace_id", workspace.id)
-          .eq("role", "assistant")
-          .gte("created_at", period.from.toISOString())
-          .lte("created_at", period.to.toISOString())
-          .limit(20000),
+        getMessagesByDay(workspace.id, period),
         getVolumeMetrics(workspace.id, period),
         hasConversion ? getConversionMetrics(workspace.id, period) : Promise.resolve(EMPTY_CONVERSION),
         hasConversion ? getFunnelData(workspace.id, period, funnelEnd) : Promise.resolve(EMPTY_FUNNEL),
@@ -75,7 +68,7 @@ export default async function OverviewPage({
     : [
         { count: 0 },
         { count: 0 },
-        { data: [] },
+        {} as Record<string, number>,
         { leadsRecebidos: 0, leadsAbordados: 0, mensagensEnviadas: 0, mensagensRecebidas: 0, conversasIniciadas: 0, conversasEmAndamento: 0 },
         EMPTY_CONVERSION,
         EMPTY_FUNNEL,
@@ -85,11 +78,7 @@ export default async function OverviewPage({
 
   // Distribui as mensagens do período por dia.
   const days = eachDayBrt(period.from, period.to);
-  const msgByDay = new Map(days.map((d) => [d, 0]));
-  for (const m of periodMsgs || []) {
-    const key = dayKeyBrt(m.created_at as string);
-    if (msgByDay.has(key)) msgByDay.set(key, (msgByDay.get(key) || 0) + 1);
-  }
+  const msgByDay = new Map(days.map((d) => [d, msgByDayRaw[d] || 0]));
   const chartData = days.map((d) => ({ date: `${d}T12:00:00.000Z`, mensagens: msgByDay.get(d) || 0 }));
 
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
