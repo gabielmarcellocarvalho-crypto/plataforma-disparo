@@ -104,7 +104,7 @@ export default async function OverviewPage({
   const emailClicks = workspace ? await getEmailClickMetrics(workspace.id, period) : { sent: 0, clicked: 0, clickRatePct: null, failedNow: 0 };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
         {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}

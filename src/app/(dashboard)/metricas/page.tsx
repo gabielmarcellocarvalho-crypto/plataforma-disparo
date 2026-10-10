@@ -78,7 +78,7 @@ export default async function MetricasPage({
     : null;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="relative flex flex-col gap-6">
       <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
 
       {leadReports && <LeadReportsSection reports={leadReports} periodLabel={period.label} />}

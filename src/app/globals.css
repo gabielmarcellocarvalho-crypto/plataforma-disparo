@@ -135,3 +135,21 @@ dialog {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Carregando da Automax (components/page-loading.tsx): a logo enche de baixo pra cima sobre uma versão
+   apagada. Só transform/clip-path/opacity, sem JS. */
+.amx-loader { display: block; max-width: 100%; }
+.amx-loader svg { display: block; width: 100%; height: auto; overflow: visible; }
+.amx-loader .amx-ghost { opacity: 0.14; }
+.amx-loader .amx-fill { animation: amx-fill 1.8s cubic-bezier(0.5, 0, 0.2, 1) infinite; }
+@keyframes amx-fill {
+  0% { clip-path: polygon(0 120%, 100% 102%, 100% 120%, 0 120%); opacity: 1; }
+  72% { clip-path: polygon(0 -2%, 100% -20%, 100% 120%, 0 120%); opacity: 1; }
+  88% { clip-path: polygon(0 -2%, 100% -20%, 100% 120%, 0 120%); opacity: 1; }
+  100% { clip-path: polygon(0 -2%, 100% -20%, 100% 120%, 0 120%); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .amx-loader .amx-fill { animation: none; }
+  .amx-loader { animation: amx-soft 1.6s ease-in-out infinite alternate; }
+}
+@keyframes amx-soft { from { opacity: 0.55; } to { opacity: 1; } }
