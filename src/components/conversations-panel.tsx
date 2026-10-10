@@ -46,6 +46,11 @@ const STAGE_BADGE: Record<string, string> = {
   descartado: "bg-danger-soft text-danger",
 };
 
+// Quantas conversas a lista desenha de início e a cada "Ver mais". A busca e os filtros olham todas;
+// isto só limita o que vai pra tela.
+const LIST_PAGE_FIRST = 80;
+const LIST_PAGE_MORE = 50;
+
 const WAIT_THRESHOLDS = [
   { key: "1", label: "> 1 hora", ms: 1 * 3_600_000 },
   { key: "6", label: "> 6 horas", ms: 6 * 3_600_000 },
@@ -204,7 +209,8 @@ export function ConversationsPanel({
 
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [stageFilter, setStageFilter] = useState("");
+  // Várias etapas ao mesmo tempo (ex.: Abordado + Interessado). Vazio = todas.
+  const [stageFilters, setStageFilters] = useState<string[]>([]);
   const [aguardandoHumano, setAguardandoHumano] = useState(false);
   const [semResposta, setSemResposta] = useState(false);
   const [waitFilter, setWaitFilter] = useState("");
@@ -245,7 +251,7 @@ export function ConversationsPanel({
     const q = query.toLowerCase().trim();
     return conversations.filter((c) => {
       if (q && !(c.contact.name || "").toLowerCase().includes(q) && !(c.contact.phone || "").includes(q)) return false;
-      if (stageFilter && c.contact.stage !== stageFilter) return false;
+      if (stageFilters.length > 0 && !stageFilters.includes(c.contact.stage)) return false;
       if (aguardandoHumano && !c.contact.needs_attention) return false;
       const last = c.messages[0];
       if (semResposta && last?.role !== "assistant") return false;
@@ -260,10 +266,18 @@ export function ConversationsPanel({
       if (ticketFilter && c.ticket_status !== ticketFilter) return false;
       return true;
     });
-  }, [conversations, query, stageFilter, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
+  }, [conversations, query, stageFilters, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
+
+  // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
+  // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
+  // dos filtros em que foi ampliado e só vale enquanto ela for a mesma.
+  const filterSig = [query, stageFilters.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter].join("|");
+  const [expanded, setExpanded] = useState<{ sig: string; limit: number }>({ sig: "", limit: LIST_PAGE_FIRST });
+  const listLimit = expanded.sig === filterSig ? expanded.limit : LIST_PAGE_FIRST;
+  const shown = filtered.slice(0, listLimit);
 
   const activeFilterCount =
-    (stageFilter ? 1 : 0) +
+    (stageFilters.length > 0 ? 1 : 0) +
     (aguardandoHumano ? 1 : 0) +
     (semResposta ? 1 : 0) +
     (waitFilter ? 1 : 0) +
@@ -500,12 +514,27 @@ export function ConversationsPanel({
 
           {filtersOpen && (
             <div className="flex flex-col gap-2 pt-1 border-t border-border">
-              <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
-                <option value="">Etapa: todas</option>
-                {visibleStages.map((s) => (
-                  <option key={s} value={s}>{stageLabels[s] || s}</option>
-                ))}
-              </select>
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-semibold text-text-muted">Etapa (pode marcar mais de uma)</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {visibleStages.map((s) => {
+                    const on = stageFilters.includes(s);
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setStageFilters((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]))}
+                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
+                          on ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
+                        }`}
+                      >
+                        {stageLabels[s] || s}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <select value={waitFilter} onChange={(e) => setWaitFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
                 <option value="">Tempo de espera: qualquer</option>
@@ -563,7 +592,7 @@ export function ConversationsPanel({
                   <button
                     type="button"
                     onClick={() => {
-                      setStageFilter("");
+                      setStageFilters([]);
                       setAguardandoHumano(false);
                       setSemResposta(false);
                       setWaitFilter("");
@@ -584,7 +613,7 @@ export function ConversationsPanel({
           {filtered.length === 0 ? (
             <p className="text-sm text-text-muted p-4 text-center">Nenhuma conversa encontrada.</p>
           ) : (
-            filtered.map((c) => {
+            shown.map((c) => {
               const key = keyOf(c);
               const last = c.messages[0];
               const active = key === selectedKey;
@@ -643,6 +672,20 @@ export function ConversationsPanel({
                 </button>
               );
             })
+          )}
+          {filtered.length > shown.length && (
+            <div className="p-3 flex flex-col items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setExpanded({ sig: filterSig, limit: listLimit + LIST_PAGE_MORE })}
+                className="text-xs font-bold px-4 py-2 rounded-md border border-border text-primary-strong hover:border-primary-soft cursor-pointer"
+              >
+                Ver mais {Math.min(LIST_PAGE_MORE, filtered.length - shown.length)}
+              </button>
+              <span className="text-[11px] text-text-muted">
+                Mostrando {shown.length} de {filtered.length}
+              </span>
+            </div>
           )}
         </div>
       </div>

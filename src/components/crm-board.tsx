@@ -67,6 +67,37 @@ const STAGE_ACCENT: Record<ContactStage, string> = {
 // lista completa no hover e no painel do lead.
 const CARD_MAX_TAGS = 3;
 
+// Cartões desenhados por coluna de início, e os passos do "Ver mais".
+const CARDS_FIRST = 100;
+const CARDS_STEPS = [50, 100, 500] as const;
+
+function ShowMore({ shown, total, onMore }: { shown: number; total: number; onMore: (step: number) => void }) {
+  if (shown >= total) return null;
+  const remaining = total - shown;
+  // Passos que ainda cabem; quando sobra menos que o maior passo, o último botão leva o que resta.
+  const steps: number[] = CARDS_STEPS.filter((s) => s < remaining);
+  if (steps.length < CARDS_STEPS.length) steps.push(remaining);
+  return (
+    <div className="flex flex-col items-center gap-1.5 py-2">
+      <span className="text-[11px] text-text-muted">
+        Mostrando {shown} de {total}
+      </span>
+      <div className="flex items-center gap-1.5 flex-wrap justify-center">
+        {steps.map((step) => (
+          <button
+            key={step}
+            type="button"
+            onClick={() => onMore(step)}
+            className="text-[11px] font-bold px-2.5 py-1 rounded-md border border-border text-primary-strong hover:border-primary-soft cursor-pointer bg-surface"
+          >
+            +{step}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function formatMeeting(iso: string) {
   const d = new Date(iso);
   const date = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" });
@@ -475,6 +506,10 @@ export function CrmBoard({
     if (daqui) return daqui.id;
     return stageForSignal((c.stage as ContactStage) ?? "nao_abordado", pipelineStages)?.id ?? null;
   };
+  // Quantos cartões cada coluna desenha (e quantas linhas a lista). Milhares de cartões no DOM travam
+  // o navegador; filtros, busca, contagens e exportação continuam olhando todos os leads.
+  const [colLimits, setColLimits] = useState<Record<string, number>>({});
+  const [listLimit, setListLimit] = useState(CARDS_FIRST);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -1159,7 +1194,7 @@ export function CrmBoard({
               </tr>
             </thead>
             <tbody>
-              {listaOrdenada.map((c) => {
+              {listaOrdenada.slice(0, listLimit).map((c) => {
                 const parado = daysSince(c.stage_changed_at);
                 const tarefa = atividade.nextTaskAt.get(c.id);
                 // Mesmo critério da Agenda (vencida = antes de hoje), reaproveitado pra tarefa
@@ -1223,6 +1258,11 @@ export function CrmBoard({
           </table>
 
           {listaOrdenada.length === 0 && <p className="text-sm text-text-muted text-center py-10">Nenhum lead com esses filtros.</p>}
+          <ShowMore
+            shown={Math.min(listaOrdenada.length, listLimit)}
+            total={listaOrdenada.length}
+            onMore={(step) => setListLimit((n) => n + step)}
+          />
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-x-auto">
@@ -1248,7 +1288,7 @@ export function CrmBoard({
                     {cards.length === 0 ? (
                       <p className="text-[11px] text-text-muted text-center py-6">vazio</p>
                     ) : (
-                      cards.map((c) => (
+                      cards.slice(0, colLimits[coluna.key] ?? CARDS_FIRST).map((c) => (
                         <ContactCard
                           key={c.id}
                           contact={c}
@@ -1262,6 +1302,13 @@ export function CrmBoard({
                         />
                       ))
                     )}
+                    <ShowMore
+                      shown={Math.min(cards.length, colLimits[coluna.key] ?? CARDS_FIRST)}
+                      total={cards.length}
+                      onMore={(step) =>
+                        setColLimits((prev) => ({ ...prev, [coluna.key]: (prev[coluna.key] ?? CARDS_FIRST) + step }))
+                      }
+                    />
                   </div>
                 </div>
               );
