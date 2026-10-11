@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { currentIp, emailKey, hitRateLimit, ipKey, waitMessage } from "@/lib/rate-limit-db";
 
 async function siteUrl(): Promise<string> {
   const h = await headers();
@@ -29,6 +30,13 @@ export type ForgotPasswordState = { error: string | null; sent?: boolean };
 export async function requestPasswordReset(_prev: ForgotPasswordState, formData: FormData): Promise<ForgotPasswordState> {
   const email = String(formData.get("email") || "").trim().toLowerCase();
   if (!email) return { error: "Informe o e-mail." };
+
+  // Limite por IP e por e-mail: sem isso o botão serve pra encher a caixa de alguém de e-mails. Estourou
+  // o do e-mail: responde "enviado" igual, sem mandar nada (não revela nem incomoda quem não pediu).
+  const ipLimit = await hitRateLimit(ipKey("reset", await currentIp()), 5, 900);
+  if (!ipLimit.allowed) return { error: waitMessage(ipLimit.retryAfterSeconds) };
+  const emailLimit = await hitRateLimit(emailKey("reset", email), 3, 900);
+  if (!emailLimit.allowed) return { error: null, sent: true };
 
   const supabase = await createClient();
   await supabase.auth.resetPasswordForEmail(email, {
