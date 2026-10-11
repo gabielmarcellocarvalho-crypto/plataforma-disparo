@@ -10,6 +10,7 @@ import type { AgentImage } from "@/lib/agent-reply";
 import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { createInboundLead } from "@/lib/inbound-lead";
 import { secureEqual } from "@/lib/secure-compare";
+import { metaSignatureMode, verifyMetaSignature } from "@/lib/meta-signature";
 import { handleChatbotInbound } from "@/lib/chatbot-engine";
 import { parseTemplateCategoryChanges, saveTemplateCategoryChanges } from "@/lib/meta-template-events";
 
@@ -100,14 +101,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => null)) as Dialog360WebhookBody | null;
-  after(() => processDialog360Webhook(body).catch((err) => console.error("Erro no webhook 360dialog:", err)));
-  // Mesmo endpoint recebe a reclassificação de template da Meta (field template_category_update).
-  after(() => saveTemplateCategoryChanges(createAdminClient(), parseTemplateCategoryChanges(body)).catch((err) => console.error("Erro no alerta de template:", err)));
+  // O segredo da URL é o mesmo pra todos os clientes e aparece em logs/painéis; a Meta, além dele, assina o
+  // corpo com o App Secret (X-Hub-Signature-256), e isso ninguém forja sem a chave. Lê o corpo BRUTO
+  // (a assinatura é sobre os bytes exatos) e só depois interpreta o JSON.
+  const raw = await req.text().catch(() => "");
+  const body = (() => {
+    try {
+      return JSON.parse(raw) as Dialog360WebhookBody;
+    } catch {
+      return null;
+    }
+  })();
+  const signedByMeta = verifyMetaSignature(raw, req.headers.get("x-hub-signature-256"), process.env.META_APP_SECRET);
+  const enforce = metaSignatureMode() === "enforce";
+  // Número da Meta sem assinatura válida só é descartado em modo "enforce"; no modo de observação (padrão)
+  // segue como antes e o aviso nos logs mostra se a assinatura está chegando e batendo.
+  const metaTrusted = signedByMeta || !enforce;
+  if (!signedByMeta) console.warn(`Webhook WhatsApp sem assinatura Meta válida (modo ${enforce ? "enforce" : "observação"}; cabeçalho ${req.headers.get("x-hub-signature-256") ? "presente" : "ausente"}).`);
+
+  after(() => processDialog360Webhook(body, metaTrusted).catch((err) => console.error("Erro no webhook 360dialog:", err)));
+  // Mesmo endpoint recebe a reclassificação de template da Meta (field template_category_update) — evento
+  // que só a Meta manda, então exige a assinatura quando o modo for "enforce".
+  if (metaTrusted) {
+    after(() => saveTemplateCategoryChanges(createAdminClient(), parseTemplateCategoryChanges(body)).catch((err) => console.error("Erro no alerta de template:", err)));
+  }
   return NextResponse.json({ ok: true });
 }
 
-async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
+async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTrusted: boolean) {
   if (!body) return;
   const incoming = parseDialog360IncomingMessages(body);
 
@@ -117,7 +138,9 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
   // sem isso, uma mudança de formato passaria batido (a Meta sempre responde 200 aqui, não teria erro
   // visível em lugar nenhum, só mensagem "sumida" silenciosamente).
   if (incoming.length === 0 && (body.entry?.length ?? 0) > 0) {
-    console.warn("Webhook 360dialog/metacloud: payload com entry mas 0 mensagens extraídas —", JSON.stringify(body).slice(0, 2000));
+    // Só a forma do payload, nunca o conteúdo: o corpo tem telefone e texto de cliente (LGPD).
+    const shape = body.entry?.map((e) => ({ changes: (e as { changes?: { field?: string }[] }).changes?.map((c) => c.field) }));
+    console.warn("Webhook 360dialog/metacloud: payload com entry mas 0 mensagens extraídas —", JSON.stringify(shape).slice(0, 500));
   }
 
   if (incoming.length === 0) return;
@@ -141,6 +164,13 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null) {
       instance = retry.data ? { ...retry.data, chatbot: null } : null;
     }
     if (!instance) continue; // número não cadastrado em nenhum workspace — ignora
+
+    // Número da Meta direta exige assinatura válida (no modo "enforce"). O 360dialog não assina com o App
+    // Secret da Meta, então continua valendo só o segredo da URL pra ele.
+    if (instance.channel === "metacloud" && !metaTrusted) {
+      console.warn("Webhook Meta descartado: assinatura inválida ou ausente.");
+      continue;
+    }
 
     // Clique em anúncio Click-to-WhatsApp: abre a janela de 72h grátis pra este contato (cobrança da Meta).
     if (msg.referral) {

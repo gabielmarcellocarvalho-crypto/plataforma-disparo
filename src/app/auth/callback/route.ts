@@ -9,7 +9,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const next = url.searchParams.get("next") || "/";
+  // Só caminho interno: "//outro-site.com" ou "/\outro" fariam `new URL(next, origin)` sair do domínio.
+  const requestedNext = url.searchParams.get("next") || "/";
+  const next = requestedNext.startsWith("/") && !requestedNext.startsWith("//") && !requestedNext.includes("\\") ? requestedNext : "/";
   const isPasswordRecovery = next === "/redefinir-senha";
 
   if (code) {

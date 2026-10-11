@@ -1,3 +1,4 @@
+import { safeFetch, UnsafeUrlError } from "@/lib/safe-fetch";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
@@ -492,14 +493,16 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
     const url = interpolateVariables(action.url, vars);
     const body = action.method === "GET" ? undefined : interpolateVariables(action.body, vars);
     try {
-      const res = await fetch(url, {
+      // safeFetch: só endereço público (sem rede interna/metadados de nuvem), redirecionamentos revalidados.
+      const res = await safeFetch(url, {
         method: action.method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body,
         signal: AbortSignal.timeout(10_000),
       });
       return { ok: res.ok, detail: { url, method: action.method, status: res.status } };
-    } catch {
+    } catch (err) {
+      if (err instanceof UnsafeUrlError) return { ok: false, detail: { error: `endereço não permitido: ${err.message}`, url } };
       return { ok: false, detail: { error: "falha ao chamar o webhook", url } };
     }
   }

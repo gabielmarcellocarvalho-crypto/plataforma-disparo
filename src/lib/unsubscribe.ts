@@ -1,4 +1,5 @@
 import { createHmac } from "crypto";
+import { secureEqual } from "@/lib/secure-compare";
 
 // Assina o link de descadastro de e-mail sem precisar de sessão de usuário nem guardar token no
 // banco — o token é derivado do próprio contact_id + segredo, então validar é só recalcular e
@@ -11,7 +12,7 @@ export function unsubscribeToken(contactId: string): string {
 }
 
 export function verifyUnsubscribeToken(contactId: string, token: string): boolean {
-  return Boolean(SECRET) && token === unsubscribeToken(contactId);
+  return Boolean(SECRET) && secureEqual(token, unsubscribeToken(contactId));
 }
 
 export function unsubscribeUrl(siteOrigin: string, contactId: string): string {

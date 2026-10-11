@@ -118,6 +118,11 @@ export type UploadLogoResult = { error: string | null; logoUrl?: string; brandCo
 export async function uploadWorkspaceLogo(workspaceId: string, formData: FormData): Promise<UploadLogoResult> {
   if (!(await isCurrentUserStaff())) return { error: "Só a agência pode trocar a logo." };
 
+  // O envio usa service role (ignora RLS), então confere aqui, pela RLS, que quem chama enxerga ESSE
+  // workspace. Sem isso, um colaborador de um cliente trocaria a logo de qualquer outro.
+  const { data: visible } = await (await createClient()).from("workspaces").select("id").eq("id", workspaceId).maybeSingle();
+  if (!visible) return { error: "Workspace não encontrado." };
+
   const file = formData.get("logo");
   if (!(file instanceof File) || file.size === 0) return { error: "Selecione um arquivo de imagem." };
   if (file.size > 2 * 1024 * 1024) return { error: "Imagem muito grande (máx. 2MB)." };

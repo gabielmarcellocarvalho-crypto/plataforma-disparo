@@ -29,8 +29,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const phone = normalizePhone(body.phone ?? body.telefone);
   if (!phone) return NextResponse.json({ error: "campo 'phone' obrigatório (com DDI)" }, { status: 400 });
 
-  const name = typeof body.name === "string" ? body.name : typeof body.nome === "string" ? body.nome : null;
-  const email = typeof body.email === "string" ? body.email : null;
+  // Tetos de tamanho: o token é o único controle desta rota pública, então o que entra no contato é limitado.
+  const rawName = typeof body.name === "string" ? body.name : typeof body.nome === "string" ? body.nome : null;
+  const rawEmail = typeof body.email === "string" ? body.email : null;
+  const name = rawName ? rawName.trim().slice(0, 200) : null;
+  const email = rawEmail ? rawEmail.trim().slice(0, 254) : null;
 
   const { data: existing } = await supabase.from("contacts").select("id").eq("workspace_id", workflow.workspace_id).eq("phone", phone).maybeSingle();
   let contactId = existing?.id as string | undefined;
