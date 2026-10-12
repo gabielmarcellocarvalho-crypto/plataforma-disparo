@@ -209,7 +209,7 @@ const NAV_GROUPS: { label: string; hrefs: string[] }[] = [
 // (accessType null = ainda não classificado, mantém o comportamento antigo de ver tudo).
 const STAFF_ONLY_PATHS = new Set(["/agentes"]);
 
-export const SIDEBAR_WIDTH = 236;
+export const SIDEBAR_WIDTH = 211;
 export const SIDEBAR_WIDTH_COLLAPSED = 80;
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
@@ -338,8 +338,8 @@ export function Sidebar({
     >
       {/* Marca: recolhida fica só o símbolo, centralizado. O nome some junto com os
           rótulos do menu — manter texto num trilho de 68px só geraria corte no meio da palavra. */}
-      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-2 mb-5" : "gap-2.5 px-1.5 py-2.5 mb-6"}`}>
-        <Image src="/logo-automax.png" alt="AutomaX" width={36} height={24} className="shrink-0" priority />
+      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-2 mb-5" : "justify-center gap-1.5 px-5 py-2.5 mb-6"}`}>
+        <Image src="/logo-automax.png" alt="AutomaX" width={45} height={30} className="shrink-0" priority />
         {!collapsed && (
           <div className="leading-tight min-w-0">
             <div className="font-extrabold text-[15px] text-white">AutomaX</div>
