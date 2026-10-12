@@ -336,14 +336,13 @@ export function Sidebar({
         background: "linear-gradient(180deg, var(--color-sidebar) 0%, var(--color-sidebar-deep) 100%)",
       }}
     >
-      {/* Marca: recolhida fica só o símbolo, centralizado. O nome e o slogan somem junto com os
+      {/* Marca: recolhida fica só o símbolo, centralizado. O nome some junto com os
           rótulos do menu — manter texto num trilho de 68px só geraria corte no meio da palavra. */}
       <div className={`flex items-center mb-2.5 ${collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-1.5 py-2.5"}`}>
         <Image src="/logo-automax.png" alt="AutomaX" width={36} height={24} className="shrink-0" priority />
         {!collapsed && (
           <div className="leading-tight min-w-0">
             <div className="font-extrabold text-[15px] text-white">AutomaX</div>
-            <div className="text-[11px] text-sidebar-muted">Automatize processos. Multiplique resultados</div>
           </div>
         )}
       </div>
