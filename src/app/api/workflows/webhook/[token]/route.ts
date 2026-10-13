@@ -47,9 +47,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (hora) extras.hora_da_reuniao = hora;
   if (/^https?:\/\//i.test(meet)) extras.link_meet = meet;
 
+  // O envio do workflow usa o número do próprio contato; um contato nascido por webhook não tem nenhum.
+  // Mesma regra do cadastro por API (/api/v1/leads): só vale quando o workspace tem exatamente 1 número.
+  const { data: instances } = await supabase.from("whatsapp_instances").select("id").eq("workspace_id", workflow.workspace_id);
+  const instanceId = instances && instances.length === 1 ? (instances[0].id as string) : null;
+
   const { data: existing } = await supabase
     .from("contacts")
-    .select("id, custom_fields")
+    .select("id, custom_fields, whatsapp_instance_id")
     .eq("workspace_id", workflow.workspace_id)
     .eq("phone", phone)
     .maybeSingle();
@@ -58,15 +63,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (!contactId) {
     const { data: created, error } = await supabase
       .from("contacts")
-      .insert({ workspace_id: workflow.workspace_id, phone, name, email, ...(Object.keys(extras).length ? { custom_fields: extras } : {}) })
+      .insert({
+        workspace_id: workflow.workspace_id,
+        phone,
+        name,
+        email,
+        whatsapp_instance_id: instanceId,
+        ...(Object.keys(extras).length ? { custom_fields: extras } : {}),
+      })
       .select("id")
       .maybeSingle();
     if (error || !created) return NextResponse.json({ error: "não foi possível criar o contato" }, { status: 500 });
     contactId = created.id;
-  } else if (Object.keys(extras).length) {
+  } else {
     // Quem já existe pode agendar de novo: o horário novo substitui o anterior, o resto da ficha fica.
+    // O número só é preenchido se estava vazio (nunca troca o de um contato que já conversa por outro).
     const atual = (existing?.custom_fields as Record<string, unknown> | null) ?? {};
-    await supabase.from("contacts").update({ custom_fields: { ...atual, ...extras } }).eq("id", contactId);
+    const update: Record<string, unknown> = {};
+    if (Object.keys(extras).length) update.custom_fields = { ...atual, ...extras };
+    if (instanceId && !existing?.whatsapp_instance_id) update.whatsapp_instance_id = instanceId;
+    if (Object.keys(update).length) await supabase.from("contacts").update(update).eq("id", contactId);
   }
   if (!contactId) return NextResponse.json({ error: "erro interno" }, { status: 500 });
 
