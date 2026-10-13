@@ -23,6 +23,7 @@ import { VoiceInput } from "@/components/ui/voice-input";
 import { VoiceMessageBubble } from "@/components/ui/voice-message-bubble";
 import { STAGE_ORDER } from "@/lib/crm-stages";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir um arquivo grande à toa.
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -378,19 +379,20 @@ export function ConversationsPanel({
     }
     startTransition(async () => {
       try {
-        const prep = await prepareManualUpload(selected.contact.id, file.name, file.type, file.size);
+        const mime = resolveFileMime(file.name, file.type);
+        const prep = await prepareManualUpload(selected.contact.id, file.name, mime, file.size);
         if (prep.error || !prep.path || !prep.token) {
           setError(prep.error || "Não foi possível preparar o envio do arquivo.");
           return;
         }
         const { error: uploadError } = await createBrowserSupabase()
           .storage.from("conversation-media")
-          .uploadToSignedUrl(prep.path, prep.token, file, { contentType: file.type.split(";")[0] });
+          .uploadToSignedUrl(prep.path, prep.token, file, { contentType: mime });
         if (uploadError) {
           setError(`Falha ao subir o arquivo: ${uploadError.message}`);
           return;
         }
-        const upload = { path: prep.path, fileName: file.name, mimeType: file.type, size: file.size };
+        const upload = { path: prep.path, fileName: file.name, mimeType: mime, size: file.size };
         const result = selected.agent
           ? await sendManualMedia(selected.contact.id, selected.agent.id, upload)
           : await sendInstanceMedia(selected.contact.id, selected.instance!.id, upload);
@@ -889,7 +891,7 @@ export function ConversationsPanel({
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileInputChange}
-                accept="image/*,audio/*,application/pdf"
+                accept={`image/*,audio/*,${CONVERSATION_MEDIA_ACCEPT},.csv,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.txt`}
                 className="hidden"
               />
               <button

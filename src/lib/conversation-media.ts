@@ -13,11 +13,41 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/wav": "wav",
   "audio/webm": "webm",
   "audio/aac": "aac",
+  // Documentos de escritório (planilha, texto, apresentação) — os formatos que o WhatsApp aceita como documento.
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-excel": "xls",
+  "text/csv": "csv",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "text/plain": "txt",
 };
+
+// Navegador (principalmente no Windows) às vezes entrega o arquivo sem tipo, ou como octet-stream, ou
+// tipa .csv como "application/vnd.ms-excel". Quando o tipo não diz nada, vale a extensão do nome.
+const MIME_BY_EXT: Record<string, string> = Object.fromEntries(
+  Object.entries(EXT_BY_MIME)
+    .filter(([mime]) => mime !== "audio/webm")
+    .map(([mime, ext]) => [ext, mime])
+);
+MIME_BY_EXT.pdf = "application/pdf";
+MIME_BY_EXT.jpeg = "image/jpeg";
+
+export function resolveFileMime(fileName: string, rawMime: string): string {
+  const mime = normalizeMimetype(rawMime || "");
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "csv") return "text/csv"; // o Windows tipa .csv como "vnd.ms-excel": mandado assim, chegaria como xls corrompido
+  if (mime && mime !== "application/octet-stream") return mime;
+  return MIME_BY_EXT[ext] || mime;
+}
 
 // Tipos que o bucket "conversation-media" aceita (allowlist configurada no próprio bucket, no Supabase).
 // Espelhada aqui pra recusar antes de subir, com mensagem clara, em vez de o Storage devolver 4xx.
 export const CONVERSATION_MEDIA_MIMES = new Set([...Object.keys(EXT_BY_MIME), "application/pdf"]);
+
+// Mesma lista, pro campo de upload do navegador e pro `allowed_mime_types` do bucket.
+export const CONVERSATION_MEDIA_ACCEPT = [...CONVERSATION_MEDIA_MIMES].join(",");
 
 // WhatsApp (e o MediaRecorder do navegador) manda áudio como "audio/ogg; codecs=opus", com parâmetro —
 // o bucket compara mime type exato contra a allowlist, então precisa normalizar pra "tipo/subtipo".

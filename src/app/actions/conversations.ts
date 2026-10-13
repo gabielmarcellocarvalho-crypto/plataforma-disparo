@@ -8,7 +8,7 @@ import { sendDialog360Text, sendDialog360Media } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
 import { agentSendText, agentSendMedia } from "@/lib/agent-channel";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
-import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype } from "@/lib/conversation-media";
+import { CONVERSATION_MEDIA_MIMES, conversationMediaPath, normalizeMimetype, resolveFileMime } from "@/lib/conversation-media";
 import { interruptChatbotForContact } from "@/lib/chatbot-engine";
 
 // Mesmo teto do bucket "conversation-media" (50MB — máximo por arquivo do plano gratuito do Supabase). Documento cabe folgado no WhatsApp (até 100MB);
@@ -143,9 +143,9 @@ export async function prepareManualUpload(
 ): Promise<{ error: string | null; path?: string; token?: string }> {
   if (!size) return { error: "Selecione um arquivo." };
   if (size > MAX_MANUAL_FILE_BYTES) return { error: "Arquivo maior que 50MB." };
-  const mimeType = normalizeMimetype(rawMimeType || "");
+  const mimeType = resolveFileMime(fileName, rawMimeType);
   if (!CONVERSATION_MEDIA_MIMES.has(mimeType)) {
-    return { error: `Tipo de arquivo não suportado (${fileName}). Envie imagem, áudio ou PDF.` };
+    return { error: `Tipo de arquivo não suportado (${fileName}). Envie imagem, áudio, PDF, planilha (xlsx, xls, csv), Word, PowerPoint ou txt.` };
   }
 
   // Cliente com a sessão do usuário: a RLS garante que ele só prepara upload pra contato do próprio workspace.
@@ -174,7 +174,7 @@ function resolveUploadedMedia(
   }
   const { data } = admin.storage.from("conversation-media").getPublicUrl(upload.path);
   const fileName = String(upload.fileName || "arquivo").slice(0, 200);
-  return { url: data.publicUrl, kind: mediaKindFromMime(normalizeMimetype(upload.mimeType || ""), Number(upload.size) || 0), fileName };
+  return { url: data.publicUrl, kind: mediaKindFromMime(resolveFileMime(fileName, upload.mimeType || ""), Number(upload.size) || 0), fileName };
 }
 
 // Envia áudio gravado ou arquivo anexado manualmente (equipe respondendo ao vivo) numa conversa com
