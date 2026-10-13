@@ -9,7 +9,8 @@ export type TemplateFieldContact = {
 
 export function fieldValue(field: string, contact: TemplateFieldContact, companyName: string | null): string {
   if (field === "name") return contact.name || "";
-  if (field === "company") return companyName || "";
+  // Empresa vinculada; se o contato não tem, usa o campo personalizado "empresa" (leads importados).
+  if (field === "company") return companyName || (typeof contact.custom_fields?.empresa === "string" ? contact.custom_fields.empresa : "");
   if (field === "phone") return contact.phone || "";
   if (field === "email") return contact.email || "";
   if (field.startsWith("cf:")) {

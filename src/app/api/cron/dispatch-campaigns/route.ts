@@ -10,6 +10,7 @@ import { runOffHoursCatchup } from "@/lib/agent-catchup";
 import { runEmailSequences } from "@/lib/email-sequence";
 import { secureEqual } from "@/lib/secure-compare";
 import { applyContactVars, firstName } from "@/lib/message-vars";
+import { fieldValue } from "@/lib/template-send";
 import { mergeTags, normalizeTags } from "@/lib/contact-tags";
 import { autoDelaySeconds, MAX_ENVIOS_POR_TICK, TICK_SEGUNDOS } from "@/lib/dispatch-pacing";
 
@@ -159,7 +160,7 @@ export async function GET(req: Request) {
 
       const { data: recipient } = await supabase
         .from("campaign_recipients")
-        .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags, custom_fields)")
+        .select("id, contact_id, contacts(id, name, phone, email, opt_out_whatsapp, opt_out_email, stage, tags, custom_fields, companies(name))")
         .eq("campaign_id", campaign.id)
         .eq("status", "pendente")
         .order("created_at", { ascending: true })
@@ -173,7 +174,7 @@ export async function GET(req: Request) {
       }
 
       const contact = recipient.contacts as unknown as
-        | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null; custom_fields: Record<string, unknown> | null }
+        | { id: string; name: string | null; phone: string | null; email: string | null; opt_out_whatsapp: boolean; opt_out_email: boolean; stage: string; tags: string[] | null; custom_fields: Record<string, unknown> | null; companies: { name: string } | { name: string }[] | null }
         | null;
 
       const isEmail = campaign.channel === "email";
@@ -243,6 +244,34 @@ export async function GET(req: Request) {
         await supabase.from("campaign_recipients").update({ status: "invalido", error_message: "Template com cabeçalho de mídia, mas a campanha não tem o arquivo." }).eq("id", recipient.id);
         pararCampanha = true;
         break;
+      }
+
+      // Variáveis do template: usa o mapeamento salvo em Templates ({{1}} → nome, empresa, campo...). Sem
+      // mapeamento, mantém o padrão antigo (primeiro nome). Variável vazia faria a Meta recusar o envio
+      // (#131008), então o lead vira "inválido" com o motivo em vez de "falhou".
+      let bodyParams: string[] = [];
+      if (isOfficialBlast && campaign.dialog360_template_var_count >= 1) {
+        const { data: map } = await supabase
+          .from("template_variable_maps")
+          .select("variables")
+          .eq("workspace_id", campaign.workspace_id)
+          .eq("template_name", campaign.dialog360_template_name)
+          .eq("language", campaign.dialog360_template_lang || "pt_BR")
+          .maybeSingle();
+        const fields = ((map?.variables as string[] | undefined) || []).slice(0, campaign.dialog360_template_var_count);
+        const joined = contact.companies;
+        const companyName = Array.isArray(joined) ? joined[0]?.name ?? null : joined?.name ?? null;
+        bodyParams =
+          fields.length === campaign.dialog360_template_var_count
+            ? fields.map((f) => (f === "name" ? firstName(contact.name) : fieldValue(f, contact, companyName)).trim())
+            : [firstName(contact.name)];
+        if (bodyParams.some((p) => !p)) {
+          await supabase
+            .from("campaign_recipients")
+            .update({ status: "invalido", error_message: "Contato sem o dado que preenche a variável do template (nome/empresa)." })
+            .eq("id", recipient.id);
+          continue;
+        }
       }
 
       const instanceName =
@@ -326,7 +355,6 @@ export async function GET(req: Request) {
             });
           }
         } else if (isDialog360Blast) {
-          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
           await sendDialog360Template(
             blastInstance!.dialog360_api_key!,
             contact.phone!,
@@ -335,7 +363,6 @@ export async function GET(req: Request) {
             bodyParams
           );
         } else if (isMetacloudBlast) {
-          const bodyParams = campaign.dialog360_template_var_count >= 1 ? [firstName(contact.name)] : [];
           await sendMetaCloudTemplate(
             blastInstance!.phone_number_id!,
             contact.phone!,
