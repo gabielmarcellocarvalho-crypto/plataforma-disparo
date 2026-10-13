@@ -42,9 +42,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const meet = asText(body.meet ?? body.link_meet);
   const extras: Record<string, string> = {};
   const data = asText(body.data ?? body.data_reuniao);
-  const hora = asText(body.hora ?? body.hora_reuniao);
+  const hora = asText(body.hora ?? body.hora_da_reuniao ?? body.hora_reuniao);
   if (data) extras.data_reuniao = data;
-  if (hora) extras.hora_reuniao = hora;
+  if (hora) extras.hora_da_reuniao = hora;
   if (/^https?:\/\//i.test(meet)) extras.link_meet = meet;
 
   const { data: existing } = await supabase
