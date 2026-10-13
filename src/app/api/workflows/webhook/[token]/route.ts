@@ -35,17 +35,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const name = rawName ? rawName.trim().slice(0, 200) : null;
   const email = rawEmail ? rawEmail.trim().slice(0, 254) : null;
 
-  const { data: existing } = await supabase.from("contacts").select("id").eq("workspace_id", workflow.workspace_id).eq("phone", phone).maybeSingle();
+  // Dados de agendamento (formulário + Google Agenda): ficam na ficha como campos personalizados, e daí
+  // um template pode usá-los como variável ({{2}} = data, {{3}} = hora, {{4}} = link). Só entra o que veio,
+  // e o link só se for http(s) — ele vai parar dentro de uma mensagem pro lead.
+  const asText = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v).trim().slice(0, 500) : "");
+  const meet = asText(body.meet ?? body.link_meet);
+  const extras: Record<string, string> = {};
+  const data = asText(body.data ?? body.data_reuniao);
+  const hora = asText(body.hora ?? body.hora_reuniao);
+  if (data) extras.data_reuniao = data;
+  if (hora) extras.hora_reuniao = hora;
+  if (/^https?:\/\//i.test(meet)) extras.link_meet = meet;
+
+  const { data: existing } = await supabase
+    .from("contacts")
+    .select("id, custom_fields")
+    .eq("workspace_id", workflow.workspace_id)
+    .eq("phone", phone)
+    .maybeSingle();
   let contactId = existing?.id as string | undefined;
 
   if (!contactId) {
     const { data: created, error } = await supabase
       .from("contacts")
-      .insert({ workspace_id: workflow.workspace_id, phone, name, email })
+      .insert({ workspace_id: workflow.workspace_id, phone, name, email, ...(Object.keys(extras).length ? { custom_fields: extras } : {}) })
       .select("id")
       .maybeSingle();
     if (error || !created) return NextResponse.json({ error: "não foi possível criar o contato" }, { status: 500 });
     contactId = created.id;
+  } else if (Object.keys(extras).length) {
+    // Quem já existe pode agendar de novo: o horário novo substitui o anterior, o resto da ficha fica.
+    const atual = (existing?.custom_fields as Record<string, unknown> | null) ?? {};
+    await supabase.from("contacts").update({ custom_fields: { ...atual, ...extras } }).eq("id", contactId);
   }
   if (!contactId) return NextResponse.json({ error: "erro interno" }, { status: 500 });
 
