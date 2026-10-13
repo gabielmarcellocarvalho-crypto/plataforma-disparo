@@ -61,19 +61,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   let contactId = existing?.id as string | undefined;
 
   if (!contactId) {
-    const { data: created, error } = await supabase
-      .from("contacts")
-      .insert({
-        workspace_id: workflow.workspace_id,
-        phone,
-        name,
-        email,
-        whatsapp_instance_id: instanceId,
-        ...(Object.keys(extras).length ? { custom_fields: extras } : {}),
-      })
-      .select("id")
-      .maybeSingle();
-    if (error || !created) return NextResponse.json({ error: "não foi possível criar o contato" }, { status: 500 });
+    const novo = {
+      workspace_id: workflow.workspace_id,
+      phone,
+      name,
+      whatsapp_instance_id: instanceId,
+      ...(Object.keys(extras).length ? { custom_fields: extras } : {}),
+    };
+    let { data: created, error } = await supabase.from("contacts").insert({ ...novo, email }).select("id").maybeSingle();
+    // O e-mail é único por workspace. Se outro contato já usa esse e-mail (a mesma pessoa com outro número,
+    // ou um teste), o telefone é o que identifica quem recebe a mensagem: cria o contato sem o e-mail em
+    // vez de perder o agendamento inteiro.
+    if (error?.code === "23505" && email) {
+      ({ data: created, error } = await supabase.from("contacts").insert({ ...novo, email: null }).select("id").maybeSingle());
+    }
+    if (error || !created) {
+      console.error("Webhook de workflow: falha ao criar contato:", error?.code, error?.message);
+      return NextResponse.json({ error: "não foi possível criar o contato" }, { status: 500 });
+    }
     contactId = created.id;
   } else {
     // Quem já existe pode agendar de novo: o horário novo substitui o anterior, o resto da ficha fica.
