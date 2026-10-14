@@ -53,6 +53,8 @@ type ContactRow = {
   phone: string | null;
   photo_url: string | null;
   stage: string;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
   needs_attention: boolean;
   attention_reason: string | null;
   flagged_reason: string | null;
@@ -73,7 +75,7 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
     page: (from, to) =>
       supabase
         .from("contacts")
-        .select("id, name, phone, photo_url, stage, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
+        .select("id, name, phone, photo_url, stage, pipeline_id, pipeline_stage_id, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
         .eq("workspace_id", workspaceId)
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<{ data: ContactRow[] | null }>,

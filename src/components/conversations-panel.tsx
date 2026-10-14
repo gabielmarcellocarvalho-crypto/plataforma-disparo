@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   takeOverConversation,
@@ -21,7 +21,9 @@ import type { TicketStatus } from "@/lib/conversation-tickets";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
 import { VoiceInput } from "@/components/ui/voice-input";
 import { VoiceMessageBubble } from "@/components/ui/voice-message-bubble";
-import { STAGE_ORDER } from "@/lib/crm-stages";
+import { STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { listPipelines, moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
+import { sortStages, stageForSignal } from "@/lib/pipelines";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
 
@@ -65,6 +67,8 @@ type Contact = {
   phone: string | null;
   photo_url: string | null;
   stage: string;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
   needs_attention: boolean;
   attention_reason: string | null;
   flagged_reason: string | null;
@@ -208,6 +212,36 @@ export function ConversationsPanel({
     startRefresh(() => router.refresh());
   }
 
+  // Funis do workspace: as etapas aqui são as mesmas do CRM (nome e ordem do funil de cada lead). Sem
+  // funil configurado, cai nas 7 fases padrão.
+  const [pipelines, setPipelines] = useState<PipelineWithStages[]>([]);
+  useEffect(() => {
+    listPipelines().then(setPipelines).catch(() => setPipelines([]));
+  }, []);
+
+  // Lead sem funil pertence ao padrão, posicionado pelo sinal — mesma regra do Kanban e da ficha.
+  function pipelineOf(c: Contact) {
+    return pipelines.find((p) => p.id === c.pipeline_id) ?? pipelines.find((p) => p.is_default) ?? pipelines[0] ?? null;
+  }
+  function pipelineStageOf(c: Contact) {
+    const pl = pipelineOf(c);
+    if (!pl || pl.stages.length === 0) return null;
+    const stages = sortStages(pl.stages);
+    return stages.find((st) => st.id === c.pipeline_stage_id) ?? stageForSignal(c.stage as ContactStage, stages);
+  }
+  function stageNameOf(c: Contact) {
+    return pipelineStageOf(c)?.name ?? (stageLabels[c.stage] || c.stage);
+  }
+  // Chave do filtro: id da etapa do funil (ou o sinal, quando não há funil).
+  function stageKeyOf(c: Contact) {
+    return pipelineStageOf(c)?.id ?? c.stage;
+  }
+  const stageChips = pipelines.some((p) => p.stages.length > 0)
+    ? pipelines.flatMap((p) =>
+        sortStages(p.stages).map((st) => ({ key: st.id, label: pipelines.length > 1 ? `${p.name} · ${st.name}` : st.name }))
+      )
+    : visibleStages.map((s) => ({ key: s, label: stageLabels[s] || s }));
+
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Várias etapas ao mesmo tempo (ex.: Abordado + Interessado). Vazio = todas.
@@ -252,7 +286,7 @@ export function ConversationsPanel({
     const q = query.toLowerCase().trim();
     return conversations.filter((c) => {
       if (q && !(c.contact.name || "").toLowerCase().includes(q) && !(c.contact.phone || "").includes(q)) return false;
-      if (stageFilters.length > 0 && !stageFilters.includes(c.contact.stage)) return false;
+      if (stageFilters.length > 0 && !stageFilters.includes(stageKeyOf(c.contact))) return false;
       if (aguardandoHumano && !c.contact.needs_attention) return false;
       const last = c.messages[0];
       if (semResposta && last?.role !== "assistant") return false;
@@ -267,7 +301,7 @@ export function ConversationsPanel({
       if (ticketFilter && c.ticket_status !== ticketFilter) return false;
       return true;
     });
-  }, [conversations, query, stageFilters, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
+  }, [conversations, pipelines, query, stageFilters, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
 
   // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
   // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
@@ -338,6 +372,14 @@ export function ConversationsPanel({
     setError(null);
     startTransition(async () => {
       const result = await updateContactStage(contactId, stage);
+      if (result.error) setError(result.error);
+    });
+  }
+
+  function handlePipelineStageChange(contactId: string, stageId: string) {
+    setError(null);
+    startTransition(async () => {
+      const result = await moveContactToStage(contactId, stageId);
       if (result.error) setError(result.error);
     });
   }
@@ -519,7 +561,7 @@ export function ConversationsPanel({
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold text-text-muted">Etapa (pode marcar mais de uma)</span>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  {visibleStages.map((s) => {
+                  {stageChips.map(({ key: s, label }) => {
                     const on = stageFilters.includes(s);
                     return (
                       <button
@@ -531,7 +573,7 @@ export function ConversationsPanel({
                           on ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
                         }`}
                       >
-                        {stageLabels[s] || s}
+                        {label}
                       </button>
                     );
                   })}
@@ -653,9 +695,9 @@ export function ConversationsPanel({
                       </span>
                       <span
                         title="Etapa do funil (muda pelo Kanban ou automaticamente pelo agente)"
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 max-w-[110px] truncate ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
                       >
-                        {stageLabels[c.contact.stage] || c.contact.stage}
+                        {stageNameOf(c.contact)}
                       </span>
                       <span
                         title="Status do atendimento"
@@ -720,12 +762,12 @@ export function ConversationsPanel({
               >
                 <Avatar photoUrl={selected.contact.photo_url} name={selected.contact.name} phone={selected.contact.phone} size="md" />
               </button>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 basis-40 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setDrawerContactId(selected.contact.id)}
                   title="Ver detalhes do lead"
-                  className="text-base font-bold truncate hover:underline cursor-pointer text-left"
+                  className="block max-w-full text-base font-bold truncate hover:underline cursor-pointer text-left"
                 >
                   {selected.contact.name || selected.contact.phone}
                 </button>
@@ -734,17 +776,31 @@ export function ConversationsPanel({
                 </div>
               </div>
 
-              <select
-                value={selected.contact.stage}
-                onChange={(e) => handleStageChange(selected.contact.id, e.target.value)}
-                disabled={pending}
-                title="Etapa do CRM"
-                className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
-              >
-                {STAGE_ORDER.map((s) => (
-                  <option key={s} value={s}>{stageLabels[s] || s}</option>
-                ))}
-              </select>
+              {pipelineStageOf(selected.contact) ? (
+                <select
+                  value={pipelineStageOf(selected.contact)!.id}
+                  onChange={(e) => handlePipelineStageChange(selected.contact.id, e.target.value)}
+                  disabled={pending}
+                  title="Etapa do funil"
+                  className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 max-w-[170px] cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
+                >
+                  {sortStages(pipelineOf(selected.contact)!.stages).map((st) => (
+                    <option key={st.id} value={st.id}>{st.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={selected.contact.stage}
+                  onChange={(e) => handleStageChange(selected.contact.id, e.target.value)}
+                  disabled={pending}
+                  title="Etapa do CRM"
+                  className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
+                >
+                  {STAGE_ORDER.map((s) => (
+                    <option key={s} value={s}>{stageLabels[s] || s}</option>
+                  ))}
+                </select>
+              )}
 
               {showResponsavel && vendors.length > 0 && (
                 <select
