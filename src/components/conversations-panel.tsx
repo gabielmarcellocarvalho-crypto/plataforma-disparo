@@ -167,7 +167,7 @@ function formatListTime(iso: string) {
 
 // Placeholders sintéticos que o backend grava quando não há texto de verdade pra acompanhar a mídia
 // (foto sem legenda) — não faz sentido mostrar esse texto técnico junto do preview visual.
-const MEDIA_ONLY_PLACEHOLDER = /^\[(o cliente enviou uma foto|arquivo enviado: .*)\]$/;
+const MEDIA_ONLY_PLACEHOLDER = /^\[(o cliente enviou (uma foto|um áudio|um arquivo)|arquivo enviado: .*)\]$/;
 
 function MediaAttachment({ url, type, tone }: { url: string; type: "image" | "audio" | "document"; tone: "in" | "out" }) {
   if (type === "image") {
@@ -1013,7 +1013,7 @@ export function ConversationsPanel({
                       }`}
                     >
                       {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} tone={m.role === "user" ? "in" : "out"} />}
-                      {!MEDIA_ONLY_PLACEHOLDER.test(m.content) && m.content}
+                      {!(m.media_url && MEDIA_ONLY_PLACEHOLDER.test(m.content)) && m.content}
                       <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
                     </div>
                   </Fragment>

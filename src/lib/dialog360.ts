@@ -170,6 +170,7 @@ export type Dialog360WebhookBody = {
           text?: { body?: string };
           audio?: { id?: string; mime_type?: string };
           image?: { id?: string; mime_type?: string; caption?: string };
+          document?: { id?: string; mime_type?: string; caption?: string };
           // Presente quando a conversa começou num anúncio Click-to-WhatsApp.
           referral?: { source_type?: string; ctwa_clid?: string };
           // Clique em botão de quick reply de um TEMPLATE (type "button") ou de uma mensagem
@@ -238,6 +239,9 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
           out.push({ ...base, type: "audio", text: null, mediaId: m.audio.id, mimeType: m.audio.mime_type || null });
         } else if (m.type === "image" && m.image?.id) {
           out.push({ ...base, type: "image", text: m.image.caption || null, mediaId: m.image.id, mimeType: m.image.mime_type || null });
+        } else if (m.type === "document" && m.document?.id) {
+          // Fica como "other" pro agente (que não lê documento); mediaId deixa o webhook guardar o arquivo na conversa.
+          out.push({ ...base, type: "other", text: m.document.caption || null, mediaId: m.document.id, mimeType: m.document.mime_type || null });
         } else if (m.type) {
           out.push({ ...base, type: "other", text: null, mediaId: null, mimeType: null });
         }

@@ -32,6 +32,8 @@ export type ChatbotInbound = {
   // null = veio mídia (áudio, foto…) em vez de texto.
   text: string | null;
   externalId: string | null;
+  // Mídia que o cliente mandou, já salva no bucket (o webhook baixa antes de chamar o bot). `caption` é a legenda.
+  media?: { url: string; kind: "image" | "audio" | "document"; caption: string | null } | null;
 };
 
 type Contact = { id: string; name: string | null; email: string | null; stage: string; team_member_id: string | null; custom_fields: Record<string, unknown> | null; tags: string[] | null };
@@ -80,6 +82,12 @@ async function reload(admin: AdminClient, contactId: string): Promise<Contact> {
   return data as Contact;
 }
 
+export function inboundMediaPlaceholder(kind?: "image" | "audio" | "document"): string {
+  if (kind === "image") return "[o cliente enviou uma foto]";
+  if (kind === "audio") return "[o cliente enviou um áudio]";
+  return "[o cliente enviou um arquivo]";
+}
+
 async function saveInbound(admin: AdminClient, workspaceId: string, contactId: string, msg: ChatbotInbound): Promise<boolean> {
   if (msg.externalId) {
     const { data: dup } = await admin.from("messages").select("id").eq("workspace_id", workspaceId).eq("external_id", msg.externalId).maybeSingle();
@@ -89,8 +97,9 @@ async function saveInbound(admin: AdminClient, workspaceId: string, contactId: s
     workspace_id: workspaceId,
     contact_id: contactId,
     role: "user",
-    content: msg.text ?? "[o cliente enviou um arquivo]",
+    content: msg.text ?? msg.media?.caption ?? inboundMediaPlaceholder(msg.media?.kind),
     external_id: msg.externalId,
+    ...(msg.media ? { media_url: msg.media.url, media_type: msg.media.kind } : {}),
   });
   return true;
 }

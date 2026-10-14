@@ -2,6 +2,7 @@ import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, getDialog360Media, type Dialog360WebhookBody, type Dialog360IncomingMessage } from "@/lib/dialog360";
 import { getMetaCloudMedia } from "@/lib/metacloud";
+import { uploadConversationMedia } from "@/lib/conversation-media";
 import { transcribeAudio, transcriptionAvailable } from "@/lib/transcribe";
 import { runAgentTurn, AGENT_COLUMNS, type Agent, type ResolvedIncoming, type RawIncomingMedia } from "@/lib/agent-turn";
 import { type AgentChannel } from "@/lib/agent-channel";
@@ -11,7 +12,7 @@ import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { createInboundLead } from "@/lib/inbound-lead";
 import { secureEqual } from "@/lib/secure-compare";
 import { metaSignatureMode, verifyMetaSignature } from "@/lib/meta-signature";
-import { handleChatbotInbound } from "@/lib/chatbot-engine";
+import { handleChatbotInbound, inboundMediaPlaceholder } from "@/lib/chatbot-engine";
 import { parseTemplateCategoryChanges, saveTemplateCategoryChanges } from "@/lib/meta-template-events";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
@@ -67,6 +68,34 @@ async function resolveOfficialIncoming(
   }
 
   return { text: null, images: [], unsupported: "arquivo", media: null, externalId };
+}
+
+// Imagem, áudio e documento recebidos num número SEM agente: baixa pelo canal certo e sobe pro bucket,
+// pra a tela de Conversas mostrar. Best-effort — se falhar, a mensagem entra só como texto marcador.
+async function saveIncomingMedia(
+  supabase: ReturnType<typeof createAdminClient>,
+  instance: { workspace_id: string; channel: string; dialog360_api_key: string | null },
+  msg: Dialog360IncomingMessage
+): Promise<{ url: string; kind: "image" | "audio" | "document"; caption: string | null } | null> {
+  const kind = msg.type === "image" ? "image" : msg.type === "audio" ? "audio" : msg.rawType === "document" ? "document" : null;
+  if (!kind || !msg.mediaId) return null;
+  try {
+    const file =
+      instance.channel === "360dialog" ? await getDialog360Media(instance.dialog360_api_key || "", msg.mediaId) : await getMetaCloudMedia(msg.mediaId);
+    if (!file) return null;
+    const { data: contact } = await supabase
+      .from("contacts")
+      .select("id")
+      .eq("workspace_id", instance.workspace_id)
+      .in("phone", [msg.from, brPhoneVariant(msg.from) ?? msg.from])
+      .maybeSingle();
+    // Contato novo ainda não existe aqui: sobe sob o workspace com pasta própria do telefone.
+    const url = await uploadConversationMedia(supabase, instance.workspace_id, contact?.id ?? `novo-${msg.from}`, file.base64, file.mimetype);
+    return url ? { url, kind, caption: msg.text } : null;
+  } catch (err) {
+    console.error("Falha ao guardar mídia recebida:", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 // Webhook da API oficial (Cloud API da Meta) — rota separada da do Evolution porque o formato do
@@ -197,11 +226,14 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
       continue;
     }
 
+    // Sem agente ninguém lê a mídia, mas ela precisa aparecer na conversa: baixa e guarda no bucket antes de registrar.
+    const media = await saveIncomingMedia(supabase, instance, msg);
+
     // Chatbot de mensagens iniciais (número sem IA, com o bot ligado). Cuidou da mensagem = para aqui.
     const handledByBot = await handleChatbotInbound(
       supabase,
       { ...instance, instance_name: null, phone_number_id: msg.phoneNumberId },
-      { phone: msg.from, pushName: msg.contactName, text: msg.type === "text" ? msg.text : null, externalId: msg.messageId }
+      { phone: msg.from, pushName: msg.contactName, text: msg.type === "text" ? msg.text : null, externalId: msg.messageId, media }
     ).catch((err) => {
       console.error("Chatbot (360dialog/metacloud) falhou:", err instanceof Error ? err.message : err);
       return false;
@@ -233,7 +265,8 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
       createdNow = Boolean(created);
     }
     if (!contact) continue;
-    if (!msg.text) continue; // sem agente, esse caminho só registra texto passivo — áudio/imagem não são baixados aqui
+    const text = msg.type === "text" ? msg.text : null;
+    if (!text && !media) continue; // figurinha, reação, vídeo: sem o que mostrar na conversa
 
     // Mesma dedup de messages.external_id do caminho com agente (migration 0045) — retry/replay do
     // webhook não deveria duplicar a mensagem na conversa nem reprocessar o avanço de fase abaixo.
@@ -251,11 +284,12 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
       workspace_id: instance.workspace_id,
       contact_id: contact.id,
       role: "user",
-      content: msg.text,
+      content: text ?? media?.caption ?? inboundMediaPlaceholder(media?.kind),
       external_id: msg.messageId,
+      ...(media ? { media_url: media.url, media_type: media.kind } : {}),
     });
 
-    if (OPT_OUT.test(msg.text)) {
+    if (text && OPT_OUT.test(text)) {
       await supabase.from("contacts").update({ opt_out_whatsapp: true }).eq("id", contact.id);
     } else if (!createdNow && canAdvanceStage(contact.stage as ContactStage, "interessado")) {
       // Sem agente de IA lendo a resposta, não tem como classificar o que o lead disse — mas
