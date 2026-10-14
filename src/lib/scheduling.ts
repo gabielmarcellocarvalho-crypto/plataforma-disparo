@@ -23,7 +23,7 @@ type ContactLike = { id: string; name: string | null; phone: string | null; emai
 const TZ = "America/Sao_Paulo";
 const ACTIVE_STATUSES = ["marcada", "remarcada"];
 // Link da conversa na descrição do evento. O agente roda no webhook, sem origem de requisição.
-const APP_URL = process.env.APP_URL || "https://plataforma.disparo.studiov4carvalho.com.br";
+const APP_URL = process.env.APP_URL || "https://automax.v4carvalho.com.br";
 
 export type ActiveMeeting = { id: string; team_member_id: string; google_event_id: string; starts_at: string; ends_at: string; meet_link: string | null };
 

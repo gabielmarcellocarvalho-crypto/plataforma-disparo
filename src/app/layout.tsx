@@ -11,11 +11,11 @@ const plusJakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "AutomaX",
   description: "Disparo de WhatsApp e e-mail em massa, multi-cliente.",
-  metadataBase: new URL("https://plataforma.disparo.studiov4carvalho.com.br"),
+  metadataBase: new URL("https://automax.v4carvalho.com.br"),
   openGraph: {
     title: "AutomaX",
     description: "Disparo de WhatsApp e e-mail em massa, multi-cliente.",
-    url: "https://plataforma.disparo.studiov4carvalho.com.br",
+    url: "https://automax.v4carvalho.com.br",
     siteName: "AutomaX",
     images: [{ url: "/og-image.png", width: 1200, height: 630 }],
     locale: "pt_BR",

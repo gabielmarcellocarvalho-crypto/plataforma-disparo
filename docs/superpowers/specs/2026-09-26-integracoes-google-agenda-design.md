@@ -221,7 +221,7 @@ ferramentas.
 
 1. Google Cloud: ativar **Google Calendar API** e criar cliente OAuth (Web) — pode ser o mesmo
    projeto do login com Google. Redirect URI:
-   `https://plataforma.disparo.studiov4carvalho.com.br/api/integrations/google/callback`.
+   `https://automax.v4carvalho.com.br/api/integrations/google/callback`.
 2. Vercel: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CALENDAR_TOKEN_KEY`.
 3. Tela de consentimento OAuth com escopos sensíveis ⇒ **verificação do Google** (política de
    privacidade, domínio verificado, vídeo). Abrir em paralelo. Até aprovar: até 100 contas de teste,
