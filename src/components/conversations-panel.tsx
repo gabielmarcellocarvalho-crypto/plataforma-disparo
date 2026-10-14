@@ -26,6 +26,7 @@ import { listPipelines, moveContactToStage, type PipelineWithStages } from "@/ap
 import { sortStages, stageForSignal } from "@/lib/pipelines";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
+import { mp4OpusToOgg } from "@/lib/audio-remux";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir um arquivo grande à toa.
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -191,7 +192,7 @@ function MediaAttachment({ url, type, tone }: { url: string; type: "image" | "au
 }
 
 export function ConversationsPanel({
-  conversations,
+  conversations: serverConversations,
   stageLabels,
   visibleStages,
   vendors,
@@ -204,6 +205,30 @@ export function ConversationsPanel({
   showResponsavel: boolean;
 }) {
   const router = useRouter();
+
+  // Mensagens que a equipe acabou de mandar: aparecem na hora, sem esperar a página inteira recarregar do
+  // servidor. Saem daqui quando os dados novos chegam (o servidor já tem a mensagem de verdade).
+  const [sentLocal, setSentLocal] = useState<Message[]>([]);
+  useEffect(() => {
+    setSentLocal([]);
+  }, [serverConversations]);
+  const conversations = useMemo(
+    () =>
+      sentLocal.length === 0
+        ? serverConversations
+        : serverConversations.map((c) => {
+            const extra = sentLocal.filter((m) => m.contact_id === c.contact.id && m.agent_id === (c.agent?.id ?? null));
+            return extra.length ? { ...c, messages: [...extra.slice().reverse(), ...c.messages] } : c;
+          }),
+    [serverConversations, sentLocal]
+  );
+  function showSentNow(contactId: string, agentId: string | null, content: string) {
+    setSentLocal((cur) => [
+      ...cur,
+      { id: `local-${Date.now()}-${cur.length}`, contact_id: contactId, agent_id: agentId, role: "assistant", content, media_url: null, media_type: null, created_at: new Date().toISOString() },
+    ]);
+    router.refresh();
+  }
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
   const [refreshing, startRefresh] = useTransition();
@@ -406,7 +431,10 @@ export function ConversationsPanel({
         ? await sendManualMessage(selected.contact.id, selected.agent.id, text)
         : await sendInstanceMessage(selected.contact.id, selected.instance!.id, text);
       if (result.error) setError(result.error);
-      else setDraft("");
+      else {
+        setDraft("");
+        showSentNow(selected.contact.id, selected.agent?.id ?? null, text);
+      }
     });
   }
 
@@ -439,6 +467,7 @@ export function ConversationsPanel({
           ? await sendManualMedia(selected.contact.id, selected.agent.id, upload)
           : await sendInstanceMedia(selected.contact.id, selected.instance!.id, upload);
         if (result.error) setError(result.error);
+        else showSentNow(selected.contact.id, selected.agent?.id ?? null, `[arquivo enviado: ${file.name}]`);
       } catch {
         // Queda de rede ou resposta inesperada do servidor: mostra o erro no composer em vez de
         // deixar a exceção subir e trocar a tela inteira pela página de erro.
@@ -472,14 +501,26 @@ export function ConversationsPanel({
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data);
       };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const mimeType = recorder.mimeType || "audio/webm";
         const blob = new Blob(recordedChunksRef.current, { type: mimeType });
-        if (blob.size > 0) {
-          const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
-          handleSendFile(new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType }));
+        if (blob.size === 0) return;
+        if (mimeType.includes("webm")) {
+          setError("Esse navegador grava áudio num formato que o WhatsApp não aceita. Atualize o Chrome ou grave pelo Edge/Firefox.");
+          return;
         }
+        // O Chrome grava Opus dentro de MP4, que a WhatsApp não processa (a Meta aceita o envio e o áudio nunca
+        // chega). Troca o envelope pra Ogg/Opus, que ela aceita e mostra como mensagem de voz. AAC (Safari) segue igual.
+        if (mimeType.includes("mp4")) {
+          const ogg = mp4OpusToOgg(new Uint8Array(await blob.arrayBuffer()));
+          if (ogg) {
+            handleSendFile(new File([ogg as BlobPart], `audio-${Date.now()}.ogg`, { type: "audio/ogg" }));
+            return;
+          }
+        }
+        const ext = mimeType.includes("mp4") ? "m4a" : "ogg";
+        handleSendFile(new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType }));
       };
       recorder.start();
       mediaRecorderRef.current = recorder;

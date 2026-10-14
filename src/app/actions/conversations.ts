@@ -123,7 +123,6 @@ export async function sendManualMessage(contactId: string, agentId: string, text
     content: trimmed,
   });
 
-  revalidatePath("/conversas");
   return { error: null, ok: true };
 }
 
@@ -212,7 +211,6 @@ export async function sendManualMedia(contactId: string, agentId: string, upload
     media_type: media.kind,
   });
 
-  revalidatePath("/conversas");
   return { error: null, ok: true };
 }
 
@@ -256,7 +254,6 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
   // Alguém da equipe respondeu: se o chatbot de mensagens iniciais estava no meio, ele sai da conversa.
   await interruptChatbotForContact(createAdminClient(), contactId);
 
-  revalidatePath("/conversas");
   return { error: null, ok: true };
 }
 
@@ -303,7 +300,9 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, u
   });
   await interruptChatbotForContact(admin, contactId);
 
-  revalidatePath("/conversas");
+  // Sem revalidatePath("/conversas") de propósito: refazer a página inteira (todos os contatos + mensagens)
+  // dentro da action segurava a resposta por vários segundos. A tela mostra a mensagem na hora e se atualiza
+  // em segundo plano (router.refresh no cliente).
   return { error: null, ok: true };
 }
 
