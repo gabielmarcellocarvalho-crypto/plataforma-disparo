@@ -524,6 +524,8 @@ export function CrmBoard({
   // WhatsApp = lead com telefone. E-mail = lead que entrou só com e-mail (ex.: formulário do Facebook sem telefone).
   const [channelFilter, setChannelFilter] = useState<"" | "whatsapp" | "email">("");
   const [lostReasonFilter, setLostReasonFilter] = useState("");
+  // Tags que tiram o lead da lista (filtrar "pra fora"): quem tem QUALQUER uma delas some do funil.
+  const [excludeTags, setExcludeTags] = useState<string[]>([]);
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
   const [pickerValue, setPickerValue] = useState("");
@@ -574,6 +576,12 @@ export function CrmBoard({
     return out;
   }, [items, fieldDefs]);
 
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of items) for (const t of c.tags ?? []) set.add(t.toLowerCase());
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [items]);
+
   const filtered = useMemo(() => {
     return items.filter((c) => {
       if (quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
@@ -593,6 +601,7 @@ export function CrmBoard({
         // definição, e listar todos eles como "sem motivo" enterraria o que falta preencher.
         if (lostReasonFilter === "__nenhum__" ? c.stage !== LOST_STAGE || c.lost_reason : c.lost_reason !== lostReasonFilter) return false;
       }
+      if (excludeTags.length > 0 && (c.tags ?? []).some((t) => excludeTags.includes(t.toLowerCase()))) return false;
       if (search) {
         const q = search.toLowerCase();
         const hay = `${c.name || ""} ${c.phone || ""} ${c.email || ""}`.toLowerCase();
@@ -608,7 +617,7 @@ export function CrmBoard({
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, channelFilter, lostReasonFilter, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, channelFilter, lostReasonFilter, excludeTags, fieldFilters]);
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
@@ -758,6 +767,7 @@ export function CrmBoard({
     (branchFilter ? 1 : 0) +
     (channelFilter ? 1 : 0) +
     (lostReasonFilter ? 1 : 0) +
+    excludeTags.length +
     fieldFilters.length;
   const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
 
@@ -771,6 +781,7 @@ export function CrmBoard({
     setBranchFilter("");
     setChannelFilter("");
     setLostReasonFilter("");
+    setExcludeTags([]);
     setFieldFilters([]);
   }
 
@@ -1112,7 +1123,42 @@ export function CrmBoard({
                   </option>
                 ))}
               </select>
+
+              {allTags.length > 0 && (
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const t = e.target.value;
+                    if (t) setExcludeTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
+                  }}
+                  title="Esconde os leads que têm a tag escolhida"
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+                >
+                  <option value="">Ocultar tag…</option>
+                  {allTags
+                    .filter((t) => !excludeTags.includes(t))
+                    .map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                </select>
+              )}
             </div>
+
+            {excludeTags.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold text-text-muted">Sem a tag:</span>
+                {excludeTags.map((t) => (
+                  <span key={t} className="flex items-center gap-1.5 text-[11px] bg-danger-soft text-danger rounded-full px-2.5 py-1">
+                    {t}
+                    <button type="button" onClick={() => setExcludeTags((cur) => cur.filter((x) => x !== t))} aria-label={`Voltar a mostrar a tag ${t}`} className="cursor-pointer font-bold">
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border">
             <select value={pickerKey} onChange={(e) => { setPickerKey(e.target.value); setPickerValue(""); }} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer mt-2.5">
