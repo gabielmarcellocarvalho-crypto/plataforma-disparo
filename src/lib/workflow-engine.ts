@@ -418,7 +418,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
         if (empty >= 0) return { ok: false, detail: { error: `o lead não tem o campo da variável {{${empty + 1}}} (${tpl.variables[empty]})` } };
         await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params);
         content = `[Template: ${tpl.name}]`;
-        billing = tpl.category || "MARKETING";
+        billing = (tpl.category || "marketing").toLowerCase(); // a coluna só aceita minúsculas (check de messages.billing_category)
       } else {
         content = interpolateVariables(action.text, vars);
         if (instance.channel === "360dialog") {
@@ -436,7 +436,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       return { ok: false, detail: { error: `falha ao enviar: ${err instanceof Error ? err.message.slice(0, 300) : "erro desconhecido"}` } };
     }
 
-    await supabase.from("messages").insert({
+    const { error: logError } = await supabase.from("messages").insert({
       workspace_id: contact.workspace_id,
       contact_id: contact.id,
       agent_id: null,
@@ -444,6 +444,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       content,
       billing_category: billing,
     });
+    if (logError) console.error("Workflow: mensagem enviada mas não registrada na conversa:", logError.code, logError.message);
     return { ok: true, detail: { text: content, mode } };
   }
 

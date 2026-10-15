@@ -163,7 +163,7 @@ export async function GET(req: Request) {
           role: "assistant",
           content: `[Template: ${tpl.name}]`,
           is_followup: true,
-          billing_category: tpl.category || "MARKETING",
+          billing_category: (tpl.category || "marketing").toLowerCase(), // check da coluna só aceita minúsculas
         });
         sent++;
         continue;
