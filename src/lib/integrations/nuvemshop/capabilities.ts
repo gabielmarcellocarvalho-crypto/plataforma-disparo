@@ -2,8 +2,8 @@
 // exige migration. O workspace liga as que quer em Integrações; cada agente liga as que usa na aba
 // Integrações dele. Efetivo = ligada nos dois.
 //
-// `available: false` aparece travada na tela ("em breve"). Nenhuma permissão de escrita está
-// disponível: a loja é de cliente real e a v1 só consulta (spec 2026-10-07).
+// `available: false` aparece travada na tela ("em breve"). A única escrita liberada é criar link de
+// pagamento (pedido rascunho, não confirma nem cobra); as demais seguem travadas (spec 2026-10-07).
 
 export type Capability = {
   id: string;
@@ -35,6 +35,16 @@ export const NUVEMSHOP_CAPABILITIES: Capability[] = [
     available: true,
     description: "O agente vê preço, estoque e link dos produtos da loja.",
     agentNote: "Isso serve para consultar produtos: o agente informa preço, disponibilidade em estoque e o link do produto.",
+  },
+  {
+    id: "nuvemshop.pedidos.link_pagamento",
+    label: "Criar link de pagamento",
+    kind: "escrita",
+    available: true,
+    description:
+      "O agente monta um pedido rascunho com os itens que o cliente escolheu e manda o link de pagamento da loja. Não confirma nem cobra: quem paga é o cliente. Exige que o app da loja tenha permissão de pedidos rascunho.",
+    agentNote:
+      "Isso serve para criar um link de pagamento: o agente cria um pedido rascunho com os itens combinados e envia o link do checkout da loja. Não confirma o pedido nem cobra.",
   },
   {
     id: "nuvemshop.pedidos.fechar",

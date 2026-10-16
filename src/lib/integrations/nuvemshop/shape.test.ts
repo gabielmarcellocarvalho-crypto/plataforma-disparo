@@ -85,7 +85,7 @@ describe("shapeProduct", () => {
       canonical_url: "https://loja/camiseta",
       description: { pt: "<p>Algodão&nbsp;puro</p>" },
       variants: [
-        { values: [{ pt: "P" }], price: "50.00", promotional_price: "40.00", cost: "10.00", stock_management: true, stock: 3 },
+        { id: 101, values: [{ pt: "P" }], price: "50.00", promotional_price: "40.00", cost: "10.00", stock_management: true, stock: 3 },
         { values: [{ pt: "M" }], price: "50.00", cost: "10.00", stock_management: true, stock: 0 },
         { values: [], price: "60.00", stock_management: false },
       ],
@@ -93,9 +93,9 @@ describe("shapeProduct", () => {
     expect(out.nome).toBe("Camiseta");
     expect(out.descricao).toBe("Algodão puro");
     expect(out.variacoes).toEqual([
-      { descricao: "P", preco: "R$ 40.00", estoque: "3 em estoque" },
-      { descricao: "M", preco: "R$ 50.00", estoque: "sem estoque" },
-      { descricao: "", preco: "R$ 60.00", estoque: "disponível" },
+      { variante_id: 101, descricao: "P", preco: "R$ 40.00", estoque: "3 em estoque" },
+      { variante_id: null, descricao: "M", preco: "R$ 50.00", estoque: "sem estoque" },
+      { variante_id: null, descricao: "", preco: "R$ 60.00", estoque: "disponível" },
     ]);
     expect(JSON.stringify(out)).not.toContain("10.00");
   });

@@ -8,6 +8,9 @@ describe("sanitizeCapabilityIds", () => {
       "nuvemshop.pedidos.consultar",
     ]);
   });
+  it("link de pagamento é a única escrita liberada", () => {
+    expect(sanitizeCapabilityIds(["nuvemshop.pedidos.link_pagamento", "nuvemshop.pedidos.fechar"])).toEqual(["nuvemshop.pedidos.link_pagamento"]);
+  });
   it("aceita só lista", () => {
     expect(sanitizeCapabilityIds("nuvemshop.pedidos.consultar")).toEqual([]);
     expect(sanitizeCapabilityIds(undefined)).toEqual([]);

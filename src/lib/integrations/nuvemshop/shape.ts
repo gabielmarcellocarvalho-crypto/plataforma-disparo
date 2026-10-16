@@ -126,7 +126,7 @@ export type AgentProduct = {
   nome: string;
   link: string | null;
   descricao: string;
-  variacoes: { descricao: string; preco: string; estoque: string }[];
+  variacoes: { variante_id: number | null; descricao: string; preco: string; estoque: string }[];
 };
 
 function plainText(html: string, max: number): string {
@@ -154,7 +154,7 @@ export function shapeProduct(product: unknown): AgentProduct {
         const n = Number(x.stock);
         estoque = Number.isFinite(n) ? (n > 0 ? `${n} em estoque` : "sem estoque") : "disponível";
       }
-      return { descricao: values.slice(0, 80), preco: price ? `R$ ${price}` : "", estoque };
+      return { variante_id: typeof x.id === "number" ? x.id : null, descricao: values.slice(0, 80), preco: price ? `R$ ${price}` : "", estoque };
     }),
   };
 }
