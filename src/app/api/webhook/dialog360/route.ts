@@ -1,4 +1,5 @@
 import { NextResponse, after } from "next/server";
+import { saveAdReferral } from "@/lib/ad-referral";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, getDialog360Media, type Dialog360WebhookBody, type Dialog360IncomingMessage } from "@/lib/dialog360";
 import { getMetaCloudMedia } from "@/lib/metacloud";
@@ -221,7 +222,7 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
           ? { kind: "360dialog", apiKey: instance.dialog360_api_key || "" }
           : { kind: "metacloud", phoneNumberId: msg.phoneNumberId };
       if (channel.kind === "360dialog" && !channel.apiKey) continue; // instância mal configurada — não dá pra responder
-      const resolved = await resolveOfficialIncoming(instance, msg);
+      const resolved = { ...(await resolveOfficialIncoming(instance, msg)), ad: msg.referral ? msg.ad : undefined };
       await runAgentTurn(supabase, agentRow as Agent, channel, msg.from, msg.contactName, resolved);
       continue;
     }
@@ -265,6 +266,7 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
       createdNow = Boolean(created);
     }
     if (!contact) continue;
+    if (msg.referral) await saveAdReferral(supabase, contact.id, msg.ad);
     const text = msg.type === "text" ? msg.text : null;
     if (!text && !media) continue; // figurinha, reação, vídeo: sem o que mostrar na conversa
 

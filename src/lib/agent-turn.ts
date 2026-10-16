@@ -3,6 +3,7 @@
 // oficial) resolve a mensagem recebida do seu jeito (formato de payload bem diferente entre eles) e
 // chama runAgentTurn com o resultado já normalizado — daqui pra frente é tudo compartilhado: contato,
 // dedup, rate limit, delay humanizado, geração da resposta (Anthropic/Gemini), envio.
+import { saveAdReferral, type AdReferral } from "@/lib/ad-referral";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchContactProfilePicture } from "@/lib/evolution";
@@ -64,6 +65,8 @@ export type ResolvedIncoming = {
   // do lead parava o agente e exigia um humano — numa base de milhares, isso é a conversa toda
   // travando por um emoji. Registra no histórico, marca o aviso leve e segue com o agente ativo.
   ignorable?: boolean;
+  // Anúncio Click-to-WhatsApp de onde o lead veio (presente só na mensagem que abriu a conversa pelo anúncio).
+  ad?: AdReferral | null;
 };
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
@@ -224,6 +227,12 @@ export async function runAgentTurn(
   // que não bate mais com o que a Meta espera pra esse envio).
 
   if (contact.opt_out_whatsapp) return;
+
+  // Veio de anúncio: guarda título/texto/link no contato antes de montar o prompt, pra o agente saber qual produto o lead quer.
+  if (resolved.ad !== undefined) {
+    const merged = await saveAdReferral(supabase, contact.id, resolved.ad);
+    if (merged) contact.custom_fields = merged;
+  }
 
   // ── Passagem de bastão ────────────────────────────────────────────────────
   // A conversa pode já ter sido entregue a outro agente. Quem manda daqui pra frente é

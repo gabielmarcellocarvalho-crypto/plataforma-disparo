@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { adContextNote } from "@/lib/ad-referral";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   ATTENTION_TAG,
@@ -77,7 +78,7 @@ export async function generateReplyGemini(
       "mande uma mensagem BEM curta reconhecendo isso (algo como 'oi, vi sua mensagem, retomando agora' — sem repetir " +
       "o horário todo) e só depois siga a conversa normalmente."
     : "";
-  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${missedNote}`;
+  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${adContextNote(contact.custom_fields)}${missedNote}`;
 
   const historySteps: GeminiStep[] = collapseConsecutiveSteps(
     history.map((m) => ({

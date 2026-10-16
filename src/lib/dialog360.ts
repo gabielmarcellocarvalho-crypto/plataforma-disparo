@@ -2,6 +2,8 @@
 // repassa. Alternativa ao Evolution API (src/lib/evolution.ts) pra número de disparo em massa sem IA
 // (whatsapp_instances.channel = '360dialog'). Formato confirmado na doc oficial (docs.360dialog.com),
 // não chutado — mas AINDA NÃO TESTADO contra uma conta/API key real, validar antes de confiar em produção.
+import { parseReferral, type AdReferral } from "@/lib/ad-referral";
+
 const BASE_URL = process.env.DIALOG360_BASE_URL || "https://waba-v2.360dialog.io";
 
 type SendResult = { id: string };
@@ -172,7 +174,7 @@ export type Dialog360WebhookBody = {
           image?: { id?: string; mime_type?: string; caption?: string };
           document?: { id?: string; mime_type?: string; caption?: string };
           // Presente quando a conversa começou num anúncio Click-to-WhatsApp.
-          referral?: { source_type?: string; ctwa_clid?: string };
+          referral?: { source_type?: string; ctwa_clid?: string; source_url?: string; headline?: string; body?: string };
           // Clique em botão de quick reply de um TEMPLATE (type "button") ou de uma mensagem
           // interativa (type "interactive"). São formatos diferentes pro mesmo gesto: a pessoa
           // tocou num botão que a gente mandou.
@@ -209,6 +211,8 @@ export type Dialog360IncomingMessage = {
   messageId: string | null;
   // Veio de anúncio Click-to-WhatsApp (a Meta manda o objeto `referral`): abre a janela de 72h grátis.
   referral: boolean;
+  // Título, texto e link do anúncio (só quando veio de anúncio e a Meta mandou esses dados).
+  ad: AdReferral | null;
 };
 
 // Extrai as mensagens recebidas — texto, áudio e imagem viram entrada pro agente (runAgentTurn
@@ -225,7 +229,7 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
       for (const m of value.messages || []) {
         if (!m.from) continue;
         const contactName = nameByWaId.get(m.from) ?? null;
-        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null, rawType: m.type || null, referral: Boolean(m.referral) };
+        const base = { phoneNumberId, from: m.from, contactName, messageId: m.id || null, rawType: m.type || null, referral: Boolean(m.referral), ad: parseReferral(m.referral) };
         // Clique em botão vira TEXTO da conversa, com o rótulo que a pessoa viu na tela. Antes caía
         // em "other" → "arquivo não suportado": o lead clicava no CTA do template e o agente recebia
         // um arquivo que não existe, em vez da resposta dele. Pro resto do sistema (agente, CRM,
