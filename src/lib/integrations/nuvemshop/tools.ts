@@ -54,7 +54,9 @@ export function buildNuvemshopTools(ctx: NuvemshopContext): Anthropic.Tool[] {
       name: "consultar_produto",
       description:
         "Busca produtos da loja por nome ou código e devolve preço, estoque e link. Use quando o cliente perguntar de " +
-        "produto, preço ou disponibilidade; nunca invente preço nem estoque.",
+        "produto, preço ou disponibilidade; nunca invente preço nem estoque. Os com estoque vêm primeiro; produto com todas as " +
+        "variações \"sem estoque\" está esgotado. Use termo curto (ex.: \"tênis lacoste\" ou o código L004). Se o cliente pedir " +
+        "\"todos os modelos\", faça uma busca por categoria e depois uma por marca antes de dizer que não tem.",
       input_schema: {
         type: "object",
         properties: { busca: { type: "string", description: "Nome ou código do produto" } },

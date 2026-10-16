@@ -53,11 +53,47 @@ export async function findOrderByNumber(creds: NuvemshopCreds, contact: ContactI
   return shapeOrder(match);
 }
 
+const SEARCH_FETCH = 50;
+const SEARCH_REPLY = 10;
+const STOPWORDS = new Set(["de", "da", "do", "das", "dos", "o", "a", "os", "as", "um", "uma", "e", "com", "para", "pra", "no", "na"]);
+
+const fold = (v: unknown) =>
+  String(v ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+
+function productText(p: Raw): { words: string[]; flat: string } {
+  const name = p.name && typeof p.name === "object" ? Object.values(p.name as Raw).join(" ") : String(p.name ?? "");
+  const variants = Array.isArray(p.variants) ? (p.variants as Raw[]) : [];
+  const extra = variants.map((v) => `${v.sku ?? ""} ${Array.isArray(v.values) ? v.values.map((x) => Object.values((x as Raw) ?? {}).join(" ")).join(" ") : ""}`).join(" ");
+  const flat = fold(`${name} ${p.sku ?? ""} ${extra}`);
+  return { words: flat.split(/[^a-z0-9]+/).filter(Boolean), flat };
+}
+
+function inStock(p: Raw): boolean {
+  const variants = Array.isArray(p.variants) ? (p.variants as Raw[]) : [];
+  if (variants.length === 0) return true;
+  return variants.some((v) => !(v.stock_management === true || v.stock_management === "true") || Number(v.stock) > 0);
+}
+
+// A busca da Nuvemshop é frouxa ("tenis" traz também "Tennis") e, com poucos resultados por página, deixava
+// de fora produto em estoque. Pegamos mais, exigimos todas as palavras (inteiras) e mostramos primeiro o que tem estoque.
 export async function searchProducts(creds: NuvemshopCreds, term: string): Promise<AgentProduct[]> {
   const q = term.trim().slice(0, 80);
   if (!q) return [];
-  const list = await nuvemshopGet<Raw[]>(creds, "/products", { q, per_page: 5, published: true });
-  return (list || []).map(shapeProduct);
+  const list = (await nuvemshopGet<Raw[]>(creds, "/products", { q, per_page: SEARCH_FETCH, published: true })) || [];
+  const tokens = fold(q).split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+  let picked = list;
+  if (tokens.length > 0) {
+    const exact = list.filter((p) => {
+      const { words, flat } = productText(p);
+      return tokens.every((t) => words.some((w) => w === t || (t.length >= 3 && w.startsWith(t))) || (t.length >= 3 && flat.includes(t) && /\d/.test(t)));
+    });
+    picked = exact.length > 0 ? exact : list.slice(0, 5);
+  }
+  const ordered = [...picked.filter(inStock), ...picked.filter((p) => !inStock(p))];
+  return ordered.slice(0, SEARCH_REPLY).map(shapeProduct);
 }
 
 export async function fetchStoreName(creds: NuvemshopCreds): Promise<string | null> {
