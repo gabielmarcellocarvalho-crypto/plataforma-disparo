@@ -1,4 +1,5 @@
 import { safeFetch, UnsafeUrlError } from "@/lib/safe-fetch";
+import { hasTagAudience, matchesTagAudience } from "@/lib/workflow-audience-tags";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
@@ -32,9 +33,10 @@ type Contact = {
   pipeline_stage_id?: string | null;
   created_at?: string;
   custom_fields?: Record<string, unknown> | null;
+  tags?: string[] | null;
 };
 
-const CONTACT_SELECT = "id, workspace_id, name, phone, email, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, pipeline_id, pipeline_stage_id, created_at, custom_fields";
+const CONTACT_SELECT = "id, workspace_id, name, phone, email, stage, stage_changed_at, responsible_user_id, company_id, whatsapp_instance_id, pipeline_id, pipeline_stage_id, created_at, custom_fields, tags";
 
 // O PostgREST devolve no máximo 1000 linhas por resposta (teto do servidor, ignora .limit()), então
 // toda busca "traz tudo" daqui pagina de verdade. `build` monta a query do zero a cada página, com
@@ -227,6 +229,8 @@ async function findTriggerCandidates(supabase: AdminClient, workflow: WorkflowRo
     const stages = needsExact ? await loadStages(supabase, workflow.workspace_id) : [];
     rows = rows.filter((c) => (!triggerRefs || matchesStageRefs(c, triggerRefs, stages)) && (!audienceRefs || matchesStageRefs(c, audienceRefs, stages)));
   }
+  // Público por tag (aceita/ignora acento e caixa; sem tag configurada não filtra).
+  if (hasTagAudience(audience)) rows = rows.filter((c) => matchesTagAudience(c.tags, audience));
   return rows;
 }
 

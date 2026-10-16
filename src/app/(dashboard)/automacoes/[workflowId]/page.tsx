@@ -5,6 +5,7 @@ import { getWorkflow } from "@/app/actions/workflows";
 import { WorkflowBuilder } from "@/components/workflow-builder";
 import { WORKFLOW_TEMPLATES } from "@/lib/workflow-templates";
 import { listPipelines } from "@/app/actions/pipelines";
+import { listWorkspaceTags } from "@/app/actions/contacts";
 import { createClient } from "@/lib/supabase/server";
 import { resolveStageLabels } from "@/lib/crm-stages";
 
@@ -36,8 +37,9 @@ export default async function WorkflowEditorPage({
     .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" })));
 
   // Etapas que o editor mostra: as do funil personalizado, ou as 7 fases com os nomes do workspace.
-  const [pipelines, { data: labelsRow }] = await Promise.all([
+  const [pipelines, workspaceTags, { data: labelsRow }] = await Promise.all([
     listPipelines(),
+    listWorkspaceTags(),
     (await createClient()).from("workspaces").select("crm_stage_labels").eq("id", workspace.id).maybeSingle(),
   ]);
 
@@ -48,6 +50,7 @@ export default async function WorkflowEditorPage({
       existing={existing}
       template={template}
       pipelines={pipelines}
+      workspaceTags={workspaceTags.map((t) => t.tag)}
       stageLabels={resolveStageLabels(labelsRow?.crm_stage_labels)}
     />
   );

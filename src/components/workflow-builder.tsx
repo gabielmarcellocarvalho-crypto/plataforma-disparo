@@ -235,6 +235,7 @@ export function WorkflowBuilder({
   existing,
   template,
   pipelines = [],
+  workspaceTags = [],
   stageLabels = STAGE_LABELS,
 }: {
   workspaceId: string;
@@ -242,6 +243,7 @@ export function WorkflowBuilder({
   existing: WorkflowListRow | null;
   template?: WorkflowTemplateSeed;
   pipelines?: PipelineWithStages[];
+  workspaceTags?: string[];
   stageLabels?: Record<ContactStage, string>;
 }) {
   const router = useRouter();
@@ -260,6 +262,9 @@ export function WorkflowBuilder({
     initialRefs(existing?.audience_config as Record<string, unknown> | undefined, existing ? null : (template?.audienceStage as ContactStage | undefined) || null)
   );
   const [audienceResponsible, setAudienceResponsible] = useState<string>(existing?.audience_config?.responsibleUserId || "");
+  const [audienceTags, setAudienceTags] = useState<string[]>(existing?.audience_config?.tags || []);
+  const [audienceTagMode, setAudienceTagMode] = useState<"any" | "all">(existing?.audience_config?.tagMode === "all" ? "all" : "any");
+  const [audienceExcludeTags, setAudienceExcludeTags] = useState<string[]>(existing?.audience_config?.excludeTags || []);
   const [stopOnReply, setStopOnReply] = useState(existing?.stop_on_reply ?? template?.stopOnReply ?? true);
   const [stopOnStageChange, setStopOnStageChange] = useState(existing?.stop_on_stage_change ?? template?.stopOnStageChange ?? false);
   const [respectBusinessHours, setRespectBusinessHours] = useState(existing?.respect_business_hours ?? template?.respectBusinessHours ?? true);
@@ -328,7 +333,7 @@ export function WorkflowBuilder({
         y: mainY,
         icon: Filter,
         title: "Público",
-        subtitle: `${refsSummary(stageOpts, audienceRefs, "qualquer etapa")} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}`,
+        subtitle: `${refsSummary(stageOpts, audienceRefs, "qualquer etapa")} · ${audienceResponsible ? members.find((m) => m.id === audienceResponsible)?.name || "resp." : "qualquer resp."}${audienceTags.length ? ` · tag: ${audienceTags.join(audienceTagMode === "all" ? " + " : " ou ")}` : ""}${audienceExcludeTags.length ? ` · sem: ${audienceExcludeTags.join(", ")}` : ""}`,
         active: selected === "audience",
         onSelect: selectFixed("audience"),
       });
@@ -486,6 +491,9 @@ export function WorkflowBuilder({
         pipelineStageId: audienceRefs[0]?.pipelineStageId ?? null,
         stageRefs: audienceRefs,
         responsibleUserId: audienceResponsible || null,
+        tags: audienceTags,
+        tagMode: audienceTagMode,
+        excludeTags: audienceExcludeTags,
       },
       stopOnReply,
       stopOnStageChange,
@@ -646,6 +654,15 @@ export function WorkflowBuilder({
                           <option key={m.id} value={m.id}>{m.name}</option>
                         ))}
                       </select>
+                      <TagAudiencePicker
+                        allTags={workspaceTags}
+                        tags={audienceTags}
+                        mode={audienceTagMode}
+                        excludeTags={audienceExcludeTags}
+                        onTags={setAudienceTags}
+                        onMode={setAudienceTagMode}
+                        onExclude={setAudienceExcludeTags}
+                      />
                     </>
                   )}
 
@@ -983,6 +1000,64 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Público por tag: marca as tags que já existem no workspace. "Qualquer uma" ou "todas"; e tags que tiram o lead.
+function TagAudiencePicker({
+  allTags,
+  tags,
+  mode,
+  excludeTags,
+  onTags,
+  onMode,
+  onExclude,
+}: {
+  allTags: string[];
+  tags: string[];
+  mode: "any" | "all";
+  excludeTags: string[];
+  onTags: (t: string[]) => void;
+  onMode: (m: "any" | "all") => void;
+  onExclude: (t: string[]) => void;
+}) {
+  const toggle = (list: string[], tag: string) => (list.includes(tag) ? list.filter((t) => t !== tag) : [...list, tag]);
+  // Tag salva que foi apagada da base ainda aparece, pra não sumir da configuração sem ninguém ver.
+  const options = [...new Set([...allTags, ...tags, ...excludeTags])];
+  if (options.length === 0) {
+    return <p className="text-xs text-text-muted">Nenhuma tag criada ainda. Crie tags nos contatos para filtrar o público por elas.</p>;
+  }
+  const chip = (tag: string, on: boolean, danger: boolean, onClick: () => void) => (
+    <button
+      key={tag}
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "text-xs font-semibold px-2.5 py-1 rounded-full border cursor-pointer",
+        on ? (danger ? "bg-danger-soft border-danger/40 text-danger" : "bg-primary-soft border-primary text-primary-strong") : "border-border text-text-muted hover:border-primary"
+      )}
+    >
+      {tag}
+    </button>
+  );
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <span className="text-xs font-bold text-text">Só leads com a tag</span>
+          <select value={mode} onChange={(e) => onMode(e.target.value === "all" ? "all" : "any")} className="border border-border rounded-md px-2 py-1 text-xs bg-surface outline-none focus:border-primary">
+            <option value="any">qualquer uma das marcadas</option>
+            <option value="all">todas as marcadas</option>
+          </select>
+        </div>
+        <div className="flex flex-wrap gap-1.5">{options.map((t) => chip(t, tags.includes(t), false, () => onTags(toggle(tags, t))))}</div>
+        {tags.length === 0 && <p className="text-[11px] text-text-muted mt-1">Nenhuma marcada: não filtra por tag.</p>}
+      </div>
+      <div>
+        <span className="text-xs font-bold text-text block mb-1.5">Não incluir quem tem a tag</span>
+        <div className="flex flex-wrap gap-1.5">{options.map((t) => chip(t, excludeTags.includes(t), true, () => onExclude(toggle(excludeTags, t))))}</div>
+      </div>
     </div>
   );
 }

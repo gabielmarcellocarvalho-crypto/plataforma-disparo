@@ -39,6 +39,10 @@ export type AudienceConfig = {
   pipelineStageId?: string | null;
   stageRefs?: WorkflowStageRef[];
   responsibleUserId?: string | null;
+  // Público por tag: entra quem tem alguma (any) ou todas (all) as tags; quem tem uma das excludeTags fica de fora.
+  tags?: string[];
+  tagMode?: "any" | "all";
+  excludeTags?: string[];
 };
 
 export type ActionType = "send_message" | "create_task" | "change_stage" | "add_note" | "http_request";
