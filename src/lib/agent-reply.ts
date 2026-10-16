@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { adContextNote } from "@/lib/ad-referral";
+import { nameUsageNote } from "@/lib/name-usage";
 import { STATUS_TAG_TO_STAGE, type ContactStage } from "@/lib/crm-stages";
 
 const client = new Anthropic();
@@ -148,7 +149,7 @@ export async function generateReply(
       "mande uma mensagem BEM curta reconhecendo isso (algo como 'oi, vi sua mensagem, retomando agora' — sem repetir " +
       "o horário todo) e só depois siga a conversa normalmente."
     : "";
-  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${adContextNote(contact.custom_fields)}${missedNote}`;
+  const contactContext = `Dados do contato: nome="${contact.name || "desconhecido"}".${camposExtras}${adContextNote(contact.custom_fields)}${nameUsageNote(contact.name, history)}${missedNote}`;
 
   // A Anthropic exige alternância estrita user/assistant — sem isso, dois turnos seguidos do mesmo
   // papel derrubam a chamada com 400 invalid_request_error. Isso acontece de verdade aqui: resposta
