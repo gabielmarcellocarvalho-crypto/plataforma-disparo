@@ -112,7 +112,7 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
         </pre>
         <p className="mt-2">
           <code>phone</code> ou <code>email</code> é obrigatório (pode mandar os dois). Campos extras vão em{" "}
-          <code>custom_fields</code> (objeto chave/valor). O lead cai direto na lista de Contatos e no CRM, na fase
+          <code>custom_fields</code> (objeto chave/valor). Para marcar o lead, mande <code>tags</code> (lista, ex.:{" "}<code>[&quot;Feira&quot;,&quot;Sócio&quot;]</code>): tag que já existe no workspace é reaproveitada e as tags que o lead já tinha são mantidas. O lead cai direto na lista de Contatos e no CRM, na fase
           &quot;não abordado&quot;.
         </p>
       </details>

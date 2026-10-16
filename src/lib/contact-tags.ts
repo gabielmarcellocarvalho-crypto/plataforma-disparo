@@ -56,3 +56,11 @@ export function toPostgrestArrayLiteral(tags: string[]): string {
   const parts = tags.map((t) => `"${t.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
   return `{${parts.join(",")}}`;
 }
+
+// Quando a tag vem de fora (API), "socio" ou "SÓCIO" tem que cair na tag que o workspace já usa
+// ("Sócio"), em vez de criar uma quase igual. Tag que ainda não existe fica como veio.
+export function reuseExistingTags(incoming: string[], existing: string[]): string[] {
+  const byKey = new Map<string, string>();
+  for (const t of existing) if (!byKey.has(tagKey(t))) byKey.set(tagKey(t), t);
+  return normalizeTags(incoming.map((t) => byKey.get(tagKey(t)) ?? t));
+}

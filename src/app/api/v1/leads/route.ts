@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hashApiKey } from "@/lib/api-keys";
 import { normalizePhone } from "@/lib/import-contacts";
+import { mergeTags, normalizeTags, reuseExistingTags } from "@/lib/contact-tags";
 
 // Endpoint público pra plataforma terceira (form de site, outro CRM, Zapier/Make) jogar lead direto
 // na lista de contatos, sem passar pelo WhatsApp. Autenticado por chave de API (gerada em
@@ -72,6 +73,17 @@ export async function POST(req: Request) {
     );
   }
 
+  // Tags do lead: lista (["Associado","Feira"]) ou texto separado por vírgula. Tag que o workspace já usa é
+  // reaproveitada com a grafia dele; as que o lead já tinha ficam (a chamada só acrescenta).
+  if (body.tags != null && !Array.isArray(body.tags) && typeof body.tags !== "string") {
+    return NextResponse.json({ error: "tags precisa ser uma lista (ex.: [\"Feira\"]) ou texto separado por vírgula." }, { status: 400 });
+  }
+  let incomingTags = normalizeTags(body.tags);
+  if (incomingTags.length > 0) {
+    const { data: ws } = await supabase.rpc("workspace_tags", { ws_id: key.workspace_id });
+    incomingTags = reuseExistingTags(incomingTags, ((ws as { tag: string }[] | null) ?? []).map((t) => t.tag));
+  }
+
   const source = typeof body.source === "string" && body.source.trim() ? body.source.trim().slice(0, 60) : "api";
   customFields.origem = customFields.origem || source;
 
@@ -91,7 +103,7 @@ export async function POST(req: Request) {
   const { data: existente } = phone
     ? await supabase
         .from("contacts")
-        .select("id, name, email, custom_fields")
+        .select("id, name, email, custom_fields, tags")
         .eq("workspace_id", key.workspace_id)
         .eq("phone", phone)
         .maybeSingle()
@@ -104,6 +116,8 @@ export async function POST(req: Request) {
     phone,
     email: email || existente?.email || null,
     custom_fields: camposFinais,
+    // Sem `tags` na chamada, não mexe nas do lead (e lead novo nasce sem tag).
+    ...(incomingTags.length > 0 ? { tags: mergeTags(existente?.tags, incomingTags) } : {}),
     whatsapp_instance_id: whatsappInstanceId,
   };
 
@@ -123,6 +137,7 @@ export async function POST(req: Request) {
       contact_id: contact.id,
       created: !existente,
       custom_fields: camposFinais,
+      ...(incomingTags.length > 0 ? { tags: mergeTags(existente?.tags, incomingTags) } : {}),
       ...(ignorados.length > 0
         ? { ignored_fields: ignorados, warning: "Campos ignorados: só texto, número ou verdadeiro/falso são aceitos." }
         : {}),
