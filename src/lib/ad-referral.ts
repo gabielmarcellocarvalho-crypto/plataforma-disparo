@@ -19,19 +19,20 @@ const KEYS = ["anuncio_titulo", "anuncio_texto", "anuncio_link"] as const;
 
 // Grava a origem no contato (custom_fields) e marca o início da janela grátis de 72h. Roda só depois de o
 // contato existir. O anúncio mais recente vence: quem volta por outro anúncio troca o produto de interesse.
-export async function saveAdReferral(supabase: AdminClient, contactId: string, ad: AdReferral | null): Promise<Record<string, unknown> | null> {
-  const patch: Record<string, unknown> = { ctwa_at: new Date().toISOString() };
-  let merged: Record<string, unknown> | null = null;
+export const AD_ORIGIN_LABEL = "Anúncio Meta";
+
+export async function saveAdReferral(supabase: AdminClient, contactId: string, ad: AdReferral | null): Promise<Record<string, unknown>> {
+  const { data } = await supabase.from("contacts").select("custom_fields").eq("id", contactId).maybeSingle();
+  const merged: Record<string, unknown> = { ...((data?.custom_fields as Record<string, unknown>) || {}) };
+  // "Fontes de lead" da Visão geral lê custom_fields.origem: marca como anúncio, sem sobrescrever uma origem já definida (ex.: Facebook).
+  if (typeof merged.origem !== "string" || !merged.origem.trim()) merged.origem = AD_ORIGIN_LABEL;
   if (ad) {
-    const { data } = await supabase.from("contacts").select("custom_fields").eq("id", contactId).maybeSingle();
-    merged = { ...((data?.custom_fields as Record<string, unknown>) || {}) };
     for (const k of KEYS) delete merged[k];
     if (ad.headline) merged.anuncio_titulo = ad.headline;
     if (ad.body) merged.anuncio_texto = ad.body;
     if (ad.sourceUrl) merged.anuncio_link = ad.sourceUrl;
-    patch.custom_fields = merged;
   }
-  await supabase.from("contacts").update(patch).eq("id", contactId);
+  await supabase.from("contacts").update({ ctwa_at: new Date().toISOString(), custom_fields: merged }).eq("id", contactId);
   return merged;
 }
 

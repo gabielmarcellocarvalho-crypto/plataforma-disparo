@@ -230,8 +230,7 @@ export async function runAgentTurn(
 
   // Veio de anúncio: guarda título/texto/link no contato antes de montar o prompt, pra o agente saber qual produto o lead quer.
   if (resolved.ad !== undefined) {
-    const merged = await saveAdReferral(supabase, contact.id, resolved.ad);
-    if (merged) contact.custom_fields = merged;
+    contact.custom_fields = await saveAdReferral(supabase, contact.id, resolved.ad);
   }
 
   // ── Passagem de bastão ────────────────────────────────────────────────────
