@@ -6,7 +6,7 @@
 //   pipeline_stage_id     → onde o card aparece no funil DAQUELE cliente. Só apresentação e ordem.
 //
 // Um lead vive em um funil por vez. Trocar de funil é mover, não duplicar.
-import { STAGE_ORDER, STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
+import { STAGE_ORDER, STAGE_LABELS, resolveStageLabels, resolveHiddenStages, type ContactStage } from "@/lib/crm-stages";
 
 export type Pipeline = { id: string; name: string; position: number; is_default: boolean };
 
@@ -83,4 +83,29 @@ export function stageForSignal(signal: ContactStage, stages: PipelineStage[]): P
 // sinais — ele pode ter "Perda" no meio do board se for assim que a equipe trabalha.
 export function sortStages(stages: PipelineStage[]): PipelineStage[] {
   return [...stages].sort((a, b) => a.position - b.position);
+}
+
+// Opções do seletor "quando o lead chegar em" nas telas do agente: as etapas do funil que o cliente
+// vê no Pipeline, com o nome dele. O valor guardado continua sendo o SINAL (é o que o motor compara);
+// só o rótulo muda. Etapas de entrada, ganho e perda ficam de fora — não há o que entregar nelas.
+// Com mais de uma etapa no mesmo sinal vale a primeira, a mesma regra do stageForSignal.
+export function funnelTriggerOptions(
+  allowed: ContactStage[],
+  stages: PipelineStage[] | null,
+  stageLabels: unknown,
+  hiddenStages: unknown
+): { signal: ContactStage; label: string }[] {
+  if (stages && stages.length > 0) {
+    const vistos = new Set<ContactStage>();
+    const out: { signal: ContactStage; label: string }[] = [];
+    for (const e of sortStages(stages)) {
+      if (!allowed.includes(e.signal) || vistos.has(e.signal)) continue;
+      vistos.add(e.signal);
+      out.push({ signal: e.signal, label: e.name });
+    }
+    return out;
+  }
+  const labels = resolveStageLabels(stageLabels);
+  const hidden = resolveHiddenStages(hiddenStages);
+  return STAGE_ORDER.filter((s) => allowed.includes(s) && !hidden.includes(s)).map((s) => ({ signal: s, label: labels[s] }));
 }

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { ToggleSwitch } from "@/components/toggle-switch";
 import type { SellerTasksConfig } from "@/lib/agent-prompt";
 import { HANDOFF_SIGNALS } from "@/lib/agent-handoff";
-import { STAGE_LABELS } from "@/lib/crm-stages";
+import { STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
 import { cn } from "@/lib/utils";
+
+export type TriggerOption = { signal: ContactStage; label: string };
 
 export type SellerOption = { id: string; name: string; role: string | null };
 
@@ -15,11 +17,19 @@ export function AgentSellerTasksSection({
   value,
   onChange,
   sellers,
+  triggerOptions,
 }: {
   value: SellerTasksConfig;
   onChange: (next: SellerTasksConfig) => void;
   sellers: SellerOption[];
+  triggerOptions?: TriggerOption[];
 }) {
+  // Etapas do funil do workspace; sem elas cai nas fases fixas. Se o valor salvo não está na lista
+  // (etapa removida do funil depois), ele aparece mesmo assim pra não trocar a configuração calado.
+  const base = triggerOptions && triggerOptions.length > 0 ? triggerOptions : HANDOFF_SIGNALS.map((s) => ({ signal: s, label: STAGE_LABELS[s] }));
+  const options = base.some((o) => o.signal === value.signal)
+    ? base
+    : [...base, { signal: value.signal as ContactStage, label: STAGE_LABELS[value.signal as ContactStage] ?? value.signal }];
   const selected = new Set(value.memberIds);
 
   function toggle(id: string) {
@@ -51,9 +61,9 @@ export function AgentSellerTasksSection({
               onChange={(e) => onChange({ ...value, signal: e.target.value })}
               className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
             >
-              {HANDOFF_SIGNALS.map((s) => (
-                <option key={s} value={s}>
-                  {STAGE_LABELS[s]}
+              {options.map((o) => (
+                <option key={o.signal} value={o.signal}>
+                  {o.label}
                 </option>
               ))}
             </select>

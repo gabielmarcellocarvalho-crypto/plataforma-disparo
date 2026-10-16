@@ -5,7 +5,7 @@ import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import { AgentIntegrationsSection, type IntegrationOption } from "@/components/agent-integrations-section";
-import { AgentSellerTasksSection } from "@/components/agent-seller-tasks-section";
+import { AgentSellerTasksSection, type TriggerOption } from "@/components/agent-seller-tasks-section";
 import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
@@ -185,6 +185,7 @@ export function AgentConfigForm({
   mediaCategories,
   fieldDefs = [],
   closers = [],
+  taskTriggerOptions,
   integrationOptions = [],
   materialSlot,
 }: {
@@ -195,6 +196,7 @@ export function AgentConfigForm({
   mediaCategories: string[];
   fieldDefs?: CustomFieldDef[];
   closers?: SchedulingCloserOption[];
+  taskTriggerOptions?: TriggerOption[];
   integrationOptions?: IntegrationOption[];
   // Arquivos que o agente manda e material de estudo: ficam na aba Material.
   materialSlot?: ReactNode;
@@ -621,7 +623,7 @@ export function AgentConfigForm({
         />
       </div>
       <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
-      <AgentSellerTasksSection value={config.sellerTasks} onChange={(v) => set("sellerTasks", v)} sellers={closers} />
+      <AgentSellerTasksSection value={config.sellerTasks} onChange={(v) => set("sellerTasks", v)} sellers={closers} triggerOptions={taskTriggerOptions} />
         </div>
       )}
       {tab === "integracoes" && (

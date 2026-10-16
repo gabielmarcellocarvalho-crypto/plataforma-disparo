@@ -11,6 +11,9 @@ import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listConnections } from "@/lib/calendar/connections";
 import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
+import { HANDOFF_SIGNALS } from "@/lib/agent-handoff";
+import { funnelTriggerOptions, type PipelineStage } from "@/lib/pipelines";
+import { isContactStage } from "@/lib/crm-stages";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
@@ -78,6 +81,22 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
     role: m.role,
     status: connByMember.get(m.id) ?? "desconectado",
   }));
+
+  // Etapas do funil do workspace (o padrão, ou os 7 rótulos quando não há funil) pro seletor de gatilho
+  // da tarefa na agenda do vendedor. Lido pelo workspace do agente, não pelo workspace ativo da sessão.
+  const [{ data: wsRow }, { data: funnelRows }] = await Promise.all([
+    supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages").eq("id", agent.workspace_id).maybeSingle(),
+    supabase
+      .from("pipelines")
+      .select("id, is_default, pipeline_stages(id, pipeline_id, name, signal, position)")
+      .eq("workspace_id", agent.workspace_id)
+      .eq("is_default", true)
+      .maybeSingle(),
+  ]);
+  const defaultStages: PipelineStage[] = (((funnelRows?.pipeline_stages as unknown) as PipelineStage[] | undefined) ?? [])
+    .filter((e) => isContactStage(e.signal))
+    .map((e) => ({ id: e.id, pipeline_id: e.pipeline_id, name: e.name, signal: e.signal, position: e.position }));
+  const taskTriggerOptions = funnelTriggerOptions(HANDOFF_SIGNALS, defaultStages, wsRow?.crm_stage_labels, wsRow?.crm_hidden_stages);
 
   // Integrações conectadas no workspace e, dentro de cada uma, só as permissões que o workspace liberou.
   // Lido pelo servidor: a tabela guarda o token e não é legível pelo usuário.
@@ -154,6 +173,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
       <AgentEditView
         fieldDefs={fieldDefs}
         schedulingClosers={schedulingClosers}
+        taskTriggerOptions={taskTriggerOptions}
         integrationOptions={integrationOptions}
         availableInstances={availableInstances}
         handoffOptions={handoffOptions}
