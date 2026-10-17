@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { templateLogContent } from "@/lib/template-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { agentSendText } from "@/lib/agent-channel";
 import { sendMetaCloudTemplate } from "@/lib/metacloud";
@@ -161,7 +162,7 @@ export async function GET(req: Request) {
           contact_id: contactId,
           agent_id: agent.id,
           role: "assistant",
-          content: `[Template: ${tpl.name}]`,
+          content: await templateLogContent(supabase, { phoneNumberId: channel.phoneNumberId }, tpl.name, tpl.language, params),
           is_followup: true,
           billing_category: (tpl.category || "marketing").toLowerCase(), // check da coluna só aceita minúsculas
         });

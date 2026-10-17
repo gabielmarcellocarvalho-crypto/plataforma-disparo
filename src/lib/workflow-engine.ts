@@ -1,4 +1,5 @@
 import { safeFetch, UnsafeUrlError } from "@/lib/safe-fetch";
+import { templateLogContent } from "@/lib/template-log";
 import { hasTagAudience, matchesTagAudience } from "@/lib/workflow-audience-tags";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
@@ -376,7 +377,7 @@ async function evaluateCondition(supabase: AdminClient, contact: Contact, run: {
   return false;
 }
 
-async function executeAction(supabase: AdminClient, contact: Contact, action: ActionConfig): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+async function executeAction(supabase: AdminClient, contact: Contact, action: ActionConfig, opts?: { advanceStage?: boolean }): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
   const vars = await resolveVariableContext(supabase, contact);
 
   if (action.action_type === "send_message") {
@@ -384,7 +385,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
     if (!contact.whatsapp_instance_id) return { ok: false, detail: { error: "contato sem instância de WhatsApp" } };
     const { data: instance } = await supabase
       .from("whatsapp_instances")
-      .select("channel, instance_name, dialog360_api_key, phone_number_id")
+      .select("channel, instance_name, dialog360_api_key, phone_number_id, meta_waba_id")
       .eq("id", contact.whatsapp_instance_id)
       .maybeSingle();
     if (!instance) return { ok: false, detail: { error: "instância não encontrada" } };
@@ -421,7 +422,7 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
         const empty = params.findIndex((v) => !v);
         if (empty >= 0) return { ok: false, detail: { error: `o lead não tem o campo da variável {{${empty + 1}}} (${tpl.variables[empty]})` } };
         await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params);
-        content = `[Template: ${tpl.name}]`;
+        content = await templateLogContent(supabase, { wabaId: (instance as { meta_waba_id?: string | null }).meta_waba_id, phoneNumberId: instance.phone_number_id }, tpl.name, tpl.language || "pt_BR", params);
         billing = (tpl.category || "marketing").toLowerCase(); // a coluna só aceita minúsculas (check de messages.billing_category)
       } else {
         content = interpolateVariables(action.text, vars);
@@ -449,6 +450,11 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       billing_category: billing,
     });
     if (logError) console.error("Workflow: mensagem enviada mas não registrada na conversa:", logError.code, logError.message);
+    // Quem acabou de receber a primeira mensagem passou a ser "abordado" (igual ao envio de campanha).
+    // Só quando a automação não para por mudança de etapa: senão essa mudança automática a cancelaria.
+    if (opts?.advanceStage && contact.stage === "nao_abordado") {
+      await supabase.from("contacts").update({ stage: "abordado", stage_changed_at: new Date().toISOString() }).eq("id", contact.id).eq("stage", "nao_abordado");
+    }
     return { ok: true, detail: { text: content, mode } };
   }
 
@@ -590,7 +596,7 @@ async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, step
       continue; // fora do horário comercial — tenta de novo no próximo tick, sem avançar o passo
     }
 
-    const result = await executeAction(supabase, contact, action);
+    const result = await executeAction(supabase, contact, action, { advanceStage: !workflow.stop_on_stage_change });
     const next = nextSibling(steps, step);
     await supabase
       .from("workflow_runs")
