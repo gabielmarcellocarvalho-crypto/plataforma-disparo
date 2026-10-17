@@ -3,6 +3,7 @@
 // oficial) resolve a mensagem recebida do seu jeito (formato de payload bem diferente entre eles) e
 // chama runAgentTurn com o resultado já normalizado — daqui pra frente é tudo compartilhado: contato,
 // dedup, rate limit, delay humanizado, geração da resposta (Anthropic/Gemini), envio.
+import { buildQaTools, loadQaMemory, makeQaExecutor, qaPromptBlock, QA_TOOL_NAMES } from "@/lib/agent-qa";
 import { saveAdReferral, type AdReferral } from "@/lib/ad-referral";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -507,14 +508,19 @@ export async function runAgentTurn(
   const nuvemshopExecutor = nuvemshop
     ? makeNuvemshopExecutor(supabase, nuvemshop, { phone, email: contact.email ?? null })
     : undefined;
+  // Perguntas pra equipe (migration 0087): sem a tabela, `available` é false e nada muda no agente.
+  const qaMemory = await loadQaMemory(supabase, cerebro.id);
+  const qaExecutor = qaMemory.available ? makeQaExecutor(supabase, cerebro, contact.id) : undefined;
   const tools = [
     ...mediaTools,
+    ...(qaMemory.available ? buildQaTools() : []),
     ...(scheduling ? buildSchedulingTools(scheduling) : []),
     ...(nuvemshop ? buildNuvemshopTools(nuvemshop) : []),
   ];
   const executor: ToolExecutor | undefined =
-    mediaExecutor || schedulingExecutor || nuvemshopExecutor
+    mediaExecutor || schedulingExecutor || nuvemshopExecutor || qaExecutor
       ? (name, input) => {
+          if (QA_TOOL_NAMES.has(name) && qaExecutor) return qaExecutor(name, input);
           if (SCHEDULING_TOOL_NAMES.has(name) && schedulingExecutor) return schedulingExecutor(name, input);
           if (NUVEMSHOP_TOOL_NAMES.has(name) && nuvemshopExecutor) return nuvemshopExecutor(name, input);
           return mediaExecutor ? mediaExecutor(name, input) : Promise.resolve(`Ferramenta "${name}" não implementada.`);
@@ -528,7 +534,7 @@ export async function runAgentTurn(
 
   const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : ""),
+    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available ? qaPromptBlock(qaMemory.text) : ""),
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,

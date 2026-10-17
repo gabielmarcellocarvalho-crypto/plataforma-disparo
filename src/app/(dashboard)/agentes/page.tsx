@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { AgentsList, type AgentListItem } from "@/components/agents-list";
 import { AddAgentForm } from "@/components/add-agent-form";
-import { AttentionPanel } from "@/components/attention-panel";
+import { AgentQaInbox, type QaRow } from "@/components/agent-qa-inbox";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -13,19 +13,13 @@ export default async function AgentesPage() {
   const { workspace, isStaff } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: agents, error: agentsError }, { data: attentionContacts }, { data: usageRows }, { data: officialInstances }] = workspace
+  const [{ data: agents, error: agentsError }, { data: usageRows }, { data: officialInstances }] = workspace
     ? await Promise.all([
         supabase
           .from("agents")
           .select("id, name, evolution_instance_name, phone_number, photo_url, connection_status, status, llm_provider, whatsapp_instances(channel)")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: true }),
-        supabase
-          .from("contacts")
-          .select("id, name, phone, attention_reason")
-          .eq("workspace_id", workspace.id)
-          .eq("needs_attention", true)
-          .order("created_at", { ascending: false }),
         supabase
           .from("messages")
           .select("agent_id, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
@@ -39,7 +33,33 @@ export default async function AgentesPage() {
           .eq("workspace_id", workspace.id)
           .in("channel", ["360dialog", "metacloud"]),
       ])
-    : [{ data: [], error: null }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [], error: null }, { data: [] }, { data: [] }];
+
+  // Caixa de perguntas dos agentes (migration 0087). Sem a tabela, a seção simplesmente não aparece.
+  const { data: qaData, error: qaError } = workspace
+    ? await supabase
+        .from("agent_qa")
+        .select("id, agent_id, question, answer, status, source, created_at, contacts(name, phone)")
+        .eq("workspace_id", workspace.id)
+        .neq("status", "descartada")
+        .order("created_at", { ascending: false })
+        .limit(500)
+    : { data: [], error: null };
+  const qaRows: QaRow[] | null = qaError
+    ? null
+    : (qaData || []).map((r) => {
+        const c = r.contacts as unknown as { name: string | null; phone: string | null } | null;
+        return {
+          id: r.id as string,
+          agent_id: r.agent_id as string,
+          question: r.question as string,
+          answer: (r.answer as string | null) ?? null,
+          status: r.status as QaRow["status"],
+          source: r.source as QaRow["source"],
+          created_at: r.created_at as string,
+          contact_label: c?.name || c?.phone || null,
+        };
+      });
 
   // Erro real de consulta (ex.: migration pendente) NUNCA deve virar "nenhum agente ainda" — isso
   // esconderia agentes de verdade, já conectados e respondendo, atrás de uma tela que parece vazia.
@@ -117,7 +137,7 @@ export default async function AgentesPage() {
     <AgentsList
       items={items}
       canManage={isStaff}
-      attention={<AttentionPanel contacts={attentionContacts || []} />}
+      attention={qaRows ? <AgentQaInbox agents={(agents || []).map((a) => ({ id: a.id as string, name: a.name as string }))} rows={qaRows} /> : null}
       addAgent={
         <AddAgentForm
           availableInstances={availableInstances.map((i) => ({
