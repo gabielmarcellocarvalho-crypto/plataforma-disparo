@@ -360,6 +360,19 @@ export function AgentConfigForm({
       </div>
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <div className="flex items-center justify-between">
+          <span className="text-sm font-bold">Perguntar à equipe quando não souber</span>
+          <ToggleSwitch
+            checked={config.teamQuestions}
+            onCheckedChange={(v) => set("teamQuestions", v)}
+            ariaLabel={config.teamQuestions ? "Desativar perguntas à equipe" : "Ativar perguntas à equipe"}
+          />
+        </div>
+        <p className="text-xs text-text-muted">
+          Se o agente não souber responder, avisa o cliente que vai confirmar e abre a dúvida na caixa <strong className="text-text">Perguntas</strong>, na tela de Agentes. A resposta da equipe fica na memória dele. <strong className="text-text">Só ligue se alguém for olhar a caixa</strong>, senão o cliente fica esperando. As perguntas frequentes cadastradas valem mesmo com isto desligado.
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 border-t border-border pt-4">
+        <div className="flex items-center justify-between">
           <span className="text-sm font-bold">Follow-up automático</span>
           <ToggleSwitch
             checked={config.followUp.enabled}

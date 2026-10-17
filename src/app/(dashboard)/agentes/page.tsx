@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { AgentsList, type AgentListItem } from "@/components/agents-list";
 import { AddAgentForm } from "@/components/add-agent-form";
-import { AgentQaInbox, type QaRow } from "@/components/agent-qa-inbox";
+import type { QaRow } from "@/components/agent-qa-inbox";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -137,7 +137,7 @@ export default async function AgentesPage() {
     <AgentsList
       items={items}
       canManage={isStaff}
-      attention={qaRows ? <AgentQaInbox agents={(agents || []).map((a) => ({ id: a.id as string, name: a.name as string }))} rows={qaRows} /> : null}
+      qaRows={qaRows}
       addAgent={
         <AddAgentForm
           availableInstances={availableInstances.map((i) => ({

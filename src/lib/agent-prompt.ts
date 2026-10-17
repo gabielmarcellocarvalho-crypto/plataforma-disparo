@@ -83,6 +83,9 @@ export type AgentConfig = {
   // Só vale o que o workspace também liberou em Integrações. Não entra no texto do prompt: as ferramentas
   // e a instrução são montadas em tempo de execução. Desligado por padrão.
   integrations: Record<string, string[]>;
+  // Perguntas pra equipe: com isso ligado, o agente que não sabe responder avisa o cliente e abre a dúvida na
+  // caixa de Perguntas (tela de Agentes). Desligado por padrão em todo agente.
+  teamQuestions: boolean;
 };
 
 export type SellerTasksConfig = {
@@ -202,6 +205,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   scheduling: { ...SCHEDULING_DEFAULTS },
   sellerTasks: { ...SELLER_TASKS_DEFAULTS },
   integrations: {},
+  teamQuestions: false,
 };
 
 function normalizeWeekHours(raw: unknown): WeekHours {
@@ -259,6 +263,7 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     scheduling: normalizeScheduling(r.scheduling),
     sellerTasks: normalizeSellerTasks(r.sellerTasks),
     integrations: normalizeIntegrations(r.integrations),
+    teamQuestions: r.teamQuestions === true,
   };
 }
 

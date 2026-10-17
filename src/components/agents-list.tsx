@@ -1,5 +1,6 @@
 "use client";
 
+import { AgentQaBox, type QaRow } from "@/components/agent-qa-inbox";
 import { useMemo, useState } from "react";
 import { Filter, Search } from "lucide-react";
 import { AgentCard, connectionStateOf, type AgentCardData, type AgentCardStats } from "@/components/agent-card";
@@ -22,14 +23,14 @@ export function AgentsList({
   items,
   canManage,
   addAgent,
-  attention,
+  qaRows,
 }: {
   items: AgentListItem[];
   canManage: boolean;
   // Botão/modal de "Adicionar agente" (componente de servidor já montado com os números disponíveis).
   addAgent: React.ReactNode;
-  // Painel de conversas que precisam de atenção — fica entre o cabeçalho e a lista, como antes.
-  attention: React.ReactNode;
+  // Perguntas dos agentes (caixa embaixo de cada card). null = recurso indisponível (migration pendente).
+  qaRows: QaRow[] | null;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("todos");
@@ -86,8 +87,6 @@ export function AgentsList({
         </div>
       </div>
 
-      {attention}
-
       {items.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl shadow-sm p-10 text-center text-text-muted">
           <p className="font-semibold text-text">Nenhum agente ainda</p>
@@ -98,7 +97,10 @@ export function AgentsList({
       ) : (
         <div className="flex flex-col gap-3">
           {visible.map(({ agent, stats, totalCostUsd }) => (
-            <AgentCard key={agent.id} agent={agent} stats={stats} totalCostUsd={totalCostUsd} canManage={canManage} />
+            <div key={agent.id} className="flex flex-col gap-2">
+              <AgentCard agent={agent} stats={stats} totalCostUsd={totalCostUsd} canManage={canManage} />
+              {qaRows && <AgentQaBox agentId={agent.id} rows={qaRows} />}
+            </div>
           ))}
         </div>
       )}

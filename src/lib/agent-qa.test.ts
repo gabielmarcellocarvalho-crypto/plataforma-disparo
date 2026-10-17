@@ -17,6 +17,12 @@ describe("qaPromptBlock", () => {
   it("manda perguntar à equipe em vez de inventar", () => {
     expect(qaPromptBlock(undefined)).toContain("perguntar_equipe");
   });
+  it("desligado: não manda perguntar à equipe, mas ainda usa as respostas já cadastradas", () => {
+    const off = qaPromptBlock("P: Trocam?\nR: Sim.", false);
+    expect(off).not.toContain("perguntar_equipe");
+    expect(off).toContain("R: Sim.");
+    expect(qaPromptBlock(undefined, false)).toBe("");
+  });
   it("inclui as respostas já dadas pela equipe", () => {
     const block = qaPromptBlock("P: Trocam?\nR: Sim, em 7 dias.");
     expect(block).toContain("R: Sim, em 7 dias.");

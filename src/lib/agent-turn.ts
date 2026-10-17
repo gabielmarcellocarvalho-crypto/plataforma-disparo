@@ -510,10 +510,10 @@ export async function runAgentTurn(
     : undefined;
   // Perguntas pra equipe (migration 0087): sem a tabela, `available` é false e nada muda no agente.
   const qaMemory = await loadQaMemory(supabase, cerebro.id);
-  const qaExecutor = qaMemory.available ? makeQaExecutor(supabase, cerebro, contact.id) : undefined;
+  const qaExecutor = qaMemory.available && agentConfig.teamQuestions ? makeQaExecutor(supabase, cerebro, contact.id) : undefined;
   const tools = [
     ...mediaTools,
-    ...(qaMemory.available ? buildQaTools() : []),
+    ...(qaMemory.available && agentConfig.teamQuestions ? buildQaTools() : []),
     ...(scheduling ? buildSchedulingTools(scheduling) : []),
     ...(nuvemshop ? buildNuvemshopTools(nuvemshop) : []),
   ];
@@ -534,7 +534,7 @@ export async function runAgentTurn(
 
   const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available ? qaPromptBlock(qaMemory.text) : ""),
+    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available && (agentConfig.teamQuestions || qaMemory.text) ? qaPromptBlock(qaMemory.text, agentConfig.teamQuestions) : ""),
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,

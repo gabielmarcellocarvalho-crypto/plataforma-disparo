@@ -46,16 +46,20 @@ export async function loadQaMemory(supabase: AdminClient, agentId: string): Prom
   return { available: true, text: text.trim() || undefined };
 }
 
-export function qaPromptBlock(memory: string | undefined): string {
-  return (
-    "\n\nQuando o cliente perguntar algo que você não sabe responder com certeza (não está nas suas instruções, no material de " +
+export function qaPromptBlock(memory: string | undefined, askEnabled = true): string {
+  const ask = askEnabled
+    ? "\n\nQuando o cliente perguntar algo que você não sabe responder com certeza (não está nas suas instruções, no material de " +
     "estudo, nas respostas da equipe abaixo nem nas ferramentas), NÃO invente nem responda por responder. Diga ao cliente, de " +
     "forma natural, que você não tem essa informação agora e vai confirmar com a equipe, e chame a ferramenta perguntar_equipe " +
-    "com a pergunta escrita de forma clara e completa (sem dados pessoais do cliente). Depois siga a conversa normalmente." +
-    (memory
-      ? "\n\nRespostas já dadas pela equipe (use como verdade; se a pergunta do cliente estiver aqui, responda direto, sem perguntar de novo):\n" + memory
-      : "")
-  );
+    "com a pergunta escrita de forma clara e completa (sem dados pessoais do cliente). Depois siga a conversa normalmente."
+    : "";
+  const known = memory
+    ? "\n\nRespostas já dadas pela equipe (use como verdade; se a pergunta do cliente estiver aqui, responda direto" +
+      (askEnabled ? ", sem perguntar de novo" : "") +
+      "):\n" +
+      memory
+    : "";
+  return ask + known;
 }
 
 export function buildQaTools(): Anthropic.Tool[] {
