@@ -232,7 +232,7 @@ export default async function OverviewPage({
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_340px] items-start">
+      <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
         <OverviewInsightsBox
           periodLabel={period.label}
           volume={{ ...volume, chartData }}
@@ -241,37 +241,12 @@ export default async function OverviewPage({
           deltas={deltas}
         />
 
-        <div className="flex flex-col gap-5">
-        <AiInsightsCard initial={savedInsights} generatedAt={(insightsRow?.ai_insights_at as string | null) ?? null} available={insightsAvailable} />
-        <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
-          <CardHeader
-            title="Precisam de você"
-            description="Alertas do agente e conversas assumidas"
-            action={<Link href="/conversas" className="text-xs font-bold text-text-muted hover:text-text whitespace-nowrap">Abrir conversas</Link>}
-          />
-          {!myDay || myDay.attentionList.length === 0 ? (
-            <p className="text-sm text-text-muted py-6 text-center">Nada pendente.</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {myDay.attentionList.map((c) => (
-                <li key={c.id}>
-                  <Link href={`/conversas?contact=${c.id}`} className="flex items-center gap-3 py-2.5 group">
-                    <span className="grid place-items-center w-8 h-8 rounded-full bg-primary-soft text-primary-strong text-[11px] font-bold shrink-0" aria-hidden>
-                      {c.name.trim().slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold group-hover:text-primary-strong">{c.name}</span>
-                      <span className="block truncate text-xs text-text-muted">{c.reason}</span>
-                    </span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${c.kind === "atencao" ? "bg-danger-soft text-danger" : "bg-warning-soft text-warning-text"}`}>
-                      {c.kind === "atencao" ? "atenção" : "alerta"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        {/* A coluna da direita tem a altura do Volume (absolute no xl): gerar insights não estica a
+            linha e não abre vão embaixo do gráfico — o conteúdo a mais rola dentro do card. */}
+        <div className="relative min-h-[280px]">
+          <div className="xl:absolute xl:inset-0 flex flex-col">
+            <AiInsightsCard initial={savedInsights} generatedAt={(insightsRow?.ai_insights_at as string | null) ?? null} available={insightsAvailable} />
+          </div>
         </div>
       </div>
 
@@ -303,6 +278,35 @@ export default async function OverviewPage({
         )}
 
         <div className="flex flex-col gap-5">
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
+          <CardHeader
+            title="Precisam de você"
+            description="Alertas do agente e conversas assumidas"
+            action={<Link href="/conversas" className="text-xs font-bold text-text-muted hover:text-text whitespace-nowrap">Abrir conversas</Link>}
+          />
+          {!myDay || myDay.attentionList.length === 0 ? (
+            <p className="text-sm text-text-muted py-6 text-center">Nada pendente.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {myDay.attentionList.map((c) => (
+                <li key={c.id}>
+                  <Link href={`/conversas?contact=${c.id}`} className="flex items-center gap-3 py-2.5 group">
+                    <span className="grid place-items-center w-8 h-8 rounded-full bg-primary-soft text-primary-strong text-[11px] font-bold shrink-0" aria-hidden>
+                      {c.name.trim().slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold group-hover:text-primary-strong">{c.name}</span>
+                      <span className="block truncate text-xs text-text-muted">{c.reason}</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${c.kind === "atencao" ? "bg-danger-soft text-danger" : "bg-warning-soft text-warning-text"}`}>
+                      {c.kind === "atencao" ? "atenção" : "alerta"}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
             <CardHeader title="Tarefas de hoje" action={<Link href="/agenda" className="text-xs font-bold text-text-muted hover:text-text">Ver todas</Link>} />
             {!myDay || myDay.tasks.length === 0 ? (

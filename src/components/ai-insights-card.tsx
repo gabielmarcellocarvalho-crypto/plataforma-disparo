@@ -27,7 +27,7 @@ export function AiInsightsCard({ initial, generatedAt, available }: { initial: A
   }
 
   return (
-    <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col">
+    <div className="bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col h-full min-h-0">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <h3 className="font-bold text-[15px] flex items-center gap-1.5">
@@ -51,7 +51,7 @@ export function AiInsightsCard({ initial, generatedAt, available }: { initial: A
       {insights.length === 0 ? (
         <p className="text-sm text-text-muted py-4 text-center">{available ? "Clique em Gerar pra IA olhar o funil de hoje." : "Disponível depois da migração 0089."}</p>
       ) : (
-        <ul className="flex flex-col gap-2.5">
+        <ul className="flex flex-col gap-2.5 min-h-0 overflow-y-auto -mr-2 pr-2">
           {insights.map((i, idx) => (
             <li key={idx} className="rounded-md border border-border bg-surface-2 p-3">
               <div className="flex items-start gap-2.5">
