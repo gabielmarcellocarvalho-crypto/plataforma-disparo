@@ -1,4 +1,5 @@
 import { safeFetch, UnsafeUrlError } from "@/lib/safe-fetch";
+import { isWithinSchedule, normalizeSchedule } from "@/lib/workflow-schedule";
 import { templateLogContent } from "@/lib/template-log";
 import { hasTagAudience, matchesTagAudience } from "@/lib/workflow-audience-tags";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -105,6 +106,13 @@ function isBusinessHoursNow(): boolean {
   const weekday = WEEKDAY_NUM[parts.find((p) => p.type === "weekday")?.value || ""] ?? new Date().getDay();
   const hour = Number(parts.find((p) => p.type === "hour")?.value) % 24;
   return BUSINESS_DAYS.includes(weekday) && hour >= BUSINESS_HOUR_START && hour < BUSINESS_HOUR_END;
+}
+
+// Agenda própria da automação (dias + horário, Brasília); sem agenda, vale a regra antiga de horário comercial.
+function canSendNow(workflow: { schedule?: unknown; respect_business_hours: boolean }): boolean {
+  const schedule = normalizeSchedule(workflow.schedule);
+  if (schedule) return isWithinSchedule(schedule);
+  return !workflow.respect_business_hours || isBusinessHoursNow();
 }
 
 function waitMs(cfg: WaitConfig): number {
@@ -592,8 +600,8 @@ async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, step
 
     // step_type === "action"
     const action = step.config as ActionConfig;
-    if (action.action_type === "send_message" && workflow.respect_business_hours && !isBusinessHoursNow()) {
-      continue; // fora do horário comercial — tenta de novo no próximo tick, sem avançar o passo
+    if (action.action_type === "send_message" && !canSendNow(workflow)) {
+      continue; // fora dos dias/horários da automação — tenta de novo no próximo tick, sem avançar o passo
     }
 
     const result = await executeAction(supabase, contact, action, { advanceStage: !workflow.stop_on_stage_change });

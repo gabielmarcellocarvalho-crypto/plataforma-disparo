@@ -1,5 +1,6 @@
 "use server";
 
+import { normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -17,6 +18,8 @@ export type WorkflowInput = {
   stopOnReply: boolean;
   stopOnStageChange: boolean;
   respectBusinessHours: boolean;
+  // Agenda própria da automação (dias + horário). null = sem agenda própria.
+  schedule: WorkflowSchedule | null;
   allowReentry: boolean;
   reentryCooldownHours: number | null;
   steps: WorkflowStepInput[];
@@ -33,6 +36,7 @@ export type WorkflowListRow = {
   stop_on_reply: boolean;
   stop_on_stage_change: boolean;
   respect_business_hours: boolean;
+  schedule: WorkflowSchedule | null;
   allow_reentry: boolean;
   reentry_cooldown_hours: number | null;
   webhook_token: string | null;
@@ -48,7 +52,7 @@ export async function getWorkflows(): Promise<WorkflowListRow[]> {
   const supabase = await createClient();
   const { data: workflows } = await supabase
     .from("workflows")
-    .select("id, name, description, enabled, trigger_type, trigger_config, audience_config, stop_on_reply, stop_on_stage_change, respect_business_hours, allow_reentry, reentry_cooldown_hours, webhook_token")
+    .select("id, name, description, enabled, trigger_type, trigger_config, audience_config, stop_on_reply, stop_on_stage_change, respect_business_hours, schedule, allow_reentry, reentry_cooldown_hours, webhook_token")
     .eq("workspace_id", workspace.id)
     .order("created_at", { ascending: false });
   if (!workflows || workflows.length === 0) return [];
@@ -86,7 +90,7 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowListRow |
   const supabase = await createClient();
   const { data: w } = await supabase
     .from("workflows")
-    .select("id, name, description, enabled, trigger_type, trigger_config, audience_config, stop_on_reply, stop_on_stage_change, respect_business_hours, allow_reentry, reentry_cooldown_hours, webhook_token")
+    .select("id, name, description, enabled, trigger_type, trigger_config, audience_config, stop_on_reply, stop_on_stage_change, respect_business_hours, schedule, allow_reentry, reentry_cooldown_hours, webhook_token")
     .eq("id", workflowId)
     .eq("workspace_id", workspace.id)
     .maybeSingle();
@@ -164,6 +168,11 @@ export async function createWorkflow(input: WorkflowInput): Promise<ActionResult
   if (!workspace) return { error: "Nenhum workspace ativo." };
   if (!input.name.trim()) return { error: "Dê um nome pro workflow." };
   if (input.steps.length === 0) return { error: "Adicione pelo menos um passo." };
+  if (input.schedule) {
+    const invalid = scheduleError(input.schedule);
+    if (invalid) return { error: invalid };
+    input = { ...input, schedule: normalizeSchedule(input.schedule) };
+  }
 
   const supabase = await createClient();
   const {
@@ -181,7 +190,8 @@ export async function createWorkflow(input: WorkflowInput): Promise<ActionResult
       audience_config: input.audienceConfig,
       stop_on_reply: input.stopOnReply,
       stop_on_stage_change: input.stopOnStageChange,
-      respect_business_hours: input.respectBusinessHours,
+      respect_business_hours: input.schedule ? true : input.respectBusinessHours,
+      schedule: input.schedule,
       allow_reentry: input.allowReentry,
       reentry_cooldown_hours: input.reentryCooldownHours,
       webhook_token: input.triggerType === "webhook" ? randomBytes(24).toString("hex") : null,
@@ -206,6 +216,11 @@ export async function updateWorkflow(workflowId: string, input: WorkflowInput): 
   if (!workspace) return { error: "Nenhum workspace ativo." };
   if (!input.name.trim()) return { error: "Dê um nome pro workflow." };
   if (input.steps.length === 0) return { error: "Adicione pelo menos um passo." };
+  if (input.schedule) {
+    const invalid = scheduleError(input.schedule);
+    if (invalid) return { error: invalid };
+    input = { ...input, schedule: normalizeSchedule(input.schedule) };
+  }
 
   const supabase = await createClient();
 
@@ -227,7 +242,8 @@ export async function updateWorkflow(workflowId: string, input: WorkflowInput): 
       audience_config: input.audienceConfig,
       stop_on_reply: input.stopOnReply,
       stop_on_stage_change: input.stopOnStageChange,
-      respect_business_hours: input.respectBusinessHours,
+      respect_business_hours: input.schedule ? true : input.respectBusinessHours,
+      schedule: input.schedule,
       allow_reentry: input.allowReentry,
       reentry_cooldown_hours: input.reentryCooldownHours,
       webhook_token: webhookToken,

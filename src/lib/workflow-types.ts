@@ -132,6 +132,8 @@ export type WorkflowRow = {
   stop_on_reply: boolean;
   stop_on_stage_change: boolean;
   respect_business_hours: boolean;
+  // Agenda própria (dias + janela de horário, Brasília). null = sem agenda: vale respect_business_hours (seg-sáb 9h-20h).
+  schedule?: { days: number[]; start: string; end: string } | null;
   allow_reentry: boolean;
   reentry_cooldown_hours: number | null;
   webhook_token: string | null;

@@ -1,5 +1,6 @@
 "use client";
 
+import { DAY_LABELS, DEFAULT_SCHEDULE, describeSchedule, normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
 import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -267,7 +268,11 @@ export function WorkflowBuilder({
   const [audienceExcludeTags, setAudienceExcludeTags] = useState<string[]>(existing?.audience_config?.excludeTags || []);
   const [stopOnReply, setStopOnReply] = useState(existing?.stop_on_reply ?? template?.stopOnReply ?? true);
   const [stopOnStageChange, setStopOnStageChange] = useState(existing?.stop_on_stage_change ?? template?.stopOnStageChange ?? false);
-  const [respectBusinessHours, setRespectBusinessHours] = useState(existing?.respect_business_hours ?? template?.respectBusinessHours ?? true);
+  // Agenda: automação já salva usa a dela; as antigas (só "horário comercial") viram a janela seg-sáb 9h-20h;
+  // sem nada disso, sem limite de dia/horário.
+  const [schedule, setSchedule] = useState<WorkflowSchedule | null>(
+    () => normalizeSchedule(existing?.schedule) ?? ((existing ? existing.respect_business_hours : template?.respectBusinessHours ?? true) ? { ...DEFAULT_SCHEDULE } : null)
+  );
   const [allowReentry, setAllowReentry] = useState(existing?.allow_reentry ?? template?.allowReentry ?? false);
   const [reentryCooldownHours, setReentryCooldownHours] = useState<number | null>(existing?.reentry_cooldown_hours ?? template?.reentryCooldownHours ?? null);
   const [enabledOnSave] = useState(true);
@@ -497,7 +502,8 @@ export function WorkflowBuilder({
       },
       stopOnReply,
       stopOnStageChange,
-      respectBusinessHours,
+      respectBusinessHours: schedule !== null,
+      schedule,
       allowReentry,
       reentryCooldownHours: allowReentry ? reentryCooldownHours : null,
       steps,
@@ -709,8 +715,9 @@ export function WorkflowBuilder({
                     <input type="checkbox" checked={stopOnStageChange} onChange={(e) => setStopOnStageChange(e.target.checked)} /> Parar quando o lead mudar de etapa
                   </label>
                   <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="checkbox" checked={respectBusinessHours} onChange={(e) => setRespectBusinessHours(e.target.checked)} /> Só mandar mensagem em horário comercial (seg-sáb, 9h-20h)
+                    <input type="checkbox" checked={schedule !== null} onChange={(e) => setSchedule(e.target.checked ? { ...DEFAULT_SCHEDULE } : null)} /> Só mandar mensagem em dias e horários escolhidos
                   </label>
+                  {schedule && <ScheduleEditor value={schedule} onChange={setSchedule} />}
                   <label className="flex items-center gap-2 text-sm cursor-pointer">
                     <input type="checkbox" checked={allowReentry} onChange={(e) => setAllowReentry(e.target.checked)} /> Permitir que o mesmo lead entre de novo depois de completar
                   </label>
@@ -1058,6 +1065,47 @@ function TagAudiencePicker({
         <span className="text-xs font-bold text-text block mb-1.5">Não incluir quem tem a tag</span>
         <div className="flex flex-wrap gap-1.5">{options.map((t) => chip(t, excludeTags.includes(t), true, () => onExclude(toggle(excludeTags, t))))}</div>
       </div>
+    </div>
+  );
+}
+
+// Agenda da automação: dias da semana + janela de horário (horário de Brasília). As mensagens fora dela
+// esperam a próxima janela; os outros passos (tarefa, mudar etapa, webhook) não são afetados.
+function ScheduleEditor({ value, onChange }: { value: WorkflowSchedule; onChange: (s: WorkflowSchedule) => void }) {
+  const toggleDay = (d: number) => {
+    const days = value.days.includes(d) ? value.days.filter((x) => x !== d) : [...value.days, d].sort();
+    onChange({ ...value, days });
+  };
+  const invalid = scheduleError(value);
+  return (
+    <div className="flex flex-col gap-2.5 pl-6">
+      <div className="flex flex-wrap gap-1.5">
+        {DAY_LABELS.map((label, d) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => toggleDay(d)}
+            className={cn(
+              "text-xs font-semibold px-2.5 py-1 rounded-full border cursor-pointer",
+              value.days.includes(d) ? "bg-primary-soft border-primary text-primary-strong" : "border-border text-text-muted hover:border-primary"
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-text-muted">Das</span>
+        <input type="time" value={value.start} onChange={(e) => onChange({ ...value, start: e.target.value })} className="border border-border rounded-md px-2 py-1 text-sm bg-surface outline-none focus:border-primary" />
+        <span className="text-text-muted">às</span>
+        <input type="time" value={value.end} onChange={(e) => onChange({ ...value, end: e.target.value })} className="border border-border rounded-md px-2 py-1 text-sm bg-surface outline-none focus:border-primary" />
+        <span className="text-xs text-text-muted">(horário de Brasília)</span>
+      </div>
+      {invalid ? (
+        <p className="text-xs text-danger font-medium">{invalid}</p>
+      ) : (
+        <p className="text-xs text-text-muted">As mensagens saem {describeSchedule(value)}. Fora disso, esperam a próxima janela.</p>
+      )}
     </div>
   );
 }
