@@ -1,5 +1,6 @@
 "use server";
 
+import { remapStepIds, type StepPlace } from "@/lib/workflow-step-remap";
 import { normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -137,6 +138,19 @@ export async function getWorkflowSteps(workflowId: string): Promise<WorkflowStep
 // Achata a árvore em linhas de workflow_steps: passos de topo primeiro (pra ter os ids reais dos
 // passos 'condition'), depois os filhos de cada branch referenciando esses ids via parent_step_id.
 async function replaceSteps(supabase: Awaited<ReturnType<typeof createClient>>, workflowId: string, workspaceId: string, steps: WorkflowStepInput[]) {
+  // Execuções em andamento: guardam o passo atual pra religar no passo novo equivalente depois (senão a
+  // FK zera current_step_id e o motor encerra a execução sem enviar). Enquanto os passos são trocados,
+  // ficam "esperando" alguns minutos pra rodada do motor não pegar ninguém sem passo no meio do caminho.
+  const [{ data: oldSteps }, { data: activeRuns }] = await Promise.all([
+    supabase.from("workflow_steps").select("id, parent_step_id, branch, position").eq("workflow_id", workflowId),
+    supabase.from("workflow_runs").select("id, status, current_step_id, next_run_at").eq("workflow_id", workflowId).in("status", ["running", "waiting"]).not("current_step_id", "is", null),
+  ]);
+  const runsToRemap = (activeRuns || []) as { id: string; status: string; current_step_id: string; next_run_at: string | null }[];
+  if (runsToRemap.length > 0) {
+    const hold = new Date(Date.now() + 5 * 60_000).toISOString();
+    await supabase.from("workflow_runs").update({ status: "waiting", next_run_at: hold }).in("id", runsToRemap.map((r) => r.id));
+  }
+
   await supabase.from("workflow_steps").delete().eq("workflow_id", workflowId);
   if (steps.length === 0) return;
 
@@ -160,6 +174,19 @@ async function replaceSteps(supabase: Awaited<ReturnType<typeof createClient>>, 
     s.noSteps.forEach((cs, ci) => childRows.push({ workflow_id: workflowId, workspace_id: workspaceId, parent_step_id: parentId, branch: "no", position: ci, step_type: cs.step_type, config: cs.config }));
   });
   if (childRows.length > 0) await supabase.from("workflow_steps").insert(childRows);
+
+  if (runsToRemap.length > 0) {
+    const { data: newSteps } = await supabase.from("workflow_steps").select("id, parent_step_id, branch, position").eq("workflow_id", workflowId);
+    const map = remapStepIds((oldSteps || []) as StepPlace[], (newSteps || []) as StepPlace[]);
+    for (const run of runsToRemap) {
+      const newId = map.get(run.current_step_id) ?? null;
+      // Passo que deixou de existir: a execução termina, como quando a automação chega ao fim.
+      await supabase
+        .from("workflow_runs")
+        .update(newId ? { current_step_id: newId, status: run.status, next_run_at: run.next_run_at } : { current_step_id: null, status: run.status, next_run_at: new Date().toISOString() })
+        .eq("id", run.id);
+    }
+  }
 }
 
 export async function createWorkflow(input: WorkflowInput): Promise<ActionResult> {
