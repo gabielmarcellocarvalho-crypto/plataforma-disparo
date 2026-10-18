@@ -406,6 +406,7 @@ export function ConversationsPanel({
   const shown = filtered.slice(0, listLimit);
 
   const activeFilterCount =
+    (inboxTab !== "todas" ? 1 : 0) +
     (stageFilters.length > 0 ? 1 : 0) +
     excludeTags.length +
     (aguardandoHumano ? 1 : 0) +
@@ -680,23 +681,7 @@ export function ConversationsPanel({
       className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[360px_1fr] ${selected && contextOpen ? "xl:grid-cols-[360px_1fr_300px]" : ""} bg-surface overflow-hidden`}
     >
       <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
-        <div className="p-4 border-b border-border flex flex-col gap-2.5">
-          <nav className="flex flex-wrap gap-1" aria-label="Caixa de entrada">
-            {INBOX_TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setInboxTab(t.key)}
-                aria-pressed={inboxTab === t.key}
-                className={`shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
-                  inboxTab === t.key ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
-                }`}
-              >
-                {t.label}
-                <span className={`ml-1 ${inboxTab === t.key ? "opacity-80" : "opacity-60"}`}>{tabCounts[t.key]}</span>
-              </button>
-            ))}
-          </nav>
+        <div className="p-4 border-b border-border flex flex-col gap-2.5 max-h-[65%] overflow-y-auto shrink-0">
           <div className="flex items-center gap-1.5">
             <input
               value={query}
@@ -748,119 +733,125 @@ export function ConversationsPanel({
             </button>
           </div>
 
+          {/* Com o filtro fechado, a caixa escolhida continua visível (e removível) embaixo da busca. */}
+          {!filtersOpen && inboxTab !== "todas" && (
+            <div className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                {INBOX_TABS.find((t) => t.key === inboxTab)?.label} · {tabCounts[inboxTab]}
+                <button type="button" onClick={() => setInboxTab("todas")} aria-label="Mostrar todas as conversas" className="cursor-pointer font-bold">
+                  ×
+                </button>
+              </span>
+            </div>
+          )}
+
           {filtersOpen && (
-            <div className="flex flex-col gap-2 pt-1 border-t border-border">
-              {allTags.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-semibold text-text-muted">Ocultar quem tem a tag</span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        const t = e.target.value;
-                        if (t) setExcludeTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
-                      }}
-                      className="border border-border rounded-md px-2 py-1 text-[11px] outline-none focus:border-primary cursor-pointer bg-surface"
+            <div className="flex flex-col gap-3.5 pt-3 border-t border-border">
+              <FilterSection title="Caixa">
+                <div className="flex flex-wrap gap-1.5">
+                  {INBOX_TABS.map((t) => (
+                    <FilterChip key={t.key} on={inboxTab === t.key} onClick={() => setInboxTab(t.key)}>
+                      {t.label} <span className="opacity-70">{tabCounts[t.key]}</span>
+                    </FilterChip>
+                  ))}
+                  <FilterChip on={semResposta} onClick={() => setSemResposta((v) => !v)}>
+                    Sem resposta do lead
+                  </FilterChip>
+                </div>
+              </FilterSection>
+
+              <FilterSection title="Etapa" hint="pode marcar mais de uma">
+                <div className="flex flex-wrap gap-1.5">
+                  {stageChips.map(({ key: s, label }) => (
+                    <FilterChip
+                      key={s}
+                      on={stageFilters.includes(s)}
+                      onClick={() => setStageFilters((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]))}
                     >
-                      <option value="">Escolher tag…</option>
-                      {allTags
-                        .filter((t) => !excludeTags.includes(t))
-                        .map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                    </select>
-                    {excludeTags.map((t) => (
-                      <span key={t} className="flex items-center gap-1.5 text-[11px] bg-danger-soft text-danger rounded-full px-2.5 py-1">
-                        {t}
-                        <button type="button" onClick={() => setExcludeTags((cur) => cur.filter((x) => x !== t))} aria-label={`Voltar a mostrar a tag ${t}`} className="cursor-pointer font-bold">
-                          ×
-                        </button>
-                      </span>
+                      {label}
+                    </FilterChip>
+                  ))}
+                </div>
+              </FilterSection>
+
+              <FilterSection title="Atendimento">
+                <div className="grid grid-cols-2 gap-2">
+                  <select value={ticketFilter} onChange={(e) => setTicketFilter(e.target.value as TicketStatus | "")} className={filterSelect} aria-label="Status do atendimento">
+                    <option value="">Status: todos</option>
+                    {(Object.keys(TICKET_STATUS_LABELS) as TicketStatus[]).map((s) => (
+                      <option key={s} value={s}>{TICKET_STATUS_LABELS[s]}</option>
                     ))}
+                  </select>
+                  <select value={waitFilter} onChange={(e) => setWaitFilter(e.target.value)} className={filterSelect} aria-label="Tempo de espera">
+                    <option value="">Espera: qualquer</option>
+                    {WAIT_THRESHOLDS.map((w) => (
+                      <option key={w.key} value={w.key}>{w.label}</option>
+                    ))}
+                  </select>
+                  {showResponsavel && vendors.length > 0 && (
+                    <select value={responsavelFilter} onChange={(e) => setResponsavelFilter(e.target.value)} className={`${filterSelect} col-span-2`} aria-label="Responsável">
+                      <option value="">Responsável: todos</option>
+                      <option value="__nenhum__">Sem responsável</option>
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </FilterSection>
+
+              {(campaignOptions.length > 0 || allTags.length > 0) && (
+                <FilterSection title="Origem e tags">
+                  <div className="flex flex-col gap-2">
+                    {campaignOptions.length > 0 && (
+                      <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className={filterSelect} aria-label="Campanha de origem">
+                        <option value="">Campanha de origem: todas</option>
+                        {campaignOptions.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    )}
+                    {allTags.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const t = e.target.value;
+                            if (t) setExcludeTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
+                          }}
+                          className={filterSelect}
+                          aria-label="Ocultar quem tem a tag"
+                        >
+                          <option value="">Ocultar quem tem a tag…</option>
+                          {allTags
+                            .filter((t) => !excludeTags.includes(t))
+                            .map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                        </select>
+                        {excludeTags.map((t) => (
+                          <span key={t} className="flex items-center gap-1.5 text-[11px] bg-danger-soft text-danger rounded-full px-2.5 py-1">
+                            sem {t}
+                            <button type="button" onClick={() => setExcludeTags((cur) => cur.filter((x) => x !== t))} aria-label={`Voltar a mostrar a tag ${t}`} className="cursor-pointer font-bold">
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
+                </FilterSection>
               )}
 
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-text-muted">Etapa (pode marcar mais de uma)</span>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {stageChips.map(({ key: s, label }) => {
-                    const on = stageFilters.includes(s);
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => setStageFilters((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]))}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
-                          on ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <select value={waitFilter} onChange={(e) => setWaitFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
-                <option value="">Tempo de espera: qualquer</option>
-                {WAIT_THRESHOLDS.map((w) => (
-                  <option key={w.key} value={w.key}>{w.label}</option>
-                ))}
-              </select>
-
-              {campaignOptions.length > 0 && (
-                <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
-                  <option value="">Campanha de origem: todas</option>
-                  {campaignOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              )}
-
-              {showResponsavel && vendors.length > 0 && (
-                <select value={responsavelFilter} onChange={(e) => setResponsavelFilter(e.target.value)} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
-                  <option value="">Responsável: todos</option>
-                  <option value="__nenhum__">Sem responsável</option>
-                  {vendors.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-              )}
-
-              <select value={ticketFilter} onChange={(e) => setTicketFilter(e.target.value as TicketStatus | "")} className="border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface">
-                <option value="">Status do atendimento: todos</option>
-                {(Object.keys(TICKET_STATUS_LABELS) as TicketStatus[]).map((s) => (
-                  <option key={s} value={s}>{TICKET_STATUS_LABELS[s]}</option>
-                ))}
-              </select>
-
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setAguardandoHumano((v) => !v)}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
-                    aguardandoHumano ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted"
-                  }`}
-                >
-                  Aguardando humano
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSemResposta((v) => !v)}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
-                    semResposta ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted"
-                  }`}
-                >
-                  Sem resposta do lead
-                </button>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-text-muted">{filtered.length} conversa(s)</span>
                 {activeFilterCount > 0 && (
                   <button
                     type="button"
                     onClick={() => {
+                      setInboxTab("todas");
                       setStageFilters([]);
                       setExcludeTags([]);
                       setAguardandoHumano(false);
@@ -870,9 +861,9 @@ export function ConversationsPanel({
                       setResponsavelFilter("");
                       setTicketFilter("");
                     }}
-                    className="text-[11px] font-semibold text-text-muted hover:text-danger cursor-pointer ml-auto"
+                    className="text-[11px] font-bold text-text-muted hover:text-danger cursor-pointer"
                   >
-                    limpar
+                    Limpar filtros
                   </button>
                 )}
               </div>
@@ -1390,6 +1381,35 @@ function QuickRepliesManager({
       </form>
       <p className="text-[10px] text-text-muted">Salvas neste navegador. No campo de mensagem, digite / e escolha.</p>
     </div>
+  );
+}
+
+const filterSelect = "w-full border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary cursor-pointer bg-surface";
+
+function FilterSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-text-muted">
+        {title}
+        {hint && <span className="normal-case font-normal tracking-normal"> · {hint}</span>}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
+        on ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
