@@ -53,6 +53,7 @@ export function GlassDateRangePicker({
   onApplyPreset,
   onApplyRange,
   onClear,
+  align = "start",
 }: {
   triggerLabel: string;
   activePreset?: PeriodPreset | null;
@@ -63,6 +64,8 @@ export function GlassDateRangePicker({
   onApplyPreset?: (preset: PeriodPreset) => void;
   onApplyRange: (from: string, to: string) => void;
   onClear?: () => void;
+  // "end": a caixa abre alinhada pela direita do botão (botão no canto direito da tela).
+  align?: "start" | "end";
 }) {
   const [open, setOpen] = useState(false);
   const [selStart, setSelStart] = useState<string | null>(from || null);
@@ -120,7 +123,7 @@ export function GlassDateRangePicker({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-2 left-0 w-[300px] rounded-2xl border border-white/70 shadow-2xl overflow-hidden">
+        <div className={`absolute z-50 mt-2 ${align === "end" ? "right-0" : "left-0"} w-[300px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/70 shadow-2xl overflow-hidden`}>
           <div className="absolute inset-0">
             <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-primary opacity-40 blur-2xl" />
             <div className="absolute -bottom-12 -left-10 w-40 h-40 rounded-full bg-primary-strong opacity-35 blur-2xl" />

@@ -6,7 +6,7 @@ import { PERIOD_PRESETS, type PeriodPreset } from "@/lib/period";
 import { GlassDateRangePicker, formatBr } from "@/components/glass-date-range-picker";
 import { AutomaxLoader } from "@/components/page-loading";
 
-export function PeriodFilterBar({ activePreset, from, to }: { activePreset: PeriodPreset; from: string; to: string }) {
+export function PeriodFilterBar({ activePreset, from, to, align = "start" }: { activePreset: PeriodPreset; from: string; to: string; align?: "start" | "end" }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -44,6 +44,7 @@ export function PeriodFilterBar({ activePreset, from, to }: { activePreset: Peri
         to={to}
         onApplyPreset={applyPreset}
         onApplyRange={applyRange}
+        align={align}
       />
       {pending && (
         // Posicionado em relação à raiz da página (que é `relative`): cobre só a área de conteúdo,

@@ -202,7 +202,7 @@ export default async function OverviewPage({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
-          <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} />
+          <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} align="end" />
         </div>
       </div>
 
