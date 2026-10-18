@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { parseReaction, REACAO_TAG } from "@/lib/conversation-closing";
 import { adContextNote } from "@/lib/ad-referral";
 import { nameUsageNote } from "@/lib/name-usage";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -164,7 +165,8 @@ export async function generateReplyGemini(
   needsHuman = needsHuman || ATTENTION_TAG.test(finalText);
   const collectedData = parseCollectedData(finalText);
   const stage = parseStage(finalText);
-  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").trim();
+  const reaction = parseReaction(finalText);
+  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").replace(REACAO_TAG, "").trim();
 
   const replyParts = finalText
     .split(MESSAGE_SPLIT_TAG)
@@ -176,6 +178,7 @@ export async function generateReplyGemini(
     needsHuman,
     collectedData,
     stage,
+    reaction,
     inputTokens,
     outputTokens,
     cacheCreationInputTokens: 0,

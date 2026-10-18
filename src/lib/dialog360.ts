@@ -23,6 +23,16 @@ async function post(apiKey: string, path: string, body: unknown): Promise<SendRe
   return { id };
 }
 
+// Reação (emoji) numa mensagem do cliente.
+export async function sendDialog360Reaction(apiKey: string, to: string, messageId: string, emoji: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/messages`, {
+    method: "POST",
+    headers: { "D360-API-KEY": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "reaction", reaction: { message_id: messageId, emoji } }),
+  });
+  if (!res.ok) throw new Error(`360dialog respondeu ${res.status} ao reagir: ${await res.text().catch(() => "")}`);
+}
+
 // Texto livre — só funciona dentro da janela de 24h após a última mensagem do cliente (é a mesma
 // regra da Meta pra qualquer canal oficial). Fora da janela, a Meta rejeita — use sendDialog360Template.
 export async function sendDialog360Text(apiKey: string, to: string, body: string): Promise<SendResult> {

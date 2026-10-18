@@ -12,7 +12,8 @@ import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, 
 import { getSchedulingContext } from "@/lib/scheduling";
 import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
 import { buildNuvemshopTools, getNuvemshopContext, makeNuvemshopExecutor, nuvemshopPromptBlock, NUVEMSHOP_TOOL_NAMES } from "@/lib/integrations/nuvemshop/tools";
-import { agentSendText, agentSendMedia, type AgentChannel } from "@/lib/agent-channel";
+import { agentSendText, agentSendMedia, agentSendReaction, type AgentChannel } from "@/lib/agent-channel";
+import { HUMANIZADO_CONVERSATION_BLOCK, isLongStalledChat, LONG_CHAT_BLOCK, shouldReactInsteadOfReply } from "@/lib/conversation-closing";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { createSellerTaskIfNeeded } from "@/lib/seller-tasks";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
@@ -76,7 +77,10 @@ const HISTORY_LIMIT = 20;
 // gerando chamada paga à Anthropic sem limite, sem punir outros clientes: cada conversa tem seu
 // próprio contador independente, escala junto com o número de clientes na plataforma.
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_MESSAGES = 5; // 5-6 mensagens/min já é padrão de abuso; ainda dá folga pro humano real digitando rápido
+// Gente de verdade escreve em várias bolhas curtas (caso real: 17 mensagens em ~1,5 min, nenhuma repetida) e era
+// marcada como abuso com o limite antigo de 5/min. Só isso não é spam: bot/loop manda dezenas por minuto. Repetição
+// idêntica já tem trava própria (isFirstRepeat/isSecondRepeat) e rajada não custa LLM extra (só a última mensagem responde).
+const RATE_LIMIT_MAX_MESSAGES = 30;
 // Rate limit agregado por WORKSPACE (todos os contatos somados) — o de cima protege 1 número
 // específico, mas o número de WhatsApp de um agente é público por natureza (é o objetivo do produto);
 // alguém mal-intencionado pode mandar mensagem de vários números de origem diferentes, cada um com seu
@@ -381,6 +385,31 @@ export async function runAgentTurn(
     return;
   }
 
+  // Fim de conversa: o cliente só se despediu/agradeceu e o agente já tinha se despedido. Sem chamar a IA,
+  // reage com um joinha (canal oficial) ou fica em silêncio — evita o "tchau pro tchau" sem fim.
+  if (text && images.length === 0) {
+    // Ignora as próprias reações ("[reação: 👍]"): a despedida de verdade é a última FALA do agente.
+    const { data: lastAssistantRows } = await supabase
+      .from("messages")
+      .select("content")
+      .eq("agent_id", agent.id)
+      .eq("contact_id", contact.id)
+      .eq("role", "assistant")
+      .order("created_at", { ascending: false })
+      .limit(4);
+    const lastSpeech = (lastAssistantRows || []).find((m) => !String(m.content).startsWith("[reação:"));
+    if (shouldReactInsteadOfReply(text, lastSpeech?.content as string | undefined)) {
+      const sent = await agentSendReaction(channel, phone, externalId, "👍").catch((err) => {
+        console.error("Erro ao reagir à mensagem do cliente:", err instanceof Error ? err.message : err);
+        return false;
+      });
+      if (sent) {
+        await supabase.from("messages").insert({ workspace_id: agent.workspace_id, contact_id: contact.id, agent_id: agent.id, role: "assistant", content: "[reação: 👍]" });
+      }
+      return;
+    }
+  }
+
   // 1ª repetição: já respondeu igual há pouco, pular silenciosamente evita gastar outra chamada paga
   // pra dizer a mesma coisa de novo (zero custo, zero flag — pode ser só impaciência do cliente).
   if (isFirstRepeat && !isSecondRepeat) return;
@@ -534,7 +563,9 @@ export async function runAgentTurn(
 
   const replyFn = cerebro.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   const gen = await replyFn(
-    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available && (agentConfig.teamQuestions || qaMemory.text) ? qaPromptBlock(qaMemory.text, agentConfig.teamQuestions) : ""),
+    cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available && (agentConfig.teamQuestions || qaMemory.text) ? qaPromptBlock(qaMemory.text, agentConfig.teamQuestions) : "") +
+      (agentConfig.tone === "humanizado" ? HUMANIZADO_CONVERSATION_BLOCK : "") +
+      (isLongStalledChat(history, contact.stage) ? LONG_CHAT_BLOCK : ""),
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,
@@ -542,7 +573,7 @@ export async function runAgentTurn(
     executor,
     knowledgeText
   );
-  const { needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = gen;
+  const { needsHuman, collectedData, stage, reaction, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = gen;
 
   // Corta qualquer bolha grande demais em pedaços de até `bubbleCharLimit` caracteres (regra de
   // código, não depende do modelo respeitar instrução de prompt) — só quando o agente permite mais de
@@ -680,6 +711,17 @@ export async function runAgentTurn(
     );
   }
 
+  // Reação pedida pelo modelo ([[REACAO: 👍]]): vai antes do texto, se houver. Só nos canais oficiais.
+  if (reaction) {
+    const reacted = await agentSendReaction(channel, phone, externalId, reaction).catch((err) => {
+      console.error("Erro ao reagir à mensagem do cliente:", err instanceof Error ? err.message : err);
+      return false;
+    });
+    if (reacted) {
+      await supabase.from("messages").insert({ workspace_id: agent.workspace_id, contact_id: contact.id, agent_id: agent.id, role: "assistant", content: `[reação: ${reaction}]` });
+    }
+  }
+
   if (replyParts.length > 0) {
     // O agente respondeu — não marca atenção humana mesmo que ele tenha sido cauteloso no texto.
     // "Precisa de atenção" fica só pros casos em que ele realmente NÃO conseguiu responder (abaixo).
@@ -716,8 +758,8 @@ export async function runAgentTurn(
 
       if (i < replyParts.length - 1) await sleep(BUBBLE_GAP_MS + Math.random() * BUBBLE_GAP_JITTER_MS);
     }
-  } else {
-    // Só aqui é atenção humana de verdade: o agente não produziu nenhuma resposta.
+  } else if (!reaction) {
+    // Só aqui é atenção humana de verdade: o agente não produziu nenhuma resposta (reagir também é responder).
     await supabase
       .from("contacts")
       .update({ needs_attention: true, attention_reason: "O agente não conseguiu responder automaticamente essa mensagem." })

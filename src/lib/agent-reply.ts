@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { parseReaction, REACAO_TAG } from "@/lib/conversation-closing";
 import { adContextNote } from "@/lib/ad-referral";
 import { nameUsageNote } from "@/lib/name-usage";
 import { STATUS_TAG_TO_STAGE, type ContactStage } from "@/lib/crm-stages";
@@ -97,6 +98,8 @@ export type AgentReply = {
   needsHuman: boolean;
   collectedData: Record<string, string>;
   stage: ContactStage | null;
+  // Reação em emoji à mensagem do cliente ([[REACAO: 👍]]), em vez de (ou além de) texto.
+  reaction: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheCreationInputTokens: number;
@@ -230,6 +233,7 @@ export async function generateReply(
         needsHuman: true,
         collectedData: {},
         stage: null,
+        reaction: null,
         inputTokens,
         outputTokens,
         cacheCreationInputTokens,
@@ -269,12 +273,13 @@ export async function generateReply(
   needsHuman = needsHuman || ATTENTION_TAG.test(finalText);
   const collectedData = parseCollectedData(finalText);
   const stage = parseStage(finalText);
-  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").trim();
+  const reaction = parseReaction(finalText);
+  finalText = finalText.replace(ATTENTION_TAG, "").replace(STATUS_TAG, "").replace(DADOS_TAG, "").replace(REACAO_TAG, "").trim();
 
   const replyParts = finalText
     .split(MESSAGE_SPLIT_TAG)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  return { replyParts, needsHuman, collectedData, stage, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
+  return { replyParts, needsHuman, collectedData, stage, reaction, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
 }

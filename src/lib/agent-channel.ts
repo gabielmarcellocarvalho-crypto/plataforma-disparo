@@ -3,8 +3,8 @@
 // gerador de resposta (agent-reply.ts) e a orquestração da conversa não sabem nem precisam saber qual
 // canal é; só chamam agentSendText/agentSendMedia com o AgentChannel resolvido.
 import { sendText, sendMedia } from "@/lib/evolution";
-import { sendDialog360Text, sendDialog360Media } from "@/lib/dialog360";
-import { sendMetaCloudText, sendMetaCloudMedia } from "@/lib/metacloud";
+import { sendDialog360Text, sendDialog360Media, sendDialog360Reaction } from "@/lib/dialog360";
+import { sendMetaCloudText, sendMetaCloudMedia, sendMetaCloudReaction } from "@/lib/metacloud";
 
 export type AgentChannel =
   | { kind: "evolution"; instanceName: string }
@@ -15,6 +15,15 @@ export async function agentSendText(channel: AgentChannel, to: string, text: str
   if (channel.kind === "evolution") return void (await sendText(channel.instanceName, to, text));
   if (channel.kind === "360dialog") return void (await sendDialog360Text(channel.apiKey, to, text));
   await sendMetaCloudText(channel.phoneNumberId, to, text);
+}
+
+// Reage com emoji à mensagem do cliente. Só existe nos canais oficiais; no Evolution (QR code) devolve false
+// e quem chamou simplesmente não responde nada.
+export async function agentSendReaction(channel: AgentChannel, to: string, messageId: string | null | undefined, emoji: string): Promise<boolean> {
+  if (!messageId || channel.kind === "evolution") return false;
+  if (channel.kind === "360dialog") await sendDialog360Reaction(channel.apiKey, to, messageId, emoji);
+  else await sendMetaCloudReaction(channel.phoneNumberId, to, messageId, emoji);
+  return true;
 }
 
 export async function agentSendMedia(

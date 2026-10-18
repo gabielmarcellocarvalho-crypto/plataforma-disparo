@@ -45,6 +45,16 @@ export async function sendMetaCloudText(phoneNumberId: string, to: string, body:
   });
 }
 
+// Reação (emoji) numa mensagem do cliente. Vale para mensagem recebida há menos de 30 dias.
+export async function sendMetaCloudReaction(phoneNumberId: string, to: string, messageId: string, emoji: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, type: "reaction", reaction: { message_id: messageId, emoji } }),
+  });
+  if (!res.ok) throw new Error(`Meta Graph API respondeu ${res.status} ao reagir: ${await res.text().catch(() => "")}`);
+}
+
 // Cabeçalho de mídia do template (imagem/documento). A Meta pede a mídia em cada envio, por link público.
 export type TemplateHeaderMedia = { format: "IMAGE" | "DOCUMENT"; url: string; fileName?: string | null };
 
