@@ -13,7 +13,7 @@ import { resolveStageLabels, isContactStage, STALE_AFTER_DAYS, daysSince } from 
 import { generateReply, type ConversationMessage } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig } from "@/lib/agent-prompt";
-import { HUMANIZADO_CONVERSATION_BLOCK } from "@/lib/conversation-closing";
+import { HUMANIZADO_CONVERSATION_BLOCK, PHONE_KNOWN_BLOCK } from "@/lib/conversation-closing";
 
 type Result<T> = { error: string; data?: undefined } | { error: null; data: T };
 
@@ -211,7 +211,7 @@ async function dryReply(
   const { data: knowledgeRows } = await supabase.from("agent_knowledge").select("file_name, content").eq("agent_id", agent.id);
   const knowledgeText = knowledgeRows?.length ? knowledgeRows.map((k) => `### ${k.file_name}\n${k.content}`).join("\n\n---\n\n") : undefined;
   const config = normalizeAgentConfig(agent.config);
-  const prompt = (agent.system_prompt as string) + (config.tone === "humanizado" ? HUMANIZADO_CONVERSATION_BLOCK : "");
+  const prompt = (agent.system_prompt as string) + (config.tone === "humanizado" ? HUMANIZADO_CONVERSATION_BLOCK : "") + PHONE_KNOWN_BLOCK;
   // Sem ferramentas: nada é enviado nem gravado (sem foto, link de pagamento, agendamento ou pergunta pra equipe).
   const fn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
   try {

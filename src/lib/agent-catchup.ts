@@ -16,6 +16,7 @@ import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage }
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
+import { PHONE_KNOWN_BLOCK } from "@/lib/conversation-closing";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -96,7 +97,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
       // Sem ferramentas (foto/arquivo) aqui — mesma simplificação já usada no worker de follow-up:
       // é uma retomada de texto, não o fluxo completo de mensagem ao vivo.
       const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
-      const gen = await replyFn(agent.system_prompt, { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: true }, history, [], [], undefined, knowledgeText);
+      const gen = await replyFn(agent.system_prompt + PHONE_KNOWN_BLOCK, { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: true }, history, [], [], undefined, knowledgeText);
 
       const preSplitParts = agentConfig.maxBubbles > 1 ? splitByCharLimit(gen.replyParts, agentConfig.bubbleCharLimit) : gen.replyParts;
       const replyParts = capBubbles(preSplitParts, agentConfig.maxBubbles);

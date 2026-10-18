@@ -106,3 +106,13 @@ export const HUMANIZADO_CONVERSATION_BLOCK =
   "A regra de não usar emojis vale para o texto; a reação é a única exceção.\n" +
   "- Fora do assunto: se o cliente puxar assunto que nada tem a ver com a empresa (pedir para você segui-lo no Instagram, conversa pessoal, " +
   "brincadeira), responda uma vez, de forma simpática e curta, e volte ao assunto. Se ele insistir, responda ainda mais curto e não alimente o papo.";
+
+// O agente conversa pelo WhatsApp do próprio cliente, então o número já é conhecido. Sem essa regra o
+// modelo pedia "seu número com DDD pra eu te ligar" (campo "telefone" na coleta + modo SDR puxando pra
+// ligação). Entra na hora de responder, então vale pra todos os agentes sem regerar o prompt.
+export const PHONE_KNOWN_BLOCK =
+  "\n\nTelefone do cliente: você já tem o número dele, é o deste WhatsApp em que vocês estão conversando. NUNCA peça " +
+  "telefone, número com DDD ou outro contato pra ligar. Não proponha ligação por conta própria; se o cliente fizer uma " +
+  "pergunta (preço, tamanho, entrega), responda a pergunta aqui mesmo na conversa. Se o próprio cliente pedir pra receber " +
+  "uma ligação, confirme que vão ligar neste mesmo número, pergunte só o melhor horário e sinalize a equipe com " +
+  "[[PRECISA_HUMANO]]. Se houver um campo telefone a registrar, ele já é o número deste WhatsApp: não pergunte.";

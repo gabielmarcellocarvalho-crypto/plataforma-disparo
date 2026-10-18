@@ -10,6 +10,7 @@ import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt"
 import { canAdvanceStage } from "@/lib/crm-stages";
 import { secureEqual } from "@/lib/secure-compare";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
+import { PHONE_KNOWN_BLOCK } from "@/lib/conversation-closing";
 
 // Roda periodicamente (Vercel Cron, ver vercel.json) checando contatos que pararam de responder
 // depois de uma resposta do agente. Cada agente configura, em AgentConfig.followUp: de quanto em
@@ -180,7 +181,7 @@ export async function GET(req: Request) {
 
       const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
       const gen = await replyFn(
-        agent.system_prompt,
+        agent.system_prompt + PHONE_KNOWN_BLOCK,
         { name: contact.name, custom_fields: contact.custom_fields },
         history,
         [],

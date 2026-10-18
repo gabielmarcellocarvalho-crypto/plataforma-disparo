@@ -13,7 +13,7 @@ import { getSchedulingContext } from "@/lib/scheduling";
 import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
 import { buildNuvemshopTools, getNuvemshopContext, makeNuvemshopExecutor, nuvemshopPromptBlock, NUVEMSHOP_TOOL_NAMES } from "@/lib/integrations/nuvemshop/tools";
 import { agentSendText, agentSendMedia, agentSendReaction, type AgentChannel } from "@/lib/agent-channel";
-import { HUMANIZADO_CONVERSATION_BLOCK, isLongStalledChat, LONG_CHAT_BLOCK, shouldReactInsteadOfReply } from "@/lib/conversation-closing";
+import { HUMANIZADO_CONVERSATION_BLOCK, isLongStalledChat, LONG_CHAT_BLOCK, PHONE_KNOWN_BLOCK, shouldReactInsteadOfReply } from "@/lib/conversation-closing";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { createSellerTaskIfNeeded } from "@/lib/seller-tasks";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
@@ -565,7 +565,8 @@ export async function runAgentTurn(
   const gen = await replyFn(
     cerebro.system_prompt + (scheduling ? schedulingPromptBlock(scheduling) : "") + (nuvemshop ? nuvemshopPromptBlock(nuvemshop) : "") + (qaMemory.available && (agentConfig.teamQuestions || qaMemory.text) ? qaPromptBlock(qaMemory.text, agentConfig.teamQuestions) : "") +
       (agentConfig.tone === "humanizado" ? HUMANIZADO_CONVERSATION_BLOCK : "") +
-      (isLongStalledChat(history, contact.stage) ? LONG_CHAT_BLOCK : ""),
+      (isLongStalledChat(history, contact.stage) ? LONG_CHAT_BLOCK : "") +
+      PHONE_KNOWN_BLOCK,
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
     images,
