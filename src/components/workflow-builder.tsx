@@ -1,6 +1,6 @@
 "use client";
 
-import { DAY_LABELS, DEFAULT_SCHEDULE, describeSchedule, normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
+import { DAY_LABELS, DEFAULT_PERIOD, DEFAULT_SCHEDULE, describeSchedule, isPeriod, normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
 import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -1069,38 +1069,100 @@ function TagAudiencePicker({
   );
 }
 
-// Agenda da automação: dias da semana + janela de horário (horário de Brasília). As mensagens fora dela
-// esperam a próxima janela; os outros passos (tarefa, mudar etapa, webhook) não são afetados.
+// Agenda da automação (horário de Brasília). Dois modos: dias marcados com o mesmo horário todo dia, ou um período
+// contínuo (de um dia/hora até outro) com horário de silêncio opcional. As mensagens fora dela esperam a próxima
+// janela; os outros passos (tarefa, mudar etapa, webhook) não são afetados.
 function ScheduleEditor({ value, onChange }: { value: WorkflowSchedule; onChange: (s: WorkflowSchedule) => void }) {
-  const toggleDay = (d: number) => {
-    const days = value.days.includes(d) ? value.days.filter((x) => x !== d) : [...value.days, d].sort();
-    onChange({ ...value, days });
-  };
   const invalid = scheduleError(value);
+  const timeInput = "border border-border rounded-md px-2 py-1 text-sm bg-surface outline-none focus:border-primary";
+  const dayChip = (on: boolean) =>
+    cn(
+      "text-xs font-semibold px-2.5 py-1 rounded-full border cursor-pointer",
+      on ? "bg-primary-soft border-primary text-primary-strong" : "border-border text-text-muted hover:border-primary"
+    );
+  const modeBtn = (label: string, active: boolean, onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn("text-xs font-bold px-3 py-1.5 rounded-md border cursor-pointer", active ? "bg-primary-strong text-white border-primary-strong" : "border-border text-text-muted hover:border-primary")}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="flex flex-col gap-2.5 pl-6">
-      <div className="flex flex-wrap gap-1.5">
-        {DAY_LABELS.map((label, d) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => toggleDay(d)}
-            className={cn(
-              "text-xs font-semibold px-2.5 py-1 rounded-full border cursor-pointer",
-              value.days.includes(d) ? "bg-primary-soft border-primary text-primary-strong" : "border-border text-text-muted hover:border-primary"
-            )}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex gap-2">
+        {modeBtn("Dias e horário", !isPeriod(value), () => onChange({ ...DEFAULT_SCHEDULE }))}
+        {modeBtn("Período contínuo", isPeriod(value), () => onChange({ ...DEFAULT_PERIOD }))}
       </div>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-text-muted">Das</span>
-        <input type="time" value={value.start} onChange={(e) => onChange({ ...value, start: e.target.value })} className="border border-border rounded-md px-2 py-1 text-sm bg-surface outline-none focus:border-primary" />
-        <span className="text-text-muted">às</span>
-        <input type="time" value={value.end} onChange={(e) => onChange({ ...value, end: e.target.value })} className="border border-border rounded-md px-2 py-1 text-sm bg-surface outline-none focus:border-primary" />
-        <span className="text-xs text-text-muted">(horário de Brasília)</span>
-      </div>
+
+      {isPeriod(value) ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-text-muted">Começa</span>
+            <select value={value.fromDay} onChange={(e) => onChange({ ...value, fromDay: Number(e.target.value) })} className={timeInput}>
+              {DAY_LABELS.map((l, d) => (
+                <option key={l} value={d}>{l}</option>
+              ))}
+            </select>
+            <span className="text-text-muted">às</span>
+            <input type="time" value={value.fromTime} onChange={(e) => onChange({ ...value, fromTime: e.target.value })} className={timeInput} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-text-muted">Termina</span>
+            <select value={value.toDay} onChange={(e) => onChange({ ...value, toDay: Number(e.target.value) })} className={timeInput}>
+              {DAY_LABELS.map((l, d) => (
+                <option key={l} value={d}>{l}</option>
+              ))}
+            </select>
+            <span className="text-text-muted">às</span>
+            <input type="time" value={value.toTime} onChange={(e) => onChange({ ...value, toTime: e.target.value })} className={timeInput} />
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={Boolean(value.quietFrom && value.quietTo)}
+              onChange={(e) => onChange(e.target.checked ? { ...value, quietFrom: "00:00", quietTo: "08:00" } : { ...value, quietFrom: undefined, quietTo: undefined })}
+            />
+            Não enviar de madrugada
+          </label>
+          {value.quietFrom && value.quietTo && (
+            <div className="flex items-center gap-2 text-sm pl-6">
+              <span className="text-text-muted">Sem enviar das</span>
+              <input type="time" value={value.quietFrom} onChange={(e) => onChange({ ...value, quietFrom: e.target.value })} className={timeInput} />
+              <span className="text-text-muted">às</span>
+              <input type="time" value={value.quietTo} onChange={(e) => onChange({ ...value, quietTo: e.target.value })} className={timeInput} />
+              <span className="text-xs text-text-muted">(todo dia do período)</span>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {DAY_LABELS.map((label, d) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  const days = value.days.includes(d) ? value.days.filter((x) => x !== d) : [...value.days, d].sort();
+                  onChange({ ...value, days });
+                }}
+                className={dayChip(value.days.includes(d))}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-text-muted">Das</span>
+            <input type="time" value={value.start} onChange={(e) => onChange({ ...value, start: e.target.value })} className={timeInput} />
+            <span className="text-text-muted">às</span>
+            <input type="time" value={value.end} onChange={(e) => onChange({ ...value, end: e.target.value })} className={timeInput} />
+          </div>
+        </>
+      )}
+      <span className="text-xs text-text-muted">Horário de Brasília.</span>
       {invalid ? (
         <p className="text-xs text-danger font-medium">{invalid}</p>
       ) : (

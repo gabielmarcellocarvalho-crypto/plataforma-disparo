@@ -1,4 +1,5 @@
-import type { ContactStage } from "@/lib/crm-stages";
+
+import type { WorkflowSchedule } from "@/lib/workflow-schedule";import type { ContactStage } from "@/lib/crm-stages";
 
 // Catálogo Fase 1 (linear, sem ramificação SIM/NÃO — isso é Fase 2). Cada tipo aqui tem um shape de
 // config específico guardado em jsonb; os campos abaixo documentam o que cada um espera.
@@ -133,7 +134,7 @@ export type WorkflowRow = {
   stop_on_stage_change: boolean;
   respect_business_hours: boolean;
   // Agenda própria (dias + janela de horário, Brasília). null = sem agenda: vale respect_business_hours (seg-sáb 9h-20h).
-  schedule?: { days: number[]; start: string; end: string } | null;
+  schedule?: WorkflowSchedule | null;
   allow_reentry: boolean;
   reentry_cooldown_hours: number | null;
   webhook_token: string | null;
