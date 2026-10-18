@@ -214,7 +214,8 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
   });
 
   return (
-    <div className="flex flex-col gap-3 h-full min-h-0">
+    // Conversas ocupa a área toda (sem a margem do <main>), como uma caixa de entrada de verdade.
+    <div className="flex flex-col h-[calc(100%+2rem)] lg:h-[calc(100%+2.5rem)] min-h-0 -m-4 lg:-m-5">
       <ConversationsPanel
         conversations={conversations}
         stageLabels={stageLabels}

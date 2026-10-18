@@ -677,11 +677,11 @@ export function ConversationsPanel({
 
   return (
     <div
-      className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] ${selected && contextOpen ? "xl:grid-cols-[320px_1fr_300px]" : ""} bg-surface border border-border rounded-lg shadow-sm overflow-hidden`}
+      className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[360px_1fr] ${selected && contextOpen ? "xl:grid-cols-[360px_1fr_300px]" : ""} bg-surface overflow-hidden`}
     >
       <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border flex flex-col gap-2.5">
-          <nav className="flex gap-1 overflow-x-auto -mx-1 px-1 pb-0.5" aria-label="Caixa de entrada">
+          <nav className="flex flex-wrap gap-1" aria-label="Caixa de entrada">
             {INBOX_TABS.map((t) => (
               <button
                 key={t.key}
@@ -903,7 +903,7 @@ export function ConversationsPanel({
                   <Avatar photoUrl={c.contact.photo_url} name={c.contact.name} phone={c.contact.phone} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[15px] font-semibold truncate flex items-center gap-1.5 min-w-0">
+                      <span className="text-[14px] font-semibold truncate flex items-center gap-1.5 min-w-0">
                         {c.contact.needs_attention && (
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger shrink-0" aria-hidden>
                             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
@@ -919,9 +919,17 @@ export function ConversationsPanel({
                         )}
                         <span className="truncate">{c.contact.name || c.contact.phone || "sem nome"}</span>
                       </span>
+                      {last && <time className="text-[11px] text-text-muted shrink-0" dateTime={last.created_at}>{formatListTime(last.created_at)}</time>}
+                    </div>
+                    <p className="text-[13px] text-text-muted truncate mt-0.5">
+                      {c.contact.needs_attention
+                        ? c.contact.attention_reason || "Precisa de atenção"
+                        : c.contact.flagged_reason || last?.content || ""}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
                       <span
                         title="Etapa do funil (muda pelo Kanban ou automaticamente pelo agente)"
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 max-w-[110px] truncate ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full truncate max-w-[150px] ${STAGE_BADGE[c.contact.stage] || STAGE_BADGE.nao_abordado}`}
                       >
                         {stageNameOf(c.contact)}
                       </span>
@@ -931,13 +939,7 @@ export function ConversationsPanel({
                       >
                         {TICKET_STATUS_LABELS[c.ticket_status]}
                       </span>
-                      {last && <time className="text-xs text-text-muted shrink-0" dateTime={last.created_at}>{formatListTime(last.created_at)}</time>}
                     </div>
-                    <p className="text-sm text-text-muted truncate mt-1">
-                      {c.contact.needs_attention
-                        ? c.contact.attention_reason || "Precisa de atenção"
-                        : c.contact.flagged_reason || last?.content || ""}
-                    </p>
                   </div>
                 </button>
               );
