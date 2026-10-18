@@ -8,6 +8,22 @@ export default async function TemplatesPage() {
   const r = await listWorkspaceTemplates();
   const { workspace } = await getCurrentWorkspace();
   const alerts: CategoryAlert[] = [];
+  // Em quantas automações cada template é usado (nome do template → nº de automações).
+  const usage: Record<string, number> = {};
+  if (workspace) {
+    const { data: steps } = await createAdminClient()
+      .from("workflow_steps")
+      .select("workflow_id, config")
+      .eq("workspace_id", workspace.id)
+      .not("config->template->>name", "is", null);
+    const seen = new Set<string>();
+    for (const st of steps || []) {
+      const tplName = (st.config as { template?: { name?: string } | null })?.template?.name;
+      if (!tplName || seen.has(`${tplName}|${st.workflow_id}`)) continue;
+      seen.add(`${tplName}|${st.workflow_id}`);
+      usage[tplName] = (usage[tplName] || 0) + 1;
+    }
+  }
   if (workspace) {
     const { data } = await createAdminClient()
       .from("template_category_alerts")
@@ -38,6 +54,7 @@ export default async function TemplatesPage() {
         fields={r.error === null ? r.fields : []}
         error={r.error}
         alerts={alerts}
+        usage={usage}
       />
     </div>
   );

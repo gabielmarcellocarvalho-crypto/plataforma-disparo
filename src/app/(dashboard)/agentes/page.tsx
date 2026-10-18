@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { AgentsList, type AgentListItem } from "@/components/agents-list";
+import { getAgentServiceStats } from "@/lib/agent-service-stats";
 import { AddAgentForm } from "@/components/add-agent-form";
 import type { QaRow } from "@/components/agent-qa-inbox";
 import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
@@ -121,6 +122,10 @@ export default async function AgentesPage() {
     costByAgent.set(row.agent_id, (costByAgent.get(row.agent_id) || 0) + cost);
   }
 
+  // Resolução sem humano dos últimos 30 dias, por agente.
+  const service = workspace ? await getAgentServiceStats(workspace.id, { from: new Date(new Date().getTime() - 30 * 86_400_000), to: new Date() }) : null;
+  const resolutionByAgent = new Map((service?.rows || []).map((r) => [r.agentId, r.resolutionRate]));
+
   const items: AgentListItem[] = (agents || []).map((agent) => {
     const linkedInstance = agent.whatsapp_instances as unknown as { channel: string } | null;
     const st = statsByAgent.get(agent.id);
@@ -128,7 +133,12 @@ export default async function AgentesPage() {
       agent: { ...agent, whatsapp_instance_channel: (linkedInstance?.channel as "360dialog" | "metacloud" | undefined) ?? null },
       stats: statsError
         ? { conversationsToday: null, leadsTotal: null, lastActivity: null }
-        : { conversationsToday: Number(st?.conversations_today ?? 0), leadsTotal: Number(st?.leads_total ?? 0), lastActivity: st?.last_activity ?? null },
+        : {
+            conversationsToday: Number(st?.conversations_today ?? 0),
+            leadsTotal: Number(st?.leads_total ?? 0),
+            lastActivity: st?.last_activity ?? null,
+            resolutionRate: resolutionByAgent.get(agent.id) ?? null,
+          },
       totalCostUsd: costByAgent.get(agent.id) || 0,
     };
   });

@@ -15,7 +15,13 @@ import {
   prepareManualUpload,
 } from "@/app/actions/conversations";
 import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
-import { updateContactResponsible, updateContactStage } from "@/app/actions/contacts";
+import { addContactNote, getContactDetail, updateContactResponsible, updateContactStage, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
+import { listCustomFieldDefs } from "@/app/actions/custom-fields";
+import { suggestReply } from "@/app/actions/ai-features";
+import { listTeamMembers, type TeamMemberRow } from "@/app/actions/team";
+import type { CustomFieldDef } from "@/lib/custom-fields";
+import { ConversationContextPanel } from "@/components/conversation-context-panel";
+import { loadQuickReplies, matchQuickReplies, normalizeShortcut, quickReplyQuery, saveQuickReplies, type QuickReply } from "@/lib/quick-replies";
 import { setConversationStatus, setConversationResponsible } from "@/app/actions/conversation-tickets";
 import type { TicketStatus } from "@/lib/conversation-tickets";
 import { CrmLeadDrawer } from "@/components/crm-lead-drawer";
@@ -54,6 +60,24 @@ const STAGE_BADGE: Record<string, string> = {
 // isto só limita o que vai pra tela.
 const LIST_PAGE_FIRST = 80;
 const LIST_PAGE_MORE = 50;
+
+// Abas da caixa de entrada (estilo inbox do HubSpot/Kommo). "Atenção" = travada ou sinalizada pelo agente;
+// "Com IA" = agente conduzindo; "Com humano" = assumida ou número sem agente; "Aguardando" = última msg é do lead.
+type InboxTab = "todas" | "atencao" | "ia" | "humano" | "aguardando";
+const INBOX_TABS: { key: InboxTab; label: string }[] = [
+  { key: "todas", label: "Todas" },
+  { key: "atencao", label: "Atenção" },
+  { key: "aguardando", label: "Aguardando" },
+  { key: "ia", label: "Com IA" },
+  { key: "humano", label: "Com humano" },
+];
+function inInboxTab(c: Conversation, tab: InboxTab): boolean {
+  if (tab === "todas") return true;
+  if (tab === "atencao") return c.contact.needs_attention || Boolean(c.contact.flagged_reason);
+  if (tab === "aguardando") return c.messages[0]?.role === "user";
+  if (tab === "ia") return Boolean(c.agent) && !c.contact.needs_attention;
+  return !c.agent || c.contact.needs_attention;
+}
 
 const WAIT_THRESHOLDS = [
   { key: "1", label: "> 1 hora", ms: 1 * 3_600_000 },
@@ -198,12 +222,14 @@ export function ConversationsPanel({
   visibleStages,
   vendors,
   showResponsavel,
+  workspaceId = "",
 }: {
   conversations: Conversation[];
   stageLabels: Record<string, string>;
   visibleStages: string[];
   vendors: Vendor[];
   showResponsavel: boolean;
+  workspaceId?: string;
 }) {
   const router = useRouter();
 
@@ -285,6 +311,34 @@ export function ConversationsPanel({
   const [campaignFilter, setCampaignFilter] = useState("");
   const [responsavelFilter, setResponsavelFilter] = useState("");
   const [ticketFilter, setTicketFilter] = useState<TicketStatus | "">("");
+  const [inboxTab, setInboxTab] = useState<InboxTab>("todas");
+  // Painel de contexto do lead (3ª coluna, só em tela larga). Preferência fica no navegador.
+  const [contextOpen, setContextOpen] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("conversas:context") === "0") setContextOpen(false);
+    } catch {}
+  }, []);
+  function toggleContext(open: boolean) {
+    setContextOpen(open);
+    try {
+      localStorage.setItem("conversas:context", open ? "1" : "0");
+    } catch {}
+  }
+  const [fieldDefs, setFieldDefs] = useState<CustomFieldDef[]>([]);
+  const [team, setTeam] = useState<TeamMemberRow[]>([]);
+  useEffect(() => {
+    listCustomFieldDefs().then(setFieldDefs).catch(() => setFieldDefs([]));
+    listTeamMembers().then(setTeam).catch(() => setTeam([]));
+  }, []);
+  // Composer: mensagem pro lead ou nota interna (só a equipe vê; vai pra ficha do lead).
+  const [composerMode, setComposerMode] = useState<"mensagem" | "nota">("mensagem");
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  useEffect(() => {
+    if (workspaceId) setQuickReplies(loadQuickReplies(workspaceId));
+  }, [workspaceId]);
+  const [quickIndex, setQuickIndex] = useState(0);
+  const [managingReplies, setManagingReplies] = useState(false);
 
   // Vindo do CRM (?contact=<id>), abre direto a conversa dessa pessoa; senão, a mais recente.
   // Pedido um contato que não tem conversa, NÃO cai na primeira da lista: abrir a conversa de outra
@@ -333,14 +387,20 @@ export function ConversationsPanel({
         if (responsavelFilter === "__nenhum__" ? c.contact.responsible_user_id : c.contact.responsible_user_id !== responsavelFilter) return false;
       }
       if (ticketFilter && c.ticket_status !== ticketFilter) return false;
+      if (!inInboxTab(c, inboxTab)) return false;
       return true;
     });
-  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter]);
+  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab]);
+  const tabCounts = useMemo(() => {
+    const out = {} as Record<InboxTab, number>;
+    for (const t of INBOX_TABS) out[t.key] = conversations.filter((c) => inInboxTab(c, t.key)).length;
+    return out;
+  }, [conversations]);
 
   // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
   // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
   // dos filtros em que foi ampliado e só vale enquanto ela for a mesma.
-  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter].join("|");
+  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab].join("|");
   const [expanded, setExpanded] = useState<{ sig: string; limit: number }>({ sig: "", limit: LIST_PAGE_FIRST });
   const listLimit = expanded.sig === filterSig ? expanded.limit : LIST_PAGE_FIRST;
   const shown = filtered.slice(0, listLimit);
@@ -360,6 +420,47 @@ export function ConversationsPanel({
   // Composer travado: conversa com agente de IA que ainda não foi assumida manualmente, ou uma
   // ação em andamento — mesma regra pro texto, anexo e gravação de áudio.
   const composerLocked = (Boolean(selected?.agent) && !selected?.contact.needs_attention) || pending;
+  // Nota interna pode ser escrita mesmo com o agente conduzindo — ela não vai pro WhatsApp.
+  const inputLocked = composerMode === "nota" ? pending : composerLocked;
+
+  const [detail, setDetail] = useState<{ id: string; contact: ContactDetail | null; notes: ContactNote[] } | null>(null);
+  const selectedContactId = selected?.contact.id ?? null;
+  const [notesVersion, setNotesVersion] = useState(0);
+  useEffect(() => {
+    if (!selectedContactId) return;
+    let alive = true;
+    getContactDetail(selectedContactId)
+      .then((r) => alive && setDetail({ id: selectedContactId, contact: r?.contact ?? null, notes: r?.notes ?? [] }))
+      .catch(() => alive && setDetail({ id: selectedContactId, contact: null, notes: [] }));
+    return () => {
+      alive = false;
+    };
+  }, [selectedContactId, notesVersion]);
+  const currentDetail = detail && detail.id === selectedContactId ? detail : null;
+  // Linha do tempo: mensagens + notas internas na ordem em que aconteceram.
+  const timeline = [
+    ...orderedMessages.map((m) => ({ kind: "msg" as const, at: m.created_at, msg: m })),
+    ...(currentDetail?.notes ?? []).map((n) => ({ kind: "note" as const, at: n.created_at, note: n })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+
+  const quickQuery = composerMode === "mensagem" ? quickReplyQuery(draft) : null;
+  const quickMatches = quickQuery === null ? [] : matchQuickReplies(quickReplies, quickQuery);
+  function pickQuickReply(r: QuickReply) {
+    setDraft(r.text);
+    setQuickIndex(0);
+  }
+  function addQuickReply(shortcut: string, text: string) {
+    const sc = normalizeShortcut(shortcut);
+    if (!sc || !text.trim()) return;
+    const next = [...quickReplies.filter((r) => r.shortcut !== sc), { id: `${Date.now()}`, shortcut: sc, text: text.trim() }];
+    setQuickReplies(next);
+    saveQuickReplies(workspaceId, next);
+  }
+  function removeQuickReply(id: string) {
+    const next = quickReplies.filter((r) => r.id !== id);
+    setQuickReplies(next);
+    saveQuickReplies(workspaceId, next);
+  }
 
   function handleTakeOver(contactId: string) {
     setError(null);
@@ -432,10 +533,32 @@ export function ConversationsPanel({
     });
   }
 
+  const [suggesting, setSuggesting] = useState(false);
+  async function handleSuggest() {
+    if (!selected) return;
+    setError(null);
+    setSuggesting(true);
+    const r = await suggestReply(selected.contact.id, selected.agent?.id ?? null);
+    setSuggesting(false);
+    if (r.error !== null) setError(r.error);
+    else setDraft(r.data);
+  }
+
   function handleSend() {
     if (!selected || !draft.trim()) return;
     setError(null);
     const text = draft;
+    if (composerMode === "nota") {
+      startTransition(async () => {
+        const result = await addContactNote(selected.contact.id, text);
+        if (result.error) setError(result.error);
+        else {
+          setDraft("");
+          setNotesVersion((v) => v + 1);
+        }
+      });
+      return;
+    }
     startTransition(async () => {
       const result = selected.agent
         ? await sendManualMessage(selected.contact.id, selected.agent.id, text)
@@ -553,9 +676,27 @@ export function ConversationsPanel({
   }
 
   return (
-    <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
+    <div
+      className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] ${selected && contextOpen ? "xl:grid-cols-[320px_1fr_300px]" : ""} bg-surface border border-border rounded-lg shadow-sm overflow-hidden`}
+    >
       <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border flex flex-col gap-2.5">
+          <nav className="flex gap-1 overflow-x-auto -mx-1 px-1 pb-0.5" aria-label="Caixa de entrada">
+            {INBOX_TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setInboxTab(t.key)}
+                aria-pressed={inboxTab === t.key}
+                className={`shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer border transition-colors ${
+                  inboxTab === t.key ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft"
+                }`}
+              >
+                {t.label}
+                <span className={`ml-1 ${inboxTab === t.key ? "opacity-80" : "opacity-60"}`}>{tabCounts[t.key]}</span>
+              </button>
+            ))}
+          </nav>
           <div className="flex items-center gap-1.5">
             <input
               value={query}
@@ -954,6 +1095,15 @@ export function ConversationsPanel({
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                 </svg>
               </button>
+              {!contextOpen && (
+                <button
+                  type="button"
+                  onClick={() => toggleContext(true)}
+                  className="hidden xl:block text-xs font-bold px-3 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted"
+                >
+                  Sobre o lead
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => handleClearHistory(selected.contact.id, selected.agent?.id ?? null)}
@@ -998,15 +1148,31 @@ export function ConversationsPanel({
             )}
 
             <div className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-2.5 bg-bg/40">
-              {orderedMessages.map((m, i) => {
-                const newDay = i === 0 || dayKey(new Date(m.created_at)) !== dayKey(new Date(orderedMessages[i - 1].created_at));
+              {timeline.map((item, i) => {
+                const newDay = i === 0 || dayKey(new Date(item.at)) !== dayKey(new Date(timeline[i - 1].at));
+                const separator = newDay && (
+                  <div className="self-center my-1.5 text-xs font-semibold text-text-muted bg-surface border border-border rounded-full px-3 py-1 shadow-sm">
+                    {formatDaySeparator(item.at)}
+                  </div>
+                );
+                if (item.kind === "note") {
+                  return (
+                    <Fragment key={`note-${item.note.id}`}>
+                      {separator}
+                      <div className="self-center w-full max-w-[85%] rounded-xl px-4 py-2.5 text-sm bg-warning-soft border border-warning-text/20 text-text">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-warning-text mb-1">Nota interna · só a equipe vê</div>
+                        <p className="whitespace-pre-wrap">{item.note.content}</p>
+                        <div className="text-[11px] text-text-muted mt-1">
+                          {item.note.author_name || "equipe"} · {formatTime(item.note.created_at)}
+                        </div>
+                      </div>
+                    </Fragment>
+                  );
+                }
+                const m = item.msg;
                 return (
                   <Fragment key={m.id}>
-                    {newDay && (
-                      <div className="self-center my-1.5 text-xs font-semibold text-text-muted bg-surface border border-border rounded-full px-3 py-1 shadow-sm">
-                        {formatDaySeparator(m.created_at)}
-                      </div>
-                    )}
+                    {separator}
                     <div
                       className={`max-w-[75%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
                         m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
@@ -1021,12 +1187,66 @@ export function ConversationsPanel({
               })}
             </div>
 
+            <div className="flex items-center gap-1 px-4 pt-3 border-t border-border">
+              {(["mensagem", "nota"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setComposerMode(m)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-md cursor-pointer ${
+                    composerMode === m ? (m === "nota" ? "bg-warning-soft text-warning-text" : "bg-primary-faint text-primary-strong") : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  {m === "mensagem" ? "Mensagem" : "Nota interna"}
+                </button>
+              ))}
+              {composerMode === "mensagem" && (
+                <button
+                  type="button"
+                  onClick={() => setManagingReplies((v) => !v)}
+                  className="ml-auto text-[11px] font-bold text-text-muted hover:text-text cursor-pointer"
+                  title="Digite / no campo para usar"
+                >
+                  Respostas rápidas ({quickReplies.length})
+                </button>
+              )}
+            </div>
+            {managingReplies && composerMode === "mensagem" && (
+              <QuickRepliesManager replies={quickReplies} onAdd={addQuickReply} onRemove={removeQuickReply} onClose={() => setManagingReplies(false)} />
+            )}
+            {quickQuery !== null && (
+              <div className="mx-4 mt-2 rounded-md border border-border bg-surface shadow-md max-h-48 overflow-y-auto">
+                {quickMatches.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-text-muted">
+                    {quickReplies.length === 0 ? "Nenhuma resposta rápida salva. Crie em “Respostas rápidas”." : "Nenhuma resposta com esse atalho."}
+                  </p>
+                ) : (
+                  quickMatches.map((r, i) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        pickQuickReply(r);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs cursor-pointer ${i === quickIndex ? "bg-primary-faint" : "hover:bg-surface-2"}`}
+                    >
+                      <b className="text-primary-strong">/{r.shortcut}</b> <span className="text-text-muted">{r.text.slice(0, 90)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                if (quickQuery !== null && quickMatches[quickIndex]) {
+                  pickQuickReply(quickMatches[quickIndex]);
+                  return;
+                }
                 handleSend();
               }}
-              className="flex items-center gap-2 p-4 border-t border-border"
+              className={`flex items-center gap-2 p-4 pt-2 ${composerMode === "nota" ? "bg-warning-soft/40" : ""}`}
             >
               <input
                 ref={fileInputRef}
@@ -1050,17 +1270,49 @@ export function ConversationsPanel({
               <VoiceInput listening={recording} disabled={composerLocked} onStart={startRecording} onStop={stopRecording} />
               <input
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                disabled={composerLocked}
-                placeholder={!selected.agent || selected.contact.needs_attention ? "Escreva a mensagem…" : "Assuma a conversa pra escrever manualmente"}
-                className="flex-1 border border-border rounded-full px-4 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60"
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setQuickIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  if (quickQuery === null || quickMatches.length === 0) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setQuickIndex((i) => (i + 1) % quickMatches.length);
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setQuickIndex((i) => (i - 1 + quickMatches.length) % quickMatches.length);
+                  } else if (e.key === "Escape") {
+                    setDraft("");
+                  }
+                }}
+                disabled={inputLocked}
+                placeholder={
+                  composerMode === "nota"
+                    ? "Nota interna — o lead não vê…"
+                    : !selected.agent || selected.contact.needs_attention
+                      ? "Escreva a mensagem… (/ para respostas rápidas)"
+                      : "Assuma a conversa pra escrever manualmente"
+                }
+                className="flex-1 border border-border rounded-full px-4 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60 bg-surface"
               />
+              {composerMode === "mensagem" && (
+                <button
+                  type="button"
+                  onClick={handleSuggest}
+                  disabled={inputLocked || suggesting}
+                  title="A IA escreve uma resposta no campo pra você revisar antes de enviar"
+                  className="shrink-0 text-xs font-bold px-3 py-2.5 rounded-full border border-primary-soft text-primary-strong bg-primary-faint cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {suggesting ? "Pensando…" : "✨ Sugerir"}
+                </button>
+              )}
               <button
                 type="submit"
-                disabled={composerLocked || !draft.trim()}
+                disabled={inputLocked || !draft.trim()}
                 className="bg-primary-strong text-white text-sm font-bold px-5 py-2.5 rounded-full cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
               >
-                Enviar
+                {composerMode === "nota" ? "Salvar nota" : "Enviar"}
               </button>
             </form>
           </>
@@ -1068,7 +1320,73 @@ export function ConversationsPanel({
         {error && <p className="text-xs text-danger font-medium px-4 pb-2">{error}</p>}
       </div>
 
+      {selected && contextOpen && (
+        <ConversationContextPanel
+          detail={currentDetail?.contact ?? null}
+          notes={currentDetail?.notes ?? []}
+          loading={!currentDetail}
+          stageName={stageNameOf(selected.contact)}
+          agentName={selected.agent?.name ?? null}
+          originCampaign={selected.contact.origin_campaign}
+          fieldDefs={fieldDefs}
+          teamMemberName={currentDetail?.contact?.team_member_id ? team.find((m) => m.id === currentDetail.contact!.team_member_id)?.name ?? null : null}
+          onOpenDrawer={() => setDrawerContactId(selected.contact.id)}
+          onClose={() => toggleContext(false)}
+        />
+      )}
+
       <CrmLeadDrawer contactId={drawerContactId} onClose={() => setDrawerContactId(null)} stageLabels={stageLabels} />
+    </div>
+  );
+}
+
+// Cadastro das respostas rápidas (atalho + texto). Ficam salvas neste navegador.
+function QuickRepliesManager({
+  replies,
+  onAdd,
+  onRemove,
+  onClose,
+}: {
+  replies: QuickReply[];
+  onAdd: (shortcut: string, text: string) => void;
+  onRemove: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [shortcut, setShortcut] = useState("");
+  const [text, setText] = useState("");
+  return (
+    <div className="mx-4 mt-2 rounded-md border border-border bg-surface-2 p-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold">Respostas rápidas</span>
+        <button type="button" onClick={onClose} className="text-xs text-text-muted hover:text-text cursor-pointer">fechar</button>
+      </div>
+      {replies.length > 0 && (
+        <ul className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+          {replies.map((r) => (
+            <li key={r.id} className="flex items-start gap-2 text-xs">
+              <b className="text-primary-strong shrink-0">/{r.shortcut}</b>
+              <span className="flex-1 text-text-muted truncate">{r.text}</span>
+              <button type="button" onClick={() => onRemove(r.id)} className="text-danger font-bold cursor-pointer" aria-label={`Remover /${r.shortcut}`}>×</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onAdd(shortcut, text);
+          setShortcut("");
+          setText("");
+        }}
+        className="flex flex-col sm:flex-row gap-1.5"
+      >
+        <input value={shortcut} onChange={(e) => setShortcut(e.target.value)} placeholder="atalho (ex.: preco)" className="sm:w-36 border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary bg-surface" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="texto da resposta" className="flex-1 border border-border rounded-md px-2 py-1.5 text-xs outline-none focus:border-primary bg-surface" />
+        <button type="submit" disabled={!shortcut.trim() || !text.trim()} className="text-xs font-bold px-3 py-1.5 rounded-md bg-primary-strong text-white cursor-pointer disabled:opacity-50">
+          salvar
+        </button>
+      </form>
+      <p className="text-[10px] text-text-muted">Salvas neste navegador. No campo de mensagem, digite / e escolha.</p>
     </div>
   );
 }

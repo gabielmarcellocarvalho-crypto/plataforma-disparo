@@ -1,4 +1,5 @@
 import { NextResponse, after } from "next/server";
+import { parseDeliveryStatuses, saveDeliveryStatuses } from "@/lib/message-statuses";
 import { saveAdReferral } from "@/lib/ad-referral";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseDialog360IncomingMessages, getDialog360Media, type Dialog360WebhookBody, type Dialog360IncomingMessage } from "@/lib/dialog360";
@@ -152,6 +153,11 @@ export async function POST(req: Request) {
   after(() => processDialog360Webhook(body, metaTrusted).catch((err) => console.error("Erro no webhook 360dialog:", err)));
   // Mesmo endpoint recebe a reclassificação de template da Meta (field template_category_update) — evento
   // que só a Meta manda, então exige a assinatura quando o modo for "enforce".
+  // Entregue/lida das campanhas (statuses[]). Mesma regra do alerta de template: só com origem confiável.
+  const deliveryStatuses = metaTrusted ? parseDeliveryStatuses(body) : [];
+  if (deliveryStatuses.length) {
+    after(() => saveDeliveryStatuses(createAdminClient(), deliveryStatuses).catch((err) => console.error("Erro ao salvar status de entrega:", err)));
+  }
   if (metaTrusted) {
     after(() => saveTemplateCategoryChanges(createAdminClient(), parseTemplateCategoryChanges(body)).catch((err) => console.error("Erro no alerta de template:", err)));
   }

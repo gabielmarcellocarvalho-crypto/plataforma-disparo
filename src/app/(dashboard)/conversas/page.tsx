@@ -221,6 +221,7 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
         visibleStages={visibleStages}
         vendors={vendors}
         showResponsavel={showResponsavel}
+        workspaceId={workspace?.id ?? ""}
       />
     </div>
   );

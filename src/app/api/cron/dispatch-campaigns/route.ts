@@ -322,6 +322,8 @@ export async function GET(req: Request) {
       const loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
 
       try {
+        // wamid devolvido pela API oficial — o webhook de status da Meta usa pra marcar entregue/lida.
+        let externalId: string | null = null;
         if (isEmail) {
           const origin = new URL(req.url).origin;
           // CTA do disparo único passa pelo mesmo /api/e/<token> da sequência: o clique marca o lead
@@ -355,15 +357,16 @@ export async function GET(req: Request) {
             });
           }
         } else if (isDialog360Blast) {
-          await sendDialog360Template(
+          const sent = await sendDialog360Template(
             blastInstance!.dialog360_api_key!,
             contact.phone!,
             campaign.dialog360_template_name!,
             campaign.dialog360_template_lang || "pt_BR",
             bodyParams
           );
+          externalId = sent?.id ?? null;
         } else if (isMetacloudBlast) {
-          await sendMetaCloudTemplate(
+          const sent = await sendMetaCloudTemplate(
             blastInstance!.phone_number_id!,
             contact.phone!,
             campaign.dialog360_template_name!,
@@ -377,10 +380,14 @@ export async function GET(req: Request) {
                 }
               : null
           );
+          externalId = sent?.id ?? null;
         } else {
           await sendText(instanceName!, contact.phone!, text as string);
         }
         await supabase.from("campaign_recipients").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", recipient.id);
+        // Separado do update acima de propósito: se a coluna ainda não existir (migration 0089), só isso
+        // falha — o "enviado" já está gravado e o lead não é disparado de novo.
+        if (externalId) await supabase.from("campaign_recipients").update({ external_id: externalId }).eq("id", recipient.id);
         await supabase.from("messages").insert({
           workspace_id: campaign.workspace_id,
           contact_id: contact.id,

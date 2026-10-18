@@ -1,5 +1,6 @@
 "use server";
 
+import { CONTACT_REDESIGN_COLUMNS, hasRedesignColumns } from "@/lib/redesign-columns";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, getCurrentUserName } from "@/lib/workspace";
@@ -506,6 +507,13 @@ export type ContactDetail = {
   tags: string[] | null;
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
+  // Migration 0089 (ausentes antes dela rodar).
+  deal_value?: number | null;
+  ai_score?: number | null;
+  ai_temperature?: string | null;
+  ai_summary?: string | null;
+  ai_next_action?: string | null;
+  ai_scored_at?: string | null;
 };
 export type ContactNote = { id: string; author_name: string | null; content: string; created_at: string };
 
@@ -515,11 +523,12 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   if (!workspace) return null;
 
   const supabase = await createClient();
+  const extra = (await hasRedesignColumns()) ? `, ${CONTACT_REDESIGN_COLUMNS}` : "";
   const [{ data: contact }, { data: notes }, { count: messageCount }] = await Promise.all([
     supabase
       .from("contacts")
       .select(
-        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, tags, pipeline_id, pipeline_stage_id, companies(name)"
+        "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, attention_reason, flagged_reason, created_at, company_id, team_member_id, branch_id, lost_reason, tags, pipeline_id, pipeline_stage_id, companies(name)" + extra
       )
       .eq("id", contactId)
       .eq("workspace_id", workspace.id)
@@ -537,7 +546,8 @@ export async function getContactDetail(contactId: string): Promise<{ contact: Co
   ]);
   if (!contact) return null;
 
-  const { companies, ...contactFields } = contact as typeof contact & { companies: { name: string } | null };
+  // A lista de colunas é montada em tempo de execução (colunas da 0089 opcionais), então o tipo vem daqui.
+  const { companies, ...contactFields } = contact as unknown as Omit<ContactDetail, "company_name" | "message_count"> & { companies: { name: string } | null };
   return {
     contact: { ...contactFields, company_name: companies?.name ?? null, message_count: messageCount ?? 0 },
     notes: notes || [],

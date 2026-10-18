@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toggleTaskCompleted, type AgendaTask } from "@/app/actions/tasks";
 import { formatFieldValue, type CustomFieldType } from "@/lib/custom-fields";
-import { isTaskOverdue, groupTasksByDay, TASK_GROUP_LABELS, type TaskGroup } from "@/lib/tasks";
+import { isTaskOverdue, groupTasksByDay, type TaskGroup } from "@/lib/tasks";
 
 type Task = AgendaTask;
 
@@ -106,11 +106,84 @@ function AgentTaskDetails({ task, fieldDefs }: { task: Task; fieldDefs: FieldDef
   );
 }
 
-const GROUP_ORDER: TaskGroup[] = ["atrasadas", "hoje", "proximos", "sem_data", "concluidas"];
+type TabKey = "atrasadas" | "hoje" | "proximos" | "concluidas";
+const TABS: [TabKey, string, string][] = [
+  ["atrasadas", "Atrasadas", "bg-danger-soft text-danger"],
+  ["hoje", "Hoje", "bg-primary-faint text-primary-strong"],
+  ["proximos", "Próximas", "bg-surface-2 text-text-muted"],
+  ["concluidas", "Concluídas", "bg-success-soft text-success"],
+];
+
+// Semana (seg a dom) com as tarefas de cada dia; clicar marca/desmarca como concluída.
+function WeekView({
+  tasks,
+  offset,
+  onOffset,
+  onToggle,
+}: {
+  tasks: Task[];
+  offset: number;
+  onOffset: (n: number) => void;
+  onToggle: (id: string, completed: boolean) => void;
+}) {
+  const monday = new Date();
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + offset * 7);
+  const days = Array.from({ length: 7 }, (_, i) => new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i));
+  const today = new Date().toDateString();
+  const label = `${days[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${days[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}`;
+  const navBtn = "h-8 px-2.5 rounded-md border border-border text-xs font-bold hover:bg-surface-2 cursor-pointer";
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <button type="button" className={navBtn} onClick={() => onOffset(offset - 1)} aria-label="Semana anterior">‹</button>
+        <button type="button" className={navBtn} onClick={() => onOffset(0)}>Esta semana</button>
+        <button type="button" className={navBtn} onClick={() => onOffset(offset + 1)} aria-label="Próxima semana">›</button>
+        <span className="text-sm font-semibold text-text-muted">{label}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="grid grid-cols-7 min-w-[760px] bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
+          {days.map((d) => {
+            const items = tasks.filter((t) => t.due_at && new Date(t.due_at).toDateString() === d.toDateString());
+            const isToday = d.toDateString() === today;
+            return (
+              <div key={d.toISOString()} className="min-h-72 border-r border-border last:border-r-0">
+                <div className={`border-b border-border px-2.5 py-2 text-xs font-bold capitalize ${isToday ? "bg-primary-faint text-primary-strong" : "text-text-muted"}`}>
+                  {d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" })}
+                </div>
+                <div className="flex flex-col gap-1.5 p-1.5">
+                  {items.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => onToggle(t.id, !t.completed_at)}
+                      title={t.completed_at ? "Marcar como pendente" : "Marcar como concluída"}
+                      className={`w-full text-left rounded border-l-[3px] px-2 py-1.5 text-[11px] cursor-pointer ${
+                        t.completed_at
+                          ? "border-success bg-success-soft/50 text-text-muted line-through"
+                          : isTaskOverdue(t.due_at, t.completed_at)
+                            ? "border-danger bg-danger-soft/60"
+                            : "border-primary bg-primary-faint"
+                      }`}
+                    >
+                      <b>{new Date(t.due_at!).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</b> {t.title}
+                      {(t.contact_name || t.company_name) && <span className="block text-text-muted truncate">{t.contact_name || t.company_name}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Cor de destaque por grupo — mesmo padrão visual de "prioridade" já usado nos badges de data
 // (bg-danger-soft pra atrasada); dá pra escanear a lista sem ler o rótulo do grupo.
-const GROUP_ACCENT: Record<TaskGroup, string> = {
+const GROUP_ACCENT: Record<TaskGroup | TabKey, string> = {
   atrasadas: "border-l-danger",
   hoje: "border-l-primary",
   proximos: "border-l-border",
@@ -189,6 +262,14 @@ export function AgendaList({
   );
 
   const groups = useMemo(() => groupTasksByDay(filtered), [filtered]);
+  // Abas no lugar da lista corrida: quem abre a tela quer ver primeiro o que está atrasado ou é pra hoje.
+  const [tab, setTab] = useState<TabKey>(() => {
+    const g = groupTasksByDay(initialTasks);
+    return g.atrasadas.length > 0 ? "atrasadas" : "hoje";
+  });
+  const [mode, setMode] = useState<"lista" | "semana">("lista");
+  const [weekOffset, setWeekOffset] = useState(0);
+  const tabItems = (k: TabKey) => (k === "proximos" ? [...groups.proximos, ...groups.sem_data] : groups[k]);
 
   function handleToggle(id: string, completed: boolean) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed_at: completed ? new Date().toISOString() : null } : t)));
@@ -228,22 +309,48 @@ export function AgendaList({
         </div>
       )}
 
-      {GROUP_ORDER.map((key) => {
-        const items = groups[key];
-        if (items.length === 0) return null;
-        return (
-          <div key={key} className="flex flex-col gap-2">
-            <h3 className="text-xs font-bold uppercase tracking-wide text-text-muted">
-              {TASK_GROUP_LABELS[key]} <span className="opacity-60">({items.length})</span>
-            </h3>
-            <div className="flex flex-col gap-1.5">
-              {items.map((t) => (
-                <TaskRow key={t.id} task={t} onToggle={handleToggle} accent={GROUP_ACCENT[key]} fieldDefs={fieldDefs} />
-              ))}
-            </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex rounded-md border border-border bg-surface p-0.5">
+          {(["lista", "semana"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`h-8 px-3 rounded text-xs font-bold cursor-pointer ${mode === m ? "bg-primary-strong text-white" : "text-text-muted hover:text-text"}`}
+            >
+              {m === "lista" ? "Lista" : "Semana"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === "lista" ? (
+        <div className="bg-surface border border-border rounded-lg shadow-sm">
+          <nav className="flex gap-1 border-b border-border px-3 overflow-x-auto" aria-label="Filtro de tarefas">
+            {TABS.map(([k, label, tone]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setTab(k)}
+                className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-3 text-sm font-semibold whitespace-nowrap cursor-pointer ${
+                  tab === k ? "border-primary-strong text-text" : "border-transparent text-text-muted hover:text-text"
+                }`}
+              >
+                {label}
+                <span className={`text-[11px] font-bold px-1.5 rounded-full ${tone}`}>{tabItems(k).length}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="flex flex-col gap-1.5 p-3">
+            {tabItems(tab).map((t) => (
+              <TaskRow key={t.id} task={t} onToggle={handleToggle} accent={GROUP_ACCENT[tab]} fieldDefs={fieldDefs} />
+            ))}
+            {tabItems(tab).length === 0 && filtered.length > 0 && <p className="py-10 text-center text-sm text-text-muted">Nada nesta aba.</p>}
           </div>
-        );
-      })}
+        </div>
+      ) : (
+        <WeekView tasks={filtered} offset={weekOffset} onOffset={setWeekOffset} onToggle={handleToggle} />
+      )}
 
       {filtered.length === 0 && (
         <div className="bg-surface border border-border rounded-lg shadow-sm p-10 flex flex-col items-center text-center gap-2">

@@ -23,6 +23,41 @@ const TONE: Record<"ok" | "wait" | "bad" | "muted", string> = {
   muted: "bg-bg text-text-muted",
 };
 
+// Erros que a Meta recusaria, mostrados enquanto a pessoa digita (antes de gastar uma análise).
+function templateProblems(name: string, body: string): string[] {
+  const out: string[] = [];
+  if (name && !/^[a-z0-9_]+$/.test(name)) out.push("O nome só pode ter letras minúsculas, números e _.");
+  const text = body.trim();
+  if (!text) return out;
+  if (/^\{\{\d+\}\}/.test(text)) out.push("O texto não pode começar com variável.");
+  if (/\{\{\d+\}\}$/.test(text)) out.push("O texto não pode terminar com variável.");
+  const nums = [...text.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
+  const distinct = [...new Set(nums)].sort((a, b) => a - b);
+  if (distinct.some((n, i) => n !== i + 1)) out.push("As variáveis precisam ser em sequência: {{1}}, {{2}}, {{3}}…");
+  return out;
+}
+
+// Prévia de como o lead vê a mensagem no WhatsApp (balão verde do lado de quem envia).
+function WhatsappBubblePreview({ text }: { text: string }) {
+  const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className="lg:sticky lg:top-0">
+      <p className="text-xs font-bold text-text-muted mb-2">Como o lead vai ver</p>
+      <div className="rounded-xl p-4 min-h-[220px] flex flex-col justify-end" style={{ background: "#efeae2" }}>
+        {text ? (
+          <div className="self-end max-w-[90%] rounded-lg rounded-tr-none px-3 py-2 shadow-sm text-[13.5px] leading-snug text-[#111b21]" style={{ background: "#d9fdd3" }}>
+            <p className="whitespace-pre-wrap break-words">{text}</p>
+            <span className="block text-right text-[10px] text-[#667781] mt-1">{hora} ✓✓</span>
+          </div>
+        ) : (
+          <p className="text-xs text-[#667781] text-center">Digite o texto ao lado para ver a prévia.</p>
+        )}
+      </div>
+      <p className="text-[11px] text-text-muted mt-2">Variáveis aparecem com o exemplo do campo escolhido.</p>
+    </div>
+  );
+}
+
 export type CategoryAlert = { id: string; name: string; previous: string | null; next: string | null; correct: string | null; at: string };
 
 export function TemplatesManager({
@@ -31,12 +66,14 @@ export function TemplatesManager({
   fields,
   error,
   alerts,
+  usage = {},
 }: {
   templates: MetaTemplateRow[];
   mappings: TemplateMappings;
   fields: TemplateField[];
   error: string | null;
   alerts: CategoryAlert[];
+  usage?: Record<string, number>;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -48,6 +85,7 @@ export function TemplatesManager({
   const [pending, startTransition] = useTransition();
 
   const varCount = useMemo(() => variableCount(bodyText), [bodyText]);
+  const problems = useMemo(() => templateProblems(name, bodyText), [name, bodyText]);
   const chosen = variableFields.slice(0, varCount);
   const allChosen = varCount > 0 ? chosen.length === varCount && chosen.every(Boolean) : true;
 
@@ -122,6 +160,11 @@ export function TemplatesManager({
                     <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border border-border text-text-muted">
                       {CATEGORY_LABEL[t.category] ?? t.category}
                     </span>
+                    {usage[t.name] ? (
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-primary-faint text-primary-strong">
+                        usado em {usage[t.name]} automação(ões)
+                      </span>
+                    ) : null}
                     {willChange && (
                       <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">
                         A Meta vai reclassificar para {CATEGORY_LABEL[t.correctCategory as string] ?? t.correctCategory}
@@ -138,7 +181,8 @@ export function TemplatesManager({
         )}
       </section>
 
-      <section className="bg-surface border border-border rounded-xl shadow-sm p-5 flex flex-col gap-4">
+      <section className="bg-surface border border-border rounded-xl shadow-sm p-5 grid gap-6 lg:grid-cols-[1fr_340px] items-start">
+        <div className="flex flex-col gap-4 min-w-0">
         <h2 className="text-base font-bold">Criar template</h2>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -211,16 +255,27 @@ export function TemplatesManager({
         {formError && <p className="text-sm text-danger font-medium">{formError}</p>}
         {notice && <p className="text-sm text-success font-medium">{notice}</p>}
 
+        {problems.length > 0 && (name || bodyText) && (
+          <ul className="flex flex-col gap-1">
+            {problems.map((p) => (
+              <li key={p} className="text-xs text-warning-text font-semibold">⚠ {p}</li>
+            ))}
+          </ul>
+        )}
+
         <div>
           <button
             type="button"
             onClick={submit}
-            disabled={pending || !name || !bodyText || !allChosen}
+            disabled={pending || !name || !bodyText || !allChosen || problems.length > 0}
             className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer disabled:opacity-60"
           >
             {pending ? "Enviando para a Meta…" : "Enviar para análise da Meta"}
           </button>
         </div>
+        </div>
+
+        <WhatsappBubblePreview text={bodyText ? previewText(bodyText, chosen, fields) : ""} />
       </section>
     </div>
   );

@@ -8,6 +8,7 @@ import { listPipelines } from "@/app/actions/pipelines";
 import { getContactActivity } from "@/lib/contact-activity";
 import { CrmBoard } from "@/components/crm-board";
 import { fetchAllParallel } from "@/lib/paged-fetch";
+import { hasRedesignColumns } from "@/lib/redesign-columns";
 
 // O projeto tem "Max Rows" travado em 1000 na API do Supabase — um teto do SERVIDOR que ignora
 // qualquer .limit() pedido pelo client. Um cliente com base grande (ex.: TB Rio, 2100+ contatos)
@@ -34,9 +35,13 @@ type ContactRow = {
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
   tags: string[] | null;
+  deal_value?: number | null;
+  ai_score?: number | null;
+  ai_temperature?: string | null;
 };
 
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
+  const extra = (await hasRedesignColumns()) ? ", deal_value, ai_score, ai_temperature" : "";
   // Páginas em paralelo (antes: uma depois da outra). Mesmas colunas, mesmo filtro, mesma ordem — o
   // desempate por id deixa a ordem estável entre páginas.
   const { count } = await supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId);
@@ -48,7 +53,7 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
       supabase
         .from("contacts")
         .select(
-          "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id, tags"
+          "id, name, phone, email, photo_url, stage, stage_changed_at, custom_fields, needs_attention, flagged_reason, created_at, team_member_id, branch_id, lost_reason, pipeline_id, pipeline_stage_id, tags" + extra
         )
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })

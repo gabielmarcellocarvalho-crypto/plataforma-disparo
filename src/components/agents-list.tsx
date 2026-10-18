@@ -95,7 +95,7 @@ export function AgentsList({
       ) : visible.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl p-8 text-center text-sm text-text-muted">Nenhum agente com esses filtros.</div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="grid gap-4 lg:grid-cols-2 items-start">
           {visible.map(({ agent, stats, totalCostUsd }) => (
             <div key={agent.id} className="flex flex-col gap-2">
               <AgentCard agent={agent} stats={stats} totalCostUsd={totalCostUsd} canManage={canManage} />

@@ -287,9 +287,11 @@ export function AgentConfigForm({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col lg:flex-row gap-5 items-start">
       <ToggleGooeyFilter />
-      <div role="tablist" className="flex flex-wrap gap-1.5 border-b border-border pb-3">
+      {/* Navegação lateral por seção (estilo do redesign), no lugar das abas em cima: com 7 seções a
+          fileira de abas quebrava em duas linhas. No celular vira uma fileira rolável. */}
+      <div role="tablist" aria-orientation="vertical" className="flex lg:flex-col gap-1 overflow-x-auto lg:w-48 shrink-0 lg:sticky lg:top-0 w-full">
         {AGENT_TABS.map((t) => (
           <button
             key={t.key}
@@ -297,12 +299,15 @@ export function AgentConfigForm({
             role="tab"
             aria-selected={tab === t.key}
             onClick={() => switchTab(t.key)}
-            className={`text-xs font-bold px-3 py-2 rounded-md cursor-pointer ${tab === t.key ? "bg-primary-strong text-white" : "text-text-muted hover:bg-bg"}`}
+            className={`text-left text-sm font-semibold px-3 py-2 rounded-md cursor-pointer whitespace-nowrap transition-colors ${
+              tab === t.key ? "bg-surface shadow-sm text-text border border-border" : "text-text-muted hover:bg-surface-2 hover:text-text border border-transparent"
+            }`}
           >
             {t.label}
           </button>
         ))}
       </div>
+      <div className="flex-1 min-w-0 flex flex-col gap-5 w-full">
       {tab === "basico" && (
         <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
@@ -679,6 +684,7 @@ export function AgentConfigForm({
         </button>
         {saved && <span className="text-xs font-semibold text-success">Salvo.</span>}
         {error && <span className="text-xs text-danger font-medium">{error}</span>}
+      </div>
       </div>
     </div>
   );

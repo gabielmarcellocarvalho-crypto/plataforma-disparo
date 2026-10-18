@@ -11,7 +11,7 @@ export default async function AgendaPage() {
   if (!workspace) {
     return (
       <div className="flex flex-col gap-6">
-        <h1 className="text-2xl font-extrabold tracking-tight">Agenda</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Tarefas</h1>
       </div>
     );
   }
@@ -41,7 +41,7 @@ export default async function AgendaPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Agenda</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">Tarefas</h1>
           <p className="text-text-muted text-sm mt-1">{tasks.filter((t) => !t.completed_at).length} tarefa(s) pendente(s) em {workspace.name}.</p>
         </div>
         <AddTaskForm workspaceId={workspace.id} responsibles={members} />

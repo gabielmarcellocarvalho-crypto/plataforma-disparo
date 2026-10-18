@@ -1,5 +1,6 @@
 
-import type { WorkflowSchedule } from "@/lib/workflow-schedule";import type { ContactStage } from "@/lib/crm-stages";
+import type { ContactStage } from "@/lib/crm-stages";
+import type { WorkflowSchedule } from "@/lib/workflow-schedule";
 
 // Catálogo Fase 1 (linear, sem ramificação SIM/NÃO — isso é Fase 2). Cada tipo aqui tem um shape de
 // config específico guardado em jsonb; os campos abaixo documentam o que cada um espera.

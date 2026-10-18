@@ -52,7 +52,35 @@ export function ContactsTable({
   availableTags?: string[];
 }) {
   const router = useRouter();
-  const columns = useMemo(() => fieldDefs.filter((d) => d.show_in_table), [fieldDefs]);
+  // Escolher colunas (estilo HubSpot): o padrão segue "mostrar na tabela" de cada campo; o que a pessoa
+  // liga/desliga aqui fica no navegador dela e vale por cima do padrão.
+  const [colPrefs, setColPrefs] = useState<Record<string, boolean>>({});
+  const [colsOpen, setColsOpen] = useState(false);
+  useEffect(() => {
+    try {
+      setColPrefs(JSON.parse(localStorage.getItem("contatos:colunas") || "{}"));
+    } catch {}
+  }, []);
+  const isOn = (key: string, fallback: boolean) => colPrefs[key] ?? fallback;
+  function setCol(key: string, on: boolean) {
+    const next = { ...colPrefs, [key]: on };
+    setColPrefs(next);
+    try {
+      localStorage.setItem("contatos:colunas", JSON.stringify(next));
+    } catch {}
+  }
+  const columns = useMemo(() => fieldDefs.filter((d) => colPrefs[`cf:${d.key}`] ?? d.show_in_table), [fieldDefs, colPrefs]);
+  const showPhone = isOn("phone", true);
+  const showEmail = isOn("email", true);
+  const showTeam = teamMembers.length > 0 && isOn("team", true);
+  const showBranch = branches.length > 0 && isOn("branch", true);
+  const columnOptions = [
+    { key: "phone", label: "Telefone", on: showPhone },
+    { key: "email", label: "E-mail", on: showEmail },
+    ...(teamMembers.length > 0 ? [{ key: "team", label: "Responsável", on: showTeam }] : []),
+    ...(branches.length > 0 ? [{ key: "branch", label: "Filial", on: showBranch }] : []),
+    ...fieldDefs.map((d) => ({ key: `cf:${d.key}`, label: d.label, on: colPrefs[`cf:${d.key}`] ?? d.show_in_table })),
+  ];
   const teamNameById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m.name])), [teamMembers]);
   const branchNameById = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -200,6 +228,32 @@ export function ContactsTable({
 
       {error && <p className="text-xs text-danger font-medium">{error}</p>}
 
+      <div className="flex justify-end relative">
+        <button
+          type="button"
+          onClick={() => setColsOpen((v) => !v)}
+          aria-expanded={colsOpen}
+          className="text-xs font-bold px-3 py-1.5 rounded-md border border-border text-text-muted hover:text-text bg-surface cursor-pointer"
+        >
+          Colunas ({columnOptions.filter((o) => o.on).length + 2})
+        </button>
+        {colsOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setColsOpen(false)} aria-hidden />
+            <div className="absolute right-0 top-full mt-1 z-50 w-60 max-h-80 overflow-y-auto rounded-md border border-border bg-surface shadow-lg p-2">
+              <p className="px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-text-muted">Mostrar colunas</p>
+              <p className="px-2 pb-1 text-[11px] text-text-muted">Nome e status sempre aparecem.</p>
+              {columnOptions.map((o) => (
+                <label key={o.key} className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-surface-2 cursor-pointer">
+                  <input type="checkbox" checked={o.on} onChange={(e) => setCol(o.key, e.target.checked)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="bg-surface border border-border rounded-lg shadow-sm overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -212,10 +266,10 @@ export function ContactsTable({
                 />
               </th>
               <th className="px-4 py-3">Nome</th>
-              <th className="px-4 py-3">Telefone</th>
-              <th className="px-4 py-3">E-mail</th>
-              {teamMembers.length > 0 && <th className="px-4 py-3">Responsável</th>}
-              {branches.length > 0 && <th className="px-4 py-3">Filial</th>}
+              {showPhone && <th className="px-4 py-3">Telefone</th>}
+              {showEmail && <th className="px-4 py-3">E-mail</th>}
+              {showTeam && <th className="px-4 py-3">Responsável</th>}
+              {showBranch && <th className="px-4 py-3">Filial</th>}
               {columns.map((def) => (
                 <th key={def.id} className="px-4 py-3 whitespace-nowrap">
                   {def.label}
@@ -244,12 +298,12 @@ export function ContactsTable({
                     />
                   </td>
                   <td className="px-4 py-3 font-semibold">{c.name || "—"}</td>
-                  <td className="px-4 py-3">{c.phone || "—"}</td>
-                  <td className="px-4 py-3">{c.email || "—"}</td>
-                  {teamMembers.length > 0 && (
+                  {showPhone && <td className="px-4 py-3">{c.phone || "—"}</td>}
+                  {showEmail && <td className="px-4 py-3">{c.email || "—"}</td>}
+                  {showTeam && (
                     <td className="px-4 py-3">{(c.team_member_id && teamNameById.get(c.team_member_id)) || "—"}</td>
                   )}
-                  {branches.length > 0 && <td className="px-4 py-3">{(c.branch_id && branchNameById.get(c.branch_id)) || "—"}</td>}
+                  {showBranch && <td className="px-4 py-3">{(c.branch_id && branchNameById.get(c.branch_id)) || "—"}</td>}
                   {columns.map((def) => (
                     <td key={def.id} className="px-4 py-3">
                       {formatFieldValue(def, (c.custom_fields || {})[def.key]) || "—"}

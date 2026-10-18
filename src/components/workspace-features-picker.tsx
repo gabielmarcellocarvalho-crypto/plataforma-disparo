@@ -32,25 +32,25 @@ function Lista({
         ))}
       </div>
 
-      {/* Uma coluna no celular, duas a partir de sm: são 10 linhas, e em telas largas uma coluna só
-          deixaria um rio de espaço vazio à direita. */}
-      <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
+      {/* Linhas com chave liga/desliga, em duas colunas a partir de sm (estilo configurações do HubSpot). */}
+      <div className="grid sm:grid-cols-2 border border-border rounded-lg overflow-hidden">
         {PAGE_CATALOG.map((item) => {
           const ligado = !hidden.includes(item.path);
           return (
             <label
               key={item.path}
-              className="flex items-start gap-2.5 py-2 cursor-pointer rounded-md px-1.5 -mx-1.5 hover:bg-surface-2 transition-colors"
+              className="flex items-center justify-between gap-3 px-3 py-2.5 cursor-pointer border-b border-border sm:odd:border-r hover:bg-surface-2 transition-colors"
             >
-              <input
-                type="checkbox"
-                checked={ligado}
-                onChange={() => onToggle(item.path)}
-                className="mt-0.5 cursor-pointer accent-[var(--color-primary-strong)]"
-              />
               <span className="min-w-0">
-                <span className={`block text-sm font-semibold ${ligado ? "" : "text-text-muted line-through"}`}>{item.label}</span>
+                <span className={`block text-sm font-semibold ${ligado ? "" : "text-text-muted"}`}>{item.label}</span>
                 <span className="block text-[11px] text-text-muted leading-snug">{item.hint}</span>
+              </span>
+              <input type="checkbox" checked={ligado} onChange={() => onToggle(item.path)} className="sr-only peer" />
+              <span
+                aria-hidden
+                className={`relative shrink-0 w-9 h-5 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary/40 ${ligado ? "bg-success" : "bg-border"}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${ligado ? "translate-x-4" : ""}`} />
               </span>
             </label>
           );

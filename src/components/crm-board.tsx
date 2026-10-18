@@ -18,6 +18,10 @@ import { SORT_OPTIONS, sortContacts, type SortKey } from "@/lib/crm-sorting";
 import { buildCrmCsv, downloadCsv, exportFileName } from "@/lib/crm-export";
 import type { ContactActivity } from "@/lib/contact-activity";
 import { isTaskOverdue } from "@/lib/tasks";
+import { bulkAssignTeamMember, bulkMoveContacts } from "@/app/actions/crm-bulk";
+import { addTagsToContacts } from "@/app/actions/contacts";
+import { analyzeLeads } from "@/app/actions/ai-features";
+import { TEMPERATURE_UI, type Temperature } from "@/lib/lead-analysis";
 
 type Contact = {
   id: string;
@@ -37,17 +41,24 @@ type Contact = {
   pipeline_id: string | null;
   pipeline_stage_id: string | null;
   tags: string[] | null;
+  // Migration 0089: valor estimado do negócio e análise da IA (ausentes antes dela rodar).
+  deal_value?: number | null;
+  ai_score?: number | null;
+  ai_temperature?: string | null;
 };
+
+const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 type FieldFilter = { key: string; value: string };
 
 // Atalhos de visão rápida — mesma ideia dos itens da barra lateral do Kommo (Leads ativos/ganhos/
 // perdidos/etc.), só que como fileira de chips em vez de sidebar vertical, já que nosso board é
 // horizontal por natureza. "todos" = nenhum filtro de visão aplicado (estado inicial).
-type QuickView = "todos" | "atencao" | "parados" | "ganhos" | "perdidos";
+type QuickView = "todos" | "atencao" | "quentes" | "parados" | "ganhos" | "perdidos";
 const QUICK_VIEWS: { key: QuickView; label: string }[] = [
   { key: "todos", label: "Todos" },
   { key: "atencao", label: "Pontos de atenção" },
+  { key: "quentes", label: "🔥 Quentes" },
   { key: "parados", label: "Parados" },
   { key: "ganhos", label: "Ganhos" },
   { key: "perdidos", label: "Perdidos" },
@@ -327,6 +338,9 @@ function ContactCard({
   cardDefs,
   responsibleName,
   meetingAt,
+  selected,
+  selecting,
+  onToggleSelect,
 }: {
   contact: Contact;
   dragging: boolean;
@@ -336,6 +350,10 @@ function ContactCard({
   cardDefs: CustomFieldDef[];
   responsibleName: string | null;
   meetingAt: string | null;
+  selected: boolean;
+  // Com algum card marcado, a caixinha aparece em todos (não só no hover) e clicar no card marca/desmarca.
+  selecting: boolean;
+  onToggleSelect: (id: string) => void;
 }) {
   // Com esquema definido, o card mostra só os campos marcados como "etiqueta no card" (e pelo
   // rótulo, não pela chave crua). Sem nenhum campo marcado, cai no comportamento antigo: os 3
@@ -358,11 +376,22 @@ function ContactCard({
       draggable
       onDragStart={() => onDragStart(contact.id)}
       onDragEnd={onDragEnd}
-      onClick={() => onOpen(contact.id)}
-      className={`group bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 shadow-sm cursor-grab active:cursor-grabbing
-        transition-all duration-150 hover:shadow-md hover:-translate-y-0.5 hover:border-primary-soft ${dragging ? "opacity-40" : ""}`}
+      onClick={() => (selecting ? onToggleSelect(contact.id) : onOpen(contact.id))}
+      className={`group relative bg-surface border rounded-lg p-3 flex flex-col gap-2 shadow-sm cursor-grab active:cursor-grabbing
+        transition-all duration-150 hover:shadow-md hover:-translate-y-0.5
+        ${selected ? "border-primary ring-2 ring-primary/30" : stale ? "border-border border-l-[3px] border-l-danger hover:border-primary-soft" : "border-border hover:border-primary-soft"}
+        ${dragging ? "opacity-40" : ""}`}
     >
-      <div className="flex items-center gap-2 min-w-0">
+      {/* Seleção pra ações em lote (estilo Pipedrive): a caixinha não abre o lead. */}
+      <input
+        type="checkbox"
+        checked={selected}
+        onClick={(e) => e.stopPropagation()}
+        onChange={() => onToggleSelect(contact.id)}
+        aria-label="Selecionar lead"
+        className={`absolute top-2 right-2 w-4 h-4 cursor-pointer accent-[var(--color-primary-strong)] ${selecting || selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+      />
+      <div className="flex items-center gap-2 min-w-0 pr-5">
         {contact.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={contact.photo_url} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" aria-hidden />
@@ -377,9 +406,19 @@ function ContactCard({
           </div>
           <div className="text-[11px] text-text-muted truncate">{contact.phone || contact.email || ""}</div>
         </div>
+        {contact.deal_value ? <span className="text-xs font-extrabold tabular-nums shrink-0">{brl(Number(contact.deal_value))}</span> : null}
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
+        {contact.ai_temperature && TEMPERATURE_UI[contact.ai_temperature as Temperature] && (
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${TEMPERATURE_UI[contact.ai_temperature as Temperature].className}`}
+            title="Análise da IA (chance de fechar)"
+          >
+            {TEMPERATURE_UI[contact.ai_temperature as Temperature].icon} {TEMPERATURE_UI[contact.ai_temperature as Temperature].label}
+            {contact.ai_score != null ? ` · ${contact.ai_score}` : ""}
+          </span>
+        )}
         {contact.needs_attention && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">precisa de atenção</span>}
         {!contact.needs_attention && contact.flagged_reason && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text">alerta do agente</span>}
         {meetingAt && (
@@ -387,7 +426,7 @@ function ContactCard({
             Reunião {formatMeeting(meetingAt)}
           </span>
         )}
-        {stale && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger">parado {ageInStage}d</span>}
+        {stale && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger" title={`Sem mudar de etapa há ${ageInStage} dias`}>⚠ esfriando</span>}
         {contact.lost_reason && (
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted truncate max-w-[160px]" title={contact.lost_reason}>
             {contact.lost_reason}
@@ -420,16 +459,18 @@ function ContactCard({
         </div>
       )}
 
-      <div className="text-[10.5px] text-text-muted flex items-center justify-between gap-2 border-t border-border pt-1.5 mt-0.5">
-        {responsibleName ? (
-          <span className="inline-flex items-center gap-1 min-w-0 font-semibold text-text" title={`Responsável: ${responsibleName}`}>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-muted" aria-hidden><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
-            <span className="truncate">{responsibleName}</span>
+      <div className="text-[10.5px] text-text-muted flex items-center gap-2 border-t border-border pt-1.5 mt-0.5">
+        <span className={`shrink-0 ${stale ? "text-danger font-semibold" : ""}`}>{ageInStage === 0 ? "hoje nessa fase" : `${ageInStage}d nessa fase`}</span>
+        <span className="ml-auto truncate">entrou {formatDateShort(contact.created_at)}</span>
+        {responsibleName && (
+          <span
+            className="grid place-items-center w-5 h-5 rounded-full bg-info-soft text-info-text text-[9px] font-bold shrink-0"
+            title={`Responsável: ${responsibleName}`}
+            aria-label={`Responsável: ${responsibleName}`}
+          >
+            {responsibleName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
           </span>
-        ) : (
-          <span className="truncate">entrou {formatDateShort(contact.created_at)}</span>
         )}
-        {!stale && <span className="shrink-0">{ageInStage === 0 ? "hoje" : `há ${ageInStage}d`}</span>}
       </div>
     </div>
   );
@@ -478,6 +519,7 @@ export function CrmBoard({
   const [sortKey, setSortKey] = useState<SortKey>("recentes");
   const [modoLista, setModoLista] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Map não atravessa a fronteira Server → Client Component, então a atividade chega como par de
   // arrays e é remontada aqui, uma vez só.
@@ -513,6 +555,26 @@ export function CrmBoard({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  // Ações em lote: ids marcados (sobrevive a troca de filtro, como no Pipedrive) e colunas recolhidas.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [collapsedCols, setCollapsedCols] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [bulkTag, setBulkTag] = useState("");
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleCol = (key: string) =>
+    setCollapsedCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -585,6 +647,7 @@ export function CrmBoard({
   const filtered = useMemo(() => {
     return items.filter((c) => {
       if (quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
+      if (quickView === "quentes" && c.ai_temperature !== "quente") return false;
       if (quickView === "ganhos" && c.stage !== "concluido") return false;
       if (quickView === "perdidos" && c.stage !== "descartado") return false;
       if (quickView === "parados") {
@@ -621,8 +684,9 @@ export function CrmBoard({
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
-    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, parados: 0, ganhos: 0, perdidos: 0 };
+    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, quentes: 0, parados: 0, ganhos: 0, perdidos: 0 };
     for (const c of items) {
+      if (c.ai_temperature === "quente") counts.quentes++;
       if (c.needs_attention || c.flagged_reason) counts.atencao++;
       if (c.stage === "concluido") counts.ganhos++;
       if (c.stage === "descartado") counts.perdidos++;
@@ -771,6 +835,69 @@ export function CrmBoard({
     fieldFilters.length;
   const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
 
+  async function runBulk(kind: "move" | "assign" | "tag", value: string) {
+    const ids = [...selected];
+    if (ids.length === 0 || !value) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    const agora = new Date().toISOString();
+    let res: { error: string | null; updated?: number };
+    if (kind === "move") {
+      const etapa = modoFunil ? pipelineStages.find((e) => e.id === value) : null;
+      res = await bulkMoveContacts(ids, modoFunil ? { stageId: value } : { stage: value });
+      if (!res.error || (res.updated ?? 0) > 0) {
+        setItems((prev) =>
+          prev.map((c) =>
+            selected.has(c.id)
+              ? etapa
+                ? { ...c, pipeline_id: activePipelineId, pipeline_stage_id: etapa.id, stage: etapa.signal, stage_changed_at: agora, lost_reason: null }
+                : { ...c, stage: value, stage_changed_at: agora, lost_reason: null }
+              : c
+          )
+        );
+      }
+    } else if (kind === "assign") {
+      const memberId = value === "__nenhum__" ? null : value;
+      res = await bulkAssignTeamMember(ids, memberId);
+      if (!res.error) setItems((prev) => prev.map((c) => (selected.has(c.id) ? { ...c, team_member_id: memberId } : c)));
+    } else {
+      const tag = value.trim();
+      const r = await addTagsToContacts(ids, [tag]);
+      res = { error: r.error, updated: r.updated };
+      if (!r.error) {
+        setItems((prev) =>
+          prev.map((c) =>
+            selected.has(c.id) && !(c.tags ?? []).some((t) => t.toLowerCase() === tag.toLowerCase()) ? { ...c, tags: [...(c.tags ?? []), tag] } : c
+          )
+        );
+        setBulkTag("");
+      }
+    }
+    setBulkBusy(false);
+    setBulkMsg(res.error ?? `${res.updated ?? ids.length} lead(s) atualizado(s).`);
+    if (!res.error) setSelected(new Set());
+  }
+
+  async function runBulkAnalysis() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (ids.length > 25) {
+      setBulkMsg("Selecione no máximo 25 leads pra analisar de uma vez.");
+      return;
+    }
+    setBulkBusy(true);
+    setBulkMsg(null);
+    const r = await analyzeLeads(ids);
+    setBulkBusy(false);
+    if (r.error !== null) {
+      setBulkMsg(r.error);
+      return;
+    }
+    setBulkMsg(`${r.data.done} lead(s) analisado(s)${r.data.failed ? `, ${r.data.failed} sem conversa ou com erro` : ""}.`);
+    setSelected(new Set());
+    router.refresh();
+  }
+
   function clearFilters() {
     setSearch("");
     setDateFrom("");
@@ -785,9 +912,108 @@ export function CrmBoard({
     setFieldFilters([]);
   }
 
+  const totalNoFunil = modoFunil ? items.filter(pertenceAoFunil).length : items.length;
+  const valorEmAberto = (modoFunil ? items.filter(pertenceAoFunil) : items)
+    .filter((c) => c.stage !== "concluido" && c.stage !== "descartado")
+    .reduce((sum, c) => sum + Number(c.deal_value || 0), 0);
+  const settingsItems: { label: string; hint: string; onClick: () => void }[] = [
+    {
+      label: "Campos do lead",
+      hint: "o que o lead tem além de nome e telefone",
+      onClick: () => {
+        setFieldsEditorOpen(true);
+        setLabelsEditorOpen(false);
+        setPipelinesEditorOpen(false);
+      },
+    },
+    {
+      label: "Funis e etapas",
+      hint: "criar funil, renomear e ordenar etapas",
+      onClick: () => {
+        setPipelinesEditorOpen(true);
+        setFieldsEditorOpen(false);
+        setLabelsEditorOpen(false);
+      },
+    },
+    {
+      label: modoFunil ? "Motivos da perda" : "Personalizar fases",
+      hint: modoFunil ? "lista de motivos ao descartar" : "nomes, fases ocultas e motivos da perda",
+      onClick: () => {
+        setLabelsEditorOpen(true);
+        setFieldsEditorOpen(false);
+        setPipelinesEditorOpen(false);
+      },
+    },
+  ];
+
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
-      <div className="bg-surface border border-border rounded-xl shadow-sm p-3 flex flex-col gap-3 shrink-0">
+      {/* Cabeçalho (estilo Pipedrive): título, funil aberto e total; configurações num menu só. */}
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
+        <h1 className="text-2xl font-extrabold tracking-tight">Pipeline</h1>
+        {pipelines.length > 1 && (
+          <select
+            value={activePipelineId ?? ""}
+            onChange={(e) => setActivePipelineId(e.target.value)}
+            aria-label="Funil"
+            className="text-sm font-bold border border-border rounded-md px-2.5 py-1.5 bg-surface outline-none focus:border-primary cursor-pointer"
+          >
+            {pipelines.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {pipelines.length === 1 && activePipeline && <span className="text-sm font-bold text-text-muted">{activePipeline.name}</span>}
+        <span className="text-sm text-text-muted">{totalNoFunil.toLocaleString("pt-BR")} leads</span>
+        {valorEmAberto > 0 && (
+          <span className="text-sm text-text-muted">
+            · <b className="text-text">{brl(valorEmAberto)}</b> em aberto
+          </span>
+        )}
+
+        <div className="relative ml-auto">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((v) => !v)}
+            aria-expanded={settingsOpen}
+            title="Configurações do pipeline"
+            aria-label="Configurações do pipeline"
+            className="grid place-items-center w-9 h-9 rounded-md border border-border bg-surface text-text-muted hover:text-text cursor-pointer"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+              <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" />
+            </svg>
+          </button>
+          {settingsOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setSettingsOpen(false)} aria-hidden />
+              <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-border bg-surface shadow-lg p-1" role="menu">
+                {settingsItems.map((it) => (
+                  <button
+                    key={it.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      it.onClick();
+                      setSettingsOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded hover:bg-surface-2 cursor-pointer"
+                  >
+                    <span className="block text-sm font-semibold">{it.label}</span>
+                    <span className="block text-[11px] text-text-muted">{it.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg shadow-sm p-3 flex flex-col gap-3 shrink-0">
         <div className="flex items-center gap-2.5 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden>
@@ -878,78 +1104,7 @@ export function CrmBoard({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setFieldsEditorOpen((v) => !v);
-              setLabelsEditorOpen(false);
-            }}
-            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
-              <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" />
-            </svg>
-            campos do lead
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setPipelinesEditorOpen((v) => !v);
-              setFieldsEditorOpen(false);
-              setLabelsEditorOpen(false);
-            }}
-            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <rect x="3" y="4" width="4" height="16" rx="1" />
-              <rect x="10" y="4" width="4" height="10" rx="1" />
-              <rect x="17" y="4" width="4" height="13" rx="1" />
-            </svg>
-            funis
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setLabelsEditorOpen((v) => !v);
-              setFieldsEditorOpen(false);
-              setPipelinesEditorOpen(false);
-            }}
-            className="text-xs font-bold px-3 py-2 rounded-md cursor-pointer border border-border text-text-muted hover:text-primary-strong hover:border-primary-soft transition-colors flex items-center gap-1.5"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
-            {modoFunil ? "motivos da perda" : "personalizar fases"}
-          </button>
         </div>
-
-        {/* Seletor de funil: só aparece quando existe mais de um. Com um funil só, a fileira de
-            chips seria decoração ocupando altura. */}
-        {pipelines.length > 1 && (
-          <div className="flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Funis">
-            {pipelines.map((p) => {
-              const ativo = p.id === activePipelineId;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={ativo}
-                  onClick={() => setActivePipelineId(p.id)}
-                  className={`text-xs font-bold px-3 py-1.5 rounded-full cursor-pointer border transition-colors ${
-                    ativo ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft hover:text-primary-strong"
-                  }`}
-                >
-                  {p.name}
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {/* Atalhos de visão rápida — mesma ideia da sidebar do Kommo (Leads ativos/ganhos/perdidos/
             etc.), aqui como fileira de chips mutuamente exclusivos. */}
@@ -1224,11 +1379,109 @@ export function CrmBoard({
         />
       )}
 
+      {(selected.size > 0 || bulkMsg) && (
+        <div className="shrink-0 flex items-center gap-2 flex-wrap bg-primary-strong text-white rounded-xl px-3 py-2 shadow-md">
+          {selected.size > 0 ? (
+            <>
+              <span className="text-sm font-bold mr-1">{selected.size} selecionado(s)</span>
+              <select
+                value=""
+                disabled={bulkBusy}
+                onChange={(e) => runBulk("move", e.target.value)}
+                className="text-xs font-semibold rounded-md px-2 py-1.5 bg-white/15 border border-white/25 text-white cursor-pointer outline-none [&>option]:text-text"
+                aria-label="Mover para etapa"
+              >
+                <option value="">Mover para…</option>
+                {colunas.map((col) => (
+                  <option key={col.key} value={col.key}>{col.label}</option>
+                ))}
+              </select>
+              {teamMembers.length > 0 && (
+                <select
+                  value=""
+                  disabled={bulkBusy}
+                  onChange={(e) => runBulk("assign", e.target.value)}
+                  className="text-xs font-semibold rounded-md px-2 py-1.5 bg-white/15 border border-white/25 text-white cursor-pointer outline-none [&>option]:text-text"
+                  aria-label="Atribuir responsável"
+                >
+                  <option value="">Atribuir a…</option>
+                  {teamMembers.filter((m) => m.active).map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                  <option value="__nenhum__">Sem responsável</option>
+                </select>
+              )}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  runBulk("tag", bulkTag);
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  value={bulkTag}
+                  onChange={(e) => setBulkTag(e.target.value)}
+                  list="crm-bulk-tags"
+                  placeholder="Adicionar tag…"
+                  className="text-xs rounded-md px-2 py-1.5 w-36 bg-white/15 border border-white/25 text-white placeholder:text-white/70 outline-none"
+                />
+                <datalist id="crm-bulk-tags">
+                  {allTags.map((t) => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
+                <button type="submit" disabled={bulkBusy || !bulkTag.trim()} className="text-xs font-bold px-2 py-1.5 rounded-md bg-white text-primary-strong cursor-pointer disabled:opacity-50">
+                  aplicar
+                </button>
+              </form>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={runBulkAnalysis}
+                title="Lê a conversa de cada lead e dá nota, temperatura e próxima ação (até 25 por vez)"
+                className="text-xs font-bold px-2.5 py-1.5 rounded-md bg-white/15 border border-white/25 cursor-pointer disabled:opacity-50"
+              >
+                ✨ Analisar com IA
+              </button>
+              {bulkBusy && <span className="text-xs opacity-80">salvando…</span>}
+              <button type="button" onClick={() => setSelected(new Set())} className="ml-auto text-xs font-bold underline cursor-pointer">
+                limpar seleção
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-sm font-semibold">{bulkMsg}</span>
+              <button type="button" onClick={() => setBulkMsg(null)} className="ml-auto text-xs font-bold underline cursor-pointer">
+                ok
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {modoLista ? (
         <div className="flex-1 min-h-0 overflow-auto bg-surface border border-border rounded-xl">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface z-10">
               <tr className="border-b border-border text-left text-text-muted text-xs font-bold uppercase">
+                <th className="pl-3 py-2.5 w-8">
+                  <input
+                    type="checkbox"
+                    aria-label="Selecionar todos da lista"
+                    checked={listaOrdenada.length > 0 && listaOrdenada.slice(0, listLimit).every((c) => selected.has(c.id))}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        for (const c of listaOrdenada.slice(0, listLimit)) {
+                          if (e.target.checked) next.add(c.id);
+                          else next.delete(c.id);
+                        }
+                        return next;
+                      })
+                    }
+                    className="cursor-pointer"
+                  />
+                </th>
                 <th className="px-3 py-2.5">Lead</th>
                 <th className="px-3 py-2.5">Etapa</th>
                 {teamMembers.length > 0 && <th className="px-3 py-2.5">Responsável</th>}
@@ -1250,8 +1503,11 @@ export function CrmBoard({
                   <tr
                     key={c.id}
                     onClick={() => setOpenId(c.id)}
-                    className="border-b border-border last:border-0 cursor-pointer hover:bg-surface-2 transition-colors"
+                    className={`border-b border-border last:border-0 cursor-pointer hover:bg-surface-2 transition-colors ${selected.has(c.id) ? "bg-primary-faint" : ""}`}
                   >
+                    <td className="pl-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} aria-label="Selecionar lead" className="cursor-pointer" />
+                    </td>
                     <td className="px-3 py-2.5">
                       <div className="font-semibold truncate max-w-[220px]">{c.name || c.phone || c.email || "sem nome"}</div>
                       <div className="text-[11px] text-text-muted truncate max-w-[220px]">{c.phone || c.email || ""}</div>
@@ -1318,18 +1574,88 @@ export function CrmBoard({
           <div className="flex gap-3 h-full min-w-full pb-2">
             {colunas.map((coluna) => {
               const cards = coluna.cards;
+              const esfriando =
+                coluna.signal === "concluido" || coluna.signal === "descartado"
+                  ? 0
+                  : cards.filter((c) => daysSince(c.stage_changed_at) >= STALE_AFTER_DAYS).length;
+              const shownCards = cards.slice(0, colLimits[coluna.key] ?? CARDS_FIRST);
+              const allColSelected = shownCards.length > 0 && shownCards.every((c) => selected.has(c.id));
+              if (collapsedCols.has(coluna.key)) {
+                // Coluna recolhida: vira uma faixa estreita com nome na vertical — continua aceitando card arrastado.
+                return (
+                  <button
+                    key={coluna.key}
+                    type="button"
+                    onClick={() => toggleCol(coluna.key)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={coluna.onDrop}
+                    title={`Expandir ${coluna.label}`}
+                    className="w-11 shrink-0 flex flex-col items-center gap-2 py-3 bg-surface-2 border border-border rounded-xl cursor-pointer hover:border-primary-soft"
+                  >
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[coluna.signal]}`} aria-hidden />
+                    <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
+                    <span className="text-xs font-bold [writing-mode:vertical-rl] rotate-180 truncate max-h-60">{coluna.label}</span>
+                  </button>
+                );
+              }
               return (
                 <div
                   key={coluna.key}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={coluna.onDrop}
-                  className="flex-1 min-w-[264px] max-w-[360px] flex flex-col bg-surface-2 border border-border rounded-xl min-h-0 transition-colors"
+                  className="flex-1 min-w-[264px] max-w-[340px] flex flex-col bg-surface-2/70 border border-border rounded-lg min-h-0 transition-colors"
                 >
                   <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 shrink-0">
                     <span className={`w-2 h-2 rounded-full shrink-0 ${STAGE_ACCENT[coluna.signal]}`} aria-hidden />
                     <span className="text-xs font-bold flex-1 truncate" title={coluna.label}>{coluna.label}</span>
+                    {esfriando > 0 && (
+                      <span className="text-[10px] font-bold text-danger" title={`${esfriando} lead(s) parados há ${STALE_AFTER_DAYS}+ dias`}>
+                        ⚠ {esfriando}
+                      </span>
+                    )}
                     <span className="text-[11px] text-text-muted font-mono bg-surface rounded-full px-1.5 py-0.5">{cards.length}</span>
+                    {cards.length > 0 && (
+                      <input
+                        type="checkbox"
+                        checked={allColSelected}
+                        onChange={(e) =>
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            for (const c of shownCards) {
+                              if (e.target.checked) next.add(c.id);
+                              else next.delete(c.id);
+                            }
+                            return next;
+                          })
+                        }
+                        title="Selecionar os cards desta coluna"
+                        aria-label={`Selecionar os cards de ${coluna.label}`}
+                        className="cursor-pointer"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleCol(coluna.key)}
+                      title="Recolher coluna"
+                      aria-label={`Recolher ${coluna.label}`}
+                      className="p-0.5 rounded text-text-muted hover:text-text hover:bg-surface cursor-pointer"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <polyline points="15 18 9 12 15 6" />
+                      </svg>
+                    </button>
                   </div>
+                  {(() => {
+                    const soma = cards.reduce((sum, c) => sum + Number(c.deal_value || 0), 0);
+                    const aberta = coluna.signal !== "concluido" && coluna.signal !== "descartado";
+                    if (!soma && !aberta) return null;
+                    return (
+                      <div className="px-3 pt-1.5 -mb-1 flex items-center justify-between text-[10.5px] text-text-muted">
+                        <span className="font-semibold">{soma ? brl(soma) : ""}</span>
+                        {aberta && <span>esfria em {STALE_AFTER_DAYS}d</span>}
+                      </div>
+                    );
+                  })()}
                   <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
                     {cards.length === 0 ? (
                       <p className="text-[11px] text-text-muted text-center py-6">vazio</p>
@@ -1345,6 +1671,9 @@ export function CrmBoard({
                           cardDefs={cardDefs}
                           responsibleName={c.team_member_id ? teamNameById.get(c.team_member_id) ?? null : null}
                           meetingAt={meetingByContact.get(c.id) ?? null}
+                          selected={selected.has(c.id)}
+                          selecting={selected.size > 0}
+                          onToggleSelect={toggleSelect}
                         />
                       ))
                     )}

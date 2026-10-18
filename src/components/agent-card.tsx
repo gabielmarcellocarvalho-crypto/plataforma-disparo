@@ -23,6 +23,8 @@ export type AgentCardStats = {
   conversationsToday: number | null;
   leadsTotal: number | null;
   lastActivity: string | null;
+  // % das conversas dos últimos 30 dias que não precisaram da equipe (null = sem conversa no período).
+  resolutionRate?: number | null;
 };
 
 const USD_TO_BRL = 5.4; // referência aproximada — mesma taxa usada na calculadora de custos
@@ -66,19 +68,6 @@ function formatLastActivity(iso: string | null): string {
   return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: TZ })}, ${time}`;
 }
 
-function Metric({ icon, label, value, title }: { icon: React.ReactNode; label: string; value: string; title?: string }) {
-  return (
-    <div className="flex items-center gap-2.5 min-w-0" title={title}>
-      <span className="grid place-items-center w-8 h-8 rounded-lg bg-surface-2 text-text-muted shrink-0" aria-hidden>
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <div className="text-[11px] text-text-muted leading-tight whitespace-nowrap">{label}</div>
-        <div className="text-base font-bold tabular-nums leading-tight">{value}</div>
-      </div>
-    </div>
-  );
-}
 
 // Menu de três pontos com as ações que antes ficavam soltas no card (pausar/reativar, atualizar status).
 function AgentActionsMenu({
@@ -195,75 +184,88 @@ export function AgentCard({
   }
 
   const fmt = (n: number | null) => (n === null ? "—" : n.toLocaleString("pt-BR"));
+  const resolved = stats.resolutionRate ?? null;
 
+  // Card vertical (estilo do redesign): identidade, 3 números, barras de resolução e ações.
   return (
-    <article
-      className={cn(
-        "bg-surface border border-border rounded-xl shadow-sm px-5 py-4 grid gap-4 items-center transition-shadow hover:shadow-md",
-        "grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]",
-        pending && "opacity-70"
-      )}
-    >
-      {/* Identidade + conexão */}
-      <div className="flex items-center gap-4 min-w-0">
+    <article className={cn("bg-surface border border-border rounded-lg shadow-sm p-5 flex flex-col gap-4 transition-shadow hover:shadow-md h-full", pending && "opacity-70")}>
+      <div className="flex items-start gap-3.5 min-w-0">
         <AgentAvatar photoUrl={agent.photo_url} name={agent.name} size="lg" />
-        <div className="min-w-0 flex flex-col gap-1">
-          <Link href={`/agentes/${agent.id}`} className="font-bold text-[17px] leading-tight truncate hover:text-primary-strong transition-colors">
-            {agent.name}
-          </Link>
-          <div className="text-sm text-text-muted truncate">
-            {phone || (isInstanceLinked ? "Número conectado em Configurações" : "Sem número conectado")}
-            {isInstanceLinked && (
-              <span className="ml-1.5 text-[11px] font-semibold text-text-muted">· {agent.whatsapp_instance_channel === "360dialog" ? "360dialog" : "API oficial Meta"}</span>
-            )}
+        <div className="min-w-0 flex-1 flex flex-col gap-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href={`/agentes/${agent.id}`} className="font-bold text-[17px] leading-tight truncate hover:text-primary-strong transition-colors">
+              {agent.name}
+            </Link>
+            <span className={cn("text-[11px] font-bold px-2 py-0.5 rounded-full", active ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted")}>
+              {active ? "Ativo" : "Pausado"}
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted">
             <span className={cn("inline-flex items-center gap-1.5 font-semibold", conn.text)}>
               <span className={cn("w-2 h-2 rounded-full", conn.dot)} aria-hidden />
               {conn.label}
             </span>
-            <span className="w-px h-3 bg-border" aria-hidden />
-            <span className="text-text-muted">
-              Última atividade: {stats.conversationsToday === null ? "—" : formatLastActivity(stats.lastActivity)}
+            <span>·</span>
+            <span className="truncate">
+              {phone || (isInstanceLinked ? (agent.whatsapp_instance_channel === "360dialog" ? "360dialog" : "API oficial Meta") : "sem número")}
             </span>
+            <span>·</span>
+            <span>última atividade {stats.conversationsToday === null ? "—" : formatLastActivity(stats.lastActivity)}</span>
+          </div>
+        </div>
+        {canManage && <AgentActionsMenu agent={agent} pending={pending} onToggle={handleToggleStatus} onRefresh={handleRefresh} />}
+      </div>
+
+      <div className={cn("grid gap-2.5", canManage ? "grid-cols-3" : "grid-cols-2")}>
+        {[
+          { icon: <MessageCircle className="w-3.5 h-3.5" />, label: "Conversas hoje", value: fmt(stats.conversationsToday) },
+          { icon: <UserRound className="w-3.5 h-3.5" />, label: "Leads atendidos", value: fmt(stats.leadsTotal) },
+          ...(canManage
+            ? [{ icon: <Wallet className="w-3.5 h-3.5" />, label: "Custo estimado", value: `R$ ${(totalCostUsd * USD_TO_BRL).toFixed(2).replace(".", ",")}` }]
+            : []),
+        ].map((m) => (
+          <div key={m.label} className="rounded-md border border-border px-3 py-2.5">
+            <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
+              {m.icon}
+              {m.label}
+            </span>
+            <b className="block text-xl font-extrabold tracking-tight tabular-nums mt-0.5">{m.value}</b>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md bg-surface-2 border border-border px-3 py-2.5 flex flex-col gap-2" title="Últimos 30 dias">
+        <div>
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-text-muted">Resolvidas sem humano</span>
+            <b className="tabular-nums">{resolved === null ? "—" : `${resolved}%`}</b>
+          </div>
+          <div className="h-1.5 rounded-full bg-border overflow-hidden">
+            <div className="h-full bg-success rounded-full" style={{ width: `${resolved ?? 0}%` }} />
+          </div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-text-muted">Passadas para humano</span>
+            <b className="tabular-nums">{resolved === null ? "—" : `${100 - resolved}%`}</b>
+          </div>
+          <div className="h-1.5 rounded-full bg-border overflow-hidden">
+            <div className="h-full bg-danger rounded-full" style={{ width: `${resolved === null ? 0 : 100 - resolved}%` }} />
           </div>
         </div>
       </div>
 
-      <span className="hidden lg:block w-px h-12 bg-border" aria-hidden />
-
-      {/* Métricas */}
-      <div className="flex flex-wrap gap-x-7 gap-y-3 lg:pr-3">
-        <Metric icon={<MessageCircle className="w-4 h-4" />} label="Conversas hoje" value={fmt(stats.conversationsToday)} />
-        <Metric icon={<UserRound className="w-4 h-4" />} label="Leads atendidos" value={fmt(stats.leadsTotal)} title="Contatos que já conversaram com esse agente" />
-        {canManage && (
-          <Metric
-            icon={<Wallet className="w-4 h-4" />}
-            label="Custo estimado"
-            value={`R$ ${(totalCostUsd * USD_TO_BRL).toFixed(2).replace(".", ",")}`}
-            title={`US$ ${totalCostUsd.toFixed(4)} em tokens de IA (referência aproximada)`}
-          />
-        )}
-      </div>
-
-      {/* Status + ações */}
-      <div className="flex items-center gap-2 lg:justify-end">
-        <span
-          className={cn(
-            "text-xs font-bold px-2.5 py-1 rounded-full",
-            active ? "bg-success-soft text-success" : "bg-surface-2 border border-border text-text-muted"
-          )}
-        >
-          {active ? "Ativo" : "Inativo"}
-        </span>
+      <div className="flex items-center gap-2 mt-auto">
         <Link
           href={`/agentes/${agent.id}`}
-          className="inline-flex items-center gap-1.5 min-h-9 px-3.5 rounded-lg border border-border bg-surface text-sm font-bold hover:bg-surface-2 hover:border-border-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="inline-flex items-center gap-1.5 min-h-9 px-3.5 rounded-md bg-primary-strong text-white text-sm font-bold hover:brightness-95 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           Editar agente
           <ArrowRight className="w-4 h-4" aria-hidden />
         </Link>
-        {canManage && <AgentActionsMenu agent={agent} pending={pending} onToggle={handleToggleStatus} onRefresh={handleRefresh} />}
+        <Link href="/conversas" className="ml-auto text-xs font-bold text-text-muted hover:text-text">
+          Ver conversas
+        </Link>
       </div>
     </article>
   );

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AgentPlayground } from "@/components/agent-playground";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
@@ -170,6 +171,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
         </svg>
         Agentes
       </Link>
+      <div className={isStaff ? "grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] items-start" : ""}>
       <AgentEditView
         fieldDefs={fieldDefs}
         schedulingClosers={schedulingClosers}
@@ -184,6 +186,8 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
         knowledge={knowledgeRows || []}
         canManage={isStaff}
       />
+      {isStaff && <AgentPlayground agentId={agent.id} agentName={agent.name} />}
+      </div>
     </div>
   );
 }

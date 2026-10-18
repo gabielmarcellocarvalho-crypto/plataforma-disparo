@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { deleteWorkflow, toggleWorkflow, type WorkflowListRow } from "@/app/actions/workflows";
 import { WorkflowRunHistory } from "@/components/workflow-run-history";
 import { STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
 import { TRIGGER_LABELS } from "@/lib/workflow-types";
 import { WORKFLOW_TEMPLATES } from "@/lib/workflow-templates";
-import { History, Pencil, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
+import { Clock, GitBranch, History, Pencil, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, X, Zap } from "lucide-react";
 
 type Member = { id: string; name: string };
 
@@ -128,6 +128,33 @@ export function WorkflowList({ workflows, members, stageNames = DEFAULT_NAMES }:
                 <span>·</span>
                 <span>{w.completed_count} concluído(s)</span>
               </div>
+
+              {/* Prévia visual do fluxo: gatilho → passos (estilo HubSpot/RD), sem precisar abrir a automação. */}
+              {w.steps_preview && w.steps_preview.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-semibold bg-surface-2 border border-border rounded-md px-2.5 py-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-success-soft text-success">
+                    <Zap size={11} aria-hidden /> Gatilho
+                  </span>
+                  {w.steps_preview.slice(0, 7).map((st, i) => (
+                    <Fragment key={i}>
+                      <span className="text-text-muted" aria-hidden>→</span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded ${
+                          st.kind === "wait"
+                            ? "bg-surface border border-border text-text-muted"
+                            : st.kind === "condition"
+                              ? "bg-warning-soft text-warning-text"
+                              : "bg-primary-faint text-primary-strong"
+                        }`}
+                      >
+                        {st.kind === "wait" ? <Clock size={11} aria-hidden /> : st.kind === "condition" ? <GitBranch size={11} aria-hidden /> : null}
+                        {st.label}
+                      </span>
+                    </Fragment>
+                  ))}
+                  {w.steps_preview.length > 7 && <span className="text-text-muted">+{w.steps_preview.length - 7}</span>}
+                </div>
+              )}
 
               <label className="flex items-center gap-2 text-xs cursor-pointer w-fit">
                 <input type="checkbox" checked={w.enabled} onChange={() => handleToggle(w)} disabled={pending} />

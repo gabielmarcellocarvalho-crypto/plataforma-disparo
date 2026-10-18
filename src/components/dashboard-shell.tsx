@@ -7,6 +7,30 @@ import type { AccessType } from "@/lib/access-types";
 
 const CHAVE_RECOLHIDO = "sidebar:collapsed";
 
+const PAGE_TITLES: [string, string][] = [
+  ["/conversas", "Conversas"],
+  ["/agenda", "Tarefas"],
+  ["/crm/", "Ficha do lead"],
+  ["/crm", "Pipeline"],
+  ["/contatos", "Contatos"],
+  ["/agentes/", "Editar agente"],
+  ["/agentes", "Agentes de IA"],
+  ["/automacoes/", "Editar automação"],
+  ["/automacoes", "Automações"],
+  ["/campanhas", "Campanhas"],
+  ["/templates", "Templates"],
+  ["/metricas", "Métricas"],
+  ["/equipe", "Equipe"],
+  ["/integracoes", "Integrações"],
+  ["/configuracoes", "Configurações"],
+  ["/calculadora", "Calculadora"],
+  ["/acessos", "Acessos"],
+];
+function pageTitle(pathname: string): string {
+  if (pathname === "/") return "Visão geral";
+  return PAGE_TITLES.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix))?.[1] ?? "";
+}
+
 // A preferência de menu recolhido é conveniência de quem está olhando, não dado do workspace: mora
 // no navegador. Ela é uma fonte EXTERNA ao React, então é lida por useSyncExternalStore em vez de
 // useEffect+setState — com efeito, o primeiro render sairia expandido e piscaria pro recolhido.
@@ -54,6 +78,8 @@ export function DashboardShell({
   accessType,
   hiddenPages,
   attentionCount,
+  tasksCount = 0,
+  workspaceName = "",
   children,
 }: {
   workspaceSlot: React.ReactNode;
@@ -65,6 +91,8 @@ export function DashboardShell({
   accessType: AccessType | null;
   hiddenPages: string[];
   attentionCount: number;
+  tasksCount?: number;
+  workspaceName?: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -100,6 +128,7 @@ export function DashboardShell({
         accessType={accessType}
         hiddenPages={hiddenPages}
         attentionCount={attentionCount}
+        tasksCount={tasksCount}
         open={open}
         collapsed={collapsed}
         onToggleCollapse={() => gravarRecolhido(!collapsed)}
@@ -140,6 +169,17 @@ export function DashboardShell({
           </button>
           <span className="font-extrabold text-sm">AutomaX</span>
         </header>
+
+        {/* Trilha (workspace > página), como no redesign: situa quem alterna entre clientes. */}
+        <div className="hidden lg:flex items-center gap-2 h-11 px-5 border-b border-border bg-surface/70 text-sm shrink-0">
+          <span className="text-text-muted truncate max-w-[220px]">{workspaceName}</span>
+          {pageTitle(pathname) && (
+            <>
+              <span className="text-text-muted" aria-hidden>›</span>
+              <span className="font-semibold truncate">{pageTitle(pathname)}</span>
+            </>
+          )}
+        </div>
 
         <main id="conteudo" className="flex-1 min-h-0 min-w-0 overflow-y-auto p-4 lg:p-5">
           {children}

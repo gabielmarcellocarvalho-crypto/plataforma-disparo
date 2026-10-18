@@ -3,7 +3,7 @@
 // custo por agente). Colaborador-only.
 import { createClient } from "@/lib/supabase/server";
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { estimateAnthropicCostUsd, estimateGeminiCostUsd } from "@/lib/pricing-calculator";
+import { estimateAnthropicCostUsd, estimateGeminiCostUsd, GEMINI_PRICING } from "@/lib/pricing-calculator";
 import { COST_USD_TO_BRL } from "@/lib/cost-constants";
 import { eachDayBrt, dayKeyBrt } from "@/lib/period";
 
@@ -55,6 +55,59 @@ function costRowUsd(
   });
 }
 
+// ── Consumo de IA fora das respostas do agente (tabela ai_usage, migration 0090) ───────────────────
+// Análise de lead, insights, sugestão de resposta e teste do agente. Entra no mesmo custo de IA do
+// workspace (orçamento, gráfico por dia e totais de Métricas). Sem a tabela, conta zero.
+export type AiUsageRow = {
+  feature: string;
+  provider: "claude" | "gemini";
+  model: string | null;
+  created_at: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  cache_read_input_tokens: number | null;
+};
+
+export function aiUsageRowUsd(row: AiUsageRow): number {
+  if (row.provider === "gemini") {
+    const model = row.model && GEMINI_PRICING[row.model] ? row.model : GEMINI_MODEL;
+    return estimateGeminiCostUsd(model, { inputTokens: row.input_tokens || 0, outputTokens: row.output_tokens || 0 });
+  }
+  return costRowUsd(row, "claude");
+}
+
+async function getAiUsageRows(supabase: AnySupabaseClient, workspaceId: string, fromIso: string, toIso?: string): Promise<AiUsageRow[]> {
+  const rows: AiUsageRow[] = [];
+  for (let page = 0; page < 20; page++) {
+    let q = supabase
+      .from("ai_usage")
+      .select("feature, provider, model, created_at, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens")
+      .eq("workspace_id", workspaceId)
+      .gte("created_at", fromIso);
+    if (toIso) q = q.lte("created_at", toIso);
+    const { data, error } = await q.order("created_at", { ascending: true }).range(page * 1000, page * 1000 + 999);
+    if (error || !data) break;
+    rows.push(...(data as AiUsageRow[]));
+    if (data.length < 1000) break;
+  }
+  return rows;
+}
+
+// Custo das funções extras de IA no período, por função (Métricas → Custos).
+export async function getAiUsageCostInRange(workspaceId: string, range: Range): Promise<{ feature: string; uses: number; costUsd: number }[]> {
+  const supabase = await createClient();
+  const rows = await getAiUsageRows(supabase as unknown as AnySupabaseClient, workspaceId, range.from.toISOString(), range.to.toISOString());
+  const byFeature = new Map<string, { uses: number; costUsd: number }>();
+  for (const r of rows) {
+    const cur = byFeature.get(r.feature) || { uses: 0, costUsd: 0 };
+    cur.uses++;
+    cur.costUsd += aiUsageRowUsd(r);
+    byFeature.set(r.feature, cur);
+  }
+  return [...byFeature.entries()].map(([feature, v]) => ({ feature, ...v })).sort((a, b) => b.costUsd - a.costUsd);
+}
+
 // Soma o custo de IA (respostas de agente) do mês corrente pra um workspace, em USD. Recebe o client
 // já criado (RLS ou admin) — quem chama de dentro de um webhook (sem sessão de usuário) passa o admin.
 export async function getMonthToDateAgentCostUsd(supabase: AnySupabaseClient, workspaceId: string): Promise<number> {
@@ -69,7 +122,10 @@ export async function getMonthToDateAgentCostUsd(supabase: AnySupabaseClient, wo
     getProviderByAgent(supabase, workspaceId),
   ]);
 
-  return (data || []).reduce((sum, row) => sum + costRowUsd(row, providerByAgent.get(row.agent_id as string)), 0);
+  const agentUsd = (data || []).reduce((sum, row) => sum + costRowUsd(row, providerByAgent.get(row.agent_id as string)), 0);
+  // Funções extras de IA (análise, insights, sugestões, testes) contam no mesmo orçamento do mês.
+  const extraUsd = (await getAiUsageRows(supabase, workspaceId, startOfMonthIso())).reduce((sum, r) => sum + aiUsageRowUsd(r), 0);
+  return agentUsd + extraUsd;
 }
 
 // Versões com período arbitrário (filtro de Métricas/Visão geral) — as funções "MonthToDate" acima
@@ -136,6 +192,10 @@ export async function getDailyCostInRange(workspaceId: string, range: Range): Pr
     if (!bucket) continue;
     const provider = providerByAgent.get(row.agent_id as string) || "claude";
     bucket[provider] += costRowUsd(row, provider);
+  }
+  for (const row of await getAiUsageRows(supabase as unknown as AnySupabaseClient, workspaceId, range.from.toISOString(), range.to.toISOString())) {
+    const bucket = usdByDay.get(dayKeyBrt(row.created_at));
+    if (bucket) bucket[row.provider] += aiUsageRowUsd(row);
   }
 
   const toBrl = (usd: number) => Math.round(usd * COST_USD_TO_BRL * 100) / 100;

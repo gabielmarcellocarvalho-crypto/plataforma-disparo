@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
+import { CalendarPlus, Maximize2, MessageCircle, MessageSquare, Phone, StickyNote, ThumbsDown, Trophy } from "lucide-react";
 import {
   getContactDetail,
   updateContactInfo,
@@ -24,6 +25,7 @@ import { updateContactAssignment, type BranchRow, type TeamMemberRow } from "@/a
 import { isTaskOverdue } from "@/lib/tasks";
 import { splitKnownAndExtras, type CustomFieldDef } from "@/lib/custom-fields";
 import { TagPicker } from "@/components/tag-picker";
+import { LeadAiBox } from "@/components/lead-ai-box";
 import { CustomFieldInput } from "@/components/custom-field-inputs";
 
 function formatDate(iso: string) {
@@ -58,7 +60,7 @@ export function CrmLeadDrawer({
   // mudança na hora, sem esperar recarregar a página.
   onPatched?: (
     id: string,
-    patch: { tags?: string[]; team_member_id?: string | null; branch_id?: string | null; stage?: string; pipeline_id?: string | null; pipeline_stage_id?: string | null; lost_reason?: string | null }
+    patch: { tags?: string[]; team_member_id?: string | null; branch_id?: string | null; stage?: string; pipeline_id?: string | null; pipeline_stage_id?: string | null; lost_reason?: string | null; deal_value?: number | null; ai_score?: number | null; ai_temperature?: string | null }
   ) => void;
 }) {
   const [contact, setContact] = useState<ContactDetail | null>(null);
@@ -338,6 +340,7 @@ export function CrmLeadDrawer({
     });
   }
 
+  const [drawerTab, setDrawerTab] = useState<"resumo" | "tarefas" | "notas">("resumo");
   const open = Boolean(contactId);
 
   return (
@@ -450,7 +453,74 @@ export function CrmLeadDrawer({
               </div>
             </div>
 
+            {/* Barra de ações rápidas (estilo HubSpot): o que se faz com um lead sem rolar o painel. */}
+            <div className="grid grid-cols-4 gap-1.5 px-5 py-3 border-b border-border shrink-0">
+              {(() => {
+                const digits = (contact.phone || "").replace(/\D/g, "");
+                const btn = "flex flex-col items-center gap-1 text-[11px] font-semibold py-2 rounded-md border border-border text-text-muted hover:text-text hover:bg-surface-2 cursor-pointer";
+                const focus = (id: string) => {
+                  setDrawerTab(id === "lead-drawer-task" ? "tarefas" : "notas");
+                  setTimeout(() => focusField(id), 60);
+                };
+                const focusField = (id: string) => {
+                  const el = document.getElementById(id);
+                  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  (el as HTMLInputElement | null)?.focus();
+                };
+                const markFinal = (signal: "concluido" | "descartado") => {
+                  if (pipelineStages.length > 0) {
+                    const etapa = pipelineStages.find((st) => st.signal === signal);
+                    if (etapa) handlePipelineStageChange(etapa.id);
+                  } else handleStageChange(signal);
+                };
+                return (
+                  <>
+                    <Link href={`/crm/${contact.id}`} className={btn}><Maximize2 size={15} aria-hidden />Ficha</Link>
+                    <Link href={`/conversas?contact=${contact.id}`} className={btn}><MessageSquare size={15} aria-hidden />Conversa</Link>
+                    {digits && (
+                      <a href={`https://wa.me/${digits}`} target="_blank" rel="noopener noreferrer" className={btn}><MessageCircle size={15} aria-hidden />WhatsApp</a>
+                    )}
+                    {digits && <a href={`tel:+${digits}`} className={btn}><Phone size={15} aria-hidden />Ligar</a>}
+                    <button type="button" onClick={() => focus("lead-drawer-task")} className={btn}><CalendarPlus size={15} aria-hidden />Tarefa</button>
+                    <button type="button" onClick={() => focus("lead-drawer-note")} className={btn}><StickyNote size={15} aria-hidden />Nota</button>
+                    {contact.stage !== "concluido" && (
+                      <button type="button" onClick={() => markFinal("concluido")} className="flex flex-col items-center gap-1 text-[11px] font-semibold py-2 rounded-md bg-success-soft text-success cursor-pointer">
+                        <Trophy size={15} aria-hidden />Ganho
+                      </button>
+                    )}
+                    {contact.stage !== LOST_STAGE && (
+                      <button type="button" onClick={() => markFinal("descartado")} className="flex flex-col items-center gap-1 text-[11px] font-semibold py-2 rounded-md bg-danger-soft text-danger cursor-pointer">
+                        <ThumbsDown size={15} aria-hidden />Perdido
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Abas (estilo HubSpot): dados do lead, tarefas e notas separados em vez de um painel longo. */}
+            <nav className="flex gap-1 px-5 border-b border-border shrink-0" aria-label="Seções do lead">
+              {([
+                ["resumo", "Resumo"],
+                ["tarefas", `Tarefas (${tasks.filter((t) => !t.completed_at).length})`],
+                ["notas", `Notas (${notes.length})`],
+              ] as const).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setDrawerTab(k)}
+                  className={`-mb-px border-b-2 px-3 py-2.5 text-sm font-semibold cursor-pointer ${
+                    drawerTab === k ? "border-primary-strong text-text" : "border-transparent text-text-muted hover:text-text"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-6">
+              {drawerTab === "resumo" && (
+              <>
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs text-text-muted">Entrou em {formatDate(contact.created_at)}</span>
@@ -479,6 +549,14 @@ export function CrmLeadDrawer({
                   {contact.needs_attention ? contact.attention_reason || "Precisa de atenção humana." : contact.flagged_reason}
                 </div>
               )}
+
+              <LeadAiBox
+                key={contact.id}
+                contactId={contact.id}
+                initial={contact}
+                dealValue={contact.deal_value ?? null}
+                onPatched={(patch) => onPatched?.(contact.id, patch)}
+              />
 
               <div className="flex flex-col gap-1.5">
                 <h3 className="text-sm font-bold">Tags</h3>
@@ -660,7 +738,10 @@ export function CrmLeadDrawer({
                 </div>
               )}
 
-              <div className="flex flex-col gap-2 border-t border-border pt-4">
+              </>
+              )}
+              {drawerTab === "tarefas" && (
+              <div className="flex flex-col gap-2">
                 <h3 className="text-sm font-bold">Tarefas ({tasks.filter((t) => !t.completed_at).length})</h3>
                 {tasks.length > 0 && (
                   <div className="flex flex-col gap-1.5">
@@ -676,6 +757,7 @@ export function CrmLeadDrawer({
                 )}
                 <div className="flex items-center gap-2">
                   <input
+                    id="lead-drawer-task"
                     value={taskTitleDraft}
                     onChange={(e) => setTaskTitleDraft(e.target.value)}
                     placeholder="título da nova tarefa…"
@@ -691,11 +773,14 @@ export function CrmLeadDrawer({
                   </button>
                 </div>
               </div>
+              )}
 
-              <div className="flex flex-col gap-3 border-t border-border pt-4">
+              {drawerTab === "notas" && (
+              <div className="flex flex-col gap-3">
                 <h3 className="text-sm font-bold">Observações da equipe</h3>
                 <div className="flex flex-col gap-2">
                   <textarea
+                    id="lead-drawer-note"
                     value={noteDraft}
                     onChange={(e) => setNoteDraft(e.target.value)}
                     rows={2}
@@ -728,6 +813,7 @@ export function CrmLeadDrawer({
                   </div>
                 )}
               </div>
+              )}
             </div>
           </>
         )}

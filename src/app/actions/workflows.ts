@@ -44,7 +44,29 @@ export type WorkflowListRow = {
   step_count: number;
   running_count: number;
   completed_count: number;
+  // Resumo dos passos do fluxo principal, pra prévia visual gatilho → passos na lista.
+  steps_preview?: StepPreview[];
 };
+
+export type StepPreview = { kind: "wait" | "action" | "condition"; label: string };
+
+function stepPreview(step_type: string, config: Record<string, unknown> | null): StepPreview {
+  const c = config || {};
+  if (step_type === "wait") {
+    const amount = Number(c.amount) || 0;
+    const unit = c.unit === "minutes" ? "min" : c.unit === "hours" ? "h" : "d";
+    return { kind: "wait", label: `Esperar ${amount}${unit}` };
+  }
+  if (step_type === "condition") return { kind: "condition", label: "Condição (sim/não)" };
+  const labels: Record<string, string> = {
+    send_message: (c.template as { name?: string } | null)?.name ? `Template ${(c.template as { name: string }).name}` : "Mensagem",
+    create_task: "Criar tarefa",
+    change_stage: "Mudar etapa",
+    add_note: "Observação",
+    http_request: "Webhook",
+  };
+  return { kind: "action", label: labels[String(c.action_type)] || "Ação" };
+}
 
 export async function getWorkflows(): Promise<WorkflowListRow[]> {
   const { workspace } = await getCurrentWorkspace();
@@ -60,12 +82,19 @@ export async function getWorkflows(): Promise<WorkflowListRow[]> {
 
   const ids = workflows.map((w) => w.id);
   const [{ data: steps }, { data: runs }] = await Promise.all([
-    supabase.from("workflow_steps").select("workflow_id").in("workflow_id", ids),
+    supabase.from("workflow_steps").select("workflow_id, position, step_type, config, parent_step_id").in("workflow_id", ids).order("position"),
     supabase.from("workflow_runs").select("workflow_id, status").in("workflow_id", ids),
   ]);
 
   const stepCount = new Map<string, number>();
-  for (const s of steps || []) stepCount.set(s.workflow_id, (stepCount.get(s.workflow_id) || 0) + 1);
+  const previews = new Map<string, StepPreview[]>();
+  for (const s of steps || []) {
+    stepCount.set(s.workflow_id, (stepCount.get(s.workflow_id) || 0) + 1);
+    if (s.parent_step_id) continue; // passos dentro de um ramo sim/não ficam fora da prévia
+    const list = previews.get(s.workflow_id) || [];
+    list.push(stepPreview(s.step_type as string, s.config as Record<string, unknown> | null));
+    previews.set(s.workflow_id, list);
+  }
   const runningCount = new Map<string, number>();
   const completedCount = new Map<string, number>();
   for (const r of runs || []) {
@@ -79,6 +108,7 @@ export async function getWorkflows(): Promise<WorkflowListRow[]> {
     step_count: stepCount.get(w.id) || 0,
     running_count: runningCount.get(w.id) || 0,
     completed_count: completedCount.get(w.id) || 0,
+    steps_preview: previews.get(w.id) || [],
   }));
 }
 

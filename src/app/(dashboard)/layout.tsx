@@ -23,6 +23,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
         .or("needs_attention.eq.true,flagged_reason.not.is.null")
     : { count: 0 };
 
+  // Tarefas abertas vencidas ou que vencem até o fim de hoje (Brasília) — contador de "Tarefas" no menu.
+  const fimDeHoje = new Date(`${new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })}T23:59:59-03:00`).toISOString();
+  const { count: tasksCount } = workspace
+    ? await supabase
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspace.id)
+        .is("completed_at", null)
+        .lte("due_at", fimDeHoje)
+    : { count: 0 };
+
   // Nenhum workspace existe ainda: só developer consegue criar o primeiro (RLS de "workspaces"
   // exige is_agency_admin() — colaborador escopado não consegue mesmo se tentasse).
   if (!workspace) {
@@ -133,6 +144,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       accessType={accessType}
       hiddenPages={hiddenPages}
       attentionCount={attentionCount ?? 0}
+      tasksCount={tasksCount ?? 0}
+      workspaceName={workspace.name}
     >
       {children}
     </DashboardShell>
