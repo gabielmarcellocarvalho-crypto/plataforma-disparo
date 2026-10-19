@@ -56,7 +56,9 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   // quê, só parece "não faz nada" ao clicar). onReady do next/script dispara certo mesmo se o script
   // já tiver carregado antes (troca de página/remount), o que resolve os dois casos.
   function handleSdkLoad() {
-    window.FB?.init({ appId: appId || "", xfbml: false, version: "v21.0" });
+    // Versão do diálogo da Meta: em versão antiga a Meta ignora fluxos novos (coexistência com o app
+    // WhatsApp Business) e cai no fluxo padrão, que pede código por SMS.
+    window.FB?.init({ appId: appId || "", xfbml: false, version: "v26.0" });
     setSdkReady(true);
   }
 
