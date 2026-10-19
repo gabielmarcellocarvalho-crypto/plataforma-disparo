@@ -158,8 +158,11 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
         config_id: launchConfig,
         response_type: "code",
         override_default_response_type: true,
-        // v4 escolhe o fluxo pela configuração e exige extras vazio; a conexão padrão segue na v3.
-        extras: coexistence ? {} : { setup: {}, featureType: "", sessionInfoVersion: "3" },
+        // Coexistência: sem o featureType a Meta abre o fluxo normal (pede código por SMS e recusa número
+        // que está no app). A v4 ainda aceita esse tipo de fluxo; o resto vem da configuração.
+        extras: coexistence
+          ? { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" }
+          : { setup: {}, featureType: "", sessionInfoVersion: "3" },
       }
     );
   }
