@@ -4,6 +4,8 @@ import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { WhatsappInstancesManager } from "@/components/whatsapp-instances-manager";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { ApiKeysManager } from "@/components/api-keys-manager";
+import { LeadQualificationEditor } from "@/components/lead-qualification-editor";
+import { resolveQualification } from "@/lib/lead-qualification";
 import { WorkspacePlanEditor } from "@/components/workspace-plan-editor";
 import { WorkspaceFeaturesEditor } from "@/components/workspace-features-picker";
 import { EmailFromEditor } from "@/components/email-from-editor";
@@ -30,7 +32,7 @@ export default async function ConfiguracoesPage() {
       : Promise.resolve({ data: [] }),
     isStaff ? listApiKeys() : Promise.resolve([]),
     isStaff && workspace
-      ? supabase.from("workspaces").select("plan, email_from, logo_url, brand_color").eq("id", workspace.id).maybeSingle()
+      ? supabase.from("workspaces").select("plan, email_from, logo_url, brand_color, lead_qualification").eq("id", workspace.id).maybeSingle()
       : Promise.resolve({ data: null }),
     isStaff ? listEmailDomains() : Promise.resolve([]),
   ]);
@@ -192,9 +194,18 @@ export default async function ConfiguracoesPage() {
             label: "API",
             icon: "code",
             content: (
-              <div className={`${card} max-w-xl`}>
-                <h3 className="font-bold text-[15px] mb-1">API — receber leads de fora</h3>
-                <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} />
+              <div className="flex flex-col gap-5 max-w-xl">
+                <div className={card}>
+                  <h3 className="font-bold text-[15px] mb-1">API — enviar e ler leads</h3>
+                  <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} />
+                </div>
+                <div className={card}>
+                  <h3 className="font-bold text-[15px] mb-1">Classificação dos leads (MQL, SQL)</h3>
+                  <LeadQualificationEditor
+                    initial={resolveQualification(workspaceRow?.lead_qualification)}
+                    stageLabels={resolveStageLabels(stageRow?.crm_stage_labels)}
+                  />
+                </div>
               </div>
             ),
           },

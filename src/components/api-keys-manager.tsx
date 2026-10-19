@@ -12,6 +12,7 @@ function formatDate(iso: string | null) {
 
 export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteUrl: string }) {
   const [name, setName] = useState("");
+  const [scope, setScope] = useState<"completa" | "leitura">("completa");
   const [newKey, setNewKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -19,7 +20,7 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
   function handleCreate() {
     setError(null);
     startTransition(async () => {
-      const result = await createApiKey(name);
+      const result = await createApiKey(name, scope);
       if (result.error) {
         setError(result.error);
       } else {
@@ -41,8 +42,8 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-text-muted">
-        Gere uma chave e envie leads pra este workspace direto de um site, formulário ou outra plataforma (Zapier,
-        Make, outro CRM), sem passar pelo WhatsApp.
+        Gere uma chave pra enviar leads pra este workspace (site, formulário, Zapier, Make, outro CRM) ou pra um dashboard ler os leads,
+        MQLs e SQLs. A chave <b>só de leitura</b> consulta os dados, mas não cria nem altera nada: é a indicada pra BI e dashboard.
       </p>
 
       {keys.length > 0 && (
@@ -52,6 +53,9 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
               <div className="min-w-0">
                 <div className="text-sm font-semibold truncate flex items-center gap-2">
                   {k.name}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${k.scope === "leitura" ? "bg-info-soft text-info-text" : "bg-surface-2 text-text-muted"}`}>
+                    {k.scope === "leitura" ? "só leitura" : "envia e lê"}
+                  </span>
                   {k.revoked_at && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-soft text-danger shrink-0">
                       revogada
@@ -89,8 +93,17 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Nome da chave (ex.: site institucional)"
-          className="flex-1 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
+          className="flex-1 min-w-0 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
         />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as "completa" | "leitura")}
+          aria-label="Tipo da chave"
+          className="border border-border rounded-md px-2 py-2 text-sm bg-surface outline-none focus:border-primary cursor-pointer"
+        >
+          <option value="completa">Envia e lê</option>
+          <option value="leitura">Só leitura (dashboard)</option>
+        </select>
         <button
           type="button"
           onClick={handleCreate}
@@ -122,6 +135,9 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
         <summary className="cursor-pointer font-semibold text-text">Ler os leads (BI, planilha, outro CRM)</summary>
         <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
 {`curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
+  -H "Authorization: Bearer ${activeExample}"
+
+curl "${siteUrl}/api/v1/funil?desde=2026-10-01&ate=2026-10-31" \\
   -H "Authorization: Bearer ${activeExample}"`}
         </pre>
         <p className="mt-2">
@@ -134,7 +150,12 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
           <code>fase</code> (nome da fase atual e <code>desde</code>, a data da última mudança), <code>resultado</code> (
           <code>ganho</code>, <code>perdido</code> ou vazio), <code>valor_venda</code>, <code>motivo_perda</code>, <code>origem</code>{" "}
           (source, UTMs, tags, se veio de campanha da Meta e a campanha/anúncio/formulário do Facebook Leads) e <code>campos</code>{" "}
-          (todos os campos personalizados).
+          (todos os campos personalizados), além de <code>qualificacao</code>: o nível do lead (<code>lead</code>, <code>mql</code>,{" "}
+          <code>sql</code>, <code>oportunidade</code>, <code>cliente</code> ou <code>perdido</code>) e se ele já é MQL/SQL, pelas regras abaixo.
+        </p>
+        <p className="mt-2">
+          <code>/api/v1/funil</code> devolve só os totais do período (leads, MQLs, SQLs, oportunidades, clientes e perdidos) e a contagem
+          por etapa, pronto pra um gráfico.
         </p>
       </details>
     </div>

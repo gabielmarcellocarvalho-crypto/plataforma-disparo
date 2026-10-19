@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseLeadsQuery, toApiLead, type LeadRow } from "@/lib/leads-api";
 import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { DEFAULT_QUALIFICATION } from "@/lib/lead-qualification";
 
 const q = (s: string) => parseLeadsQuery(new URLSearchParams(s));
 
@@ -41,7 +42,11 @@ const base: LeadRow = {
 };
 
 describe("toApiLead", () => {
-  const ctx = { stageLabels: { descartado: "Perdido" }, pipelineStages: new Map([["ps1", { name: "Visita agendada", signal: "encaminhamento" }]]) };
+  const ctx = {
+    stageLabels: { descartado: "Perdido" },
+    pipelineStages: new Map([["ps1", { name: "Visita agendada", signal: "encaminhamento" }]]),
+    qualification: DEFAULT_QUALIFICATION,
+  };
 
   it("monta fase, resultado, valor e origem", () => {
     const lead = toApiLead(base, ctx);
@@ -56,6 +61,7 @@ describe("toApiLead", () => {
     const lead = toApiLead({ ...base, stage: "abordado", pipeline_stage_id: "ps1", lost_reason: null }, ctx);
     expect(lead.fase.nome).toBe("Visita agendada");
     expect(lead.fase.codigo).toBe("encaminhamento");
+    expect(lead.qualificacao).toMatchObject({ nivel: "sql", mql: true, sql: true });
     expect(lead.resultado).toBeNull();
   });
 });

@@ -2,6 +2,7 @@
 // sem banco: aqui só entram parâmetros da URL e linhas já lidas.
 import { leadOriginDetail } from "@/lib/lead-origin";
 import { STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
+import { classifyLead, type QualConfig } from "@/lib/lead-qualification";
 
 export const LEADS_API_MAX_PAGE_SIZE = 500;
 const DEFAULT_PAGE_SIZE = 100;
@@ -63,6 +64,7 @@ export type LeadRow = {
 export type LeadsApiContext = {
   stageLabels: Partial<Record<ContactStage, string>>;
   pipelineStages: Map<string, { name: string; signal: string }>;
+  qualification: QualConfig;
 };
 
 // Uma linha do banco → o que a API devolve. A fase mostrada é a do funil próprio do cliente quando o lead
@@ -83,6 +85,7 @@ export function toApiLead(row: LeadRow, ctx: LeadsApiContext) {
     resultado,
     valor_venda: Number.isFinite(valor) ? valor : null,
     motivo_perda: resultado === "perdido" ? row.lost_reason : null,
+    qualificacao: classifyLead(signal, ctx.qualification),
     origem: leadOriginDetail(row),
     campos: row.custom_fields ?? {},
   };
