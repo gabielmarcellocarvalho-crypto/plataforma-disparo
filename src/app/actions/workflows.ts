@@ -1,6 +1,7 @@
 "use server";
 
-import { remapStepIds, type StepPlace } from "@/lib/workflow-step-remap";
+import { remapStepIds, stepKeys, type StepPlace } from "@/lib/workflow-step-remap";
+import { maskHeaders, sealHeaders, validateHeaders, type WebhookHeader } from "@/lib/webhook-headers";
 import { normalizeSchedule, scheduleError, type WorkflowSchedule } from "@/lib/workflow-schedule";
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -155,13 +156,13 @@ export async function getWorkflowSteps(workflowId: string): Promise<WorkflowStep
     rows
       .filter((r) => r.parent_step_id === parentId && r.branch === branch)
       .sort((a, b) => a.position - b.position)
-      .map((r) => ({ step_type: r.step_type, config: r.config }) as LeafStepInput);
+      .map((r) => ({ step_type: r.step_type, config: maskStepConfig(r.config) }) as LeafStepInput);
 
   return top.map((r) => {
     if (r.step_type === "condition") {
       return { step_type: "condition", config: r.config, yesSteps: childrenOf(r.id, "yes"), noSteps: childrenOf(r.id, "no") } as WorkflowStepInput;
     }
-    return { step_type: r.step_type, config: r.config } as WorkflowStepInput;
+    return { step_type: r.step_type, config: maskStepConfig(r.config) } as WorkflowStepInput;
   });
 }
 
@@ -172,7 +173,7 @@ async function replaceSteps(supabase: Awaited<ReturnType<typeof createClient>>, 
   // FK zera current_step_id e o motor encerra a execução sem enviar). Enquanto os passos são trocados,
   // ficam "esperando" alguns minutos pra rodada do motor não pegar ninguém sem passo no meio do caminho.
   const [{ data: oldSteps }, { data: activeRuns }] = await Promise.all([
-    supabase.from("workflow_steps").select("id, parent_step_id, branch, position").eq("workflow_id", workflowId),
+    supabase.from("workflow_steps").select("id, parent_step_id, branch, position, config").eq("workflow_id", workflowId),
     supabase.from("workflow_runs").select("id, status, current_step_id, next_run_at").eq("workflow_id", workflowId).in("status", ["running", "waiting"]).not("current_step_id", "is", null),
   ]);
   const runsToRemap = (activeRuns || []) as { id: string; status: string; current_step_id: string; next_run_at: string | null }[];
@@ -180,6 +181,38 @@ async function replaceSteps(supabase: Awaited<ReturnType<typeof createClient>>, 
     const hold = new Date(Date.now() + 5 * 60_000).toISOString();
     await supabase.from("workflow_runs").update({ status: "waiting", next_run_at: hold }).in("id", runsToRemap.map((r) => r.id));
   }
+
+  // Cabeçalho do webhook que voltou do navegador como "salvo" (sem valor novo): pega o cifrado do passo
+  // antigo na mesma posição; se o passo mudou de lugar, de qualquer passo antigo com o mesmo cabeçalho.
+  const oldRows = (oldSteps || []) as (StepPlace & { config: { headers?: WebhookHeader[] } | null })[];
+  const oldKeyById = stepKeys(oldRows);
+  const encByKey = new Map<string, Map<string, string>>();
+  const encByName = new Map<string, string>();
+  for (const row of oldRows) {
+    for (const h of row.config?.headers ?? []) {
+      if (!h.value_enc) continue;
+      const key = oldKeyById.get(row.id);
+      if (key) encByKey.set(key, (encByKey.get(key) ?? new Map()).set(h.name, h.value_enc));
+      if (!encByName.has(h.name)) encByName.set(h.name, h.value_enc);
+    }
+  }
+  const seal = (config: unknown, key: string) => {
+    const c = config as { action_type?: string; headers?: WebhookHeader[] } | null;
+    if (!c || c.action_type !== "http_request" || !c.headers?.length) return config;
+    const headers = c.headers.map((h) =>
+      h.value ? h : { name: h.name, value_enc: encByKey.get(key)?.get(h.name) ?? encByName.get(h.name) }
+    );
+    return { ...c, headers: sealHeaders(headers).filter((h) => h.value_enc) };
+  };
+  steps = steps.map((st, i) =>
+    st.step_type === "condition"
+      ? {
+          ...st,
+          yesSteps: st.yesSteps.map((cs, ci) => ({ ...cs, config: seal(cs.config, `c:${i}:yes:${ci}`) }) as LeafStepInput),
+          noSteps: st.noSteps.map((cs, ci) => ({ ...cs, config: seal(cs.config, `c:${i}:no:${ci}`) }) as LeafStepInput),
+        }
+      : ({ ...st, config: seal(st.config, `t:${i}`) } as WorkflowStepInput)
+  );
 
   await supabase.from("workflow_steps").delete().eq("workflow_id", workflowId);
   if (steps.length === 0) return;
@@ -225,6 +258,8 @@ export async function createWorkflow(input: WorkflowInput): Promise<ActionResult
   if (!workspace) return { error: "Nenhum workspace ativo." };
   if (!input.name.trim()) return { error: "Dê um nome pro workflow." };
   if (input.steps.length === 0) return { error: "Adicione pelo menos um passo." };
+  const headerError = stepsHeaderError(input.steps);
+  if (headerError) return { error: headerError };
   if (input.schedule) {
     const invalid = scheduleError(input.schedule);
     if (invalid) return { error: invalid };
@@ -273,6 +308,8 @@ export async function updateWorkflow(workflowId: string, input: WorkflowInput): 
   if (!workspace) return { error: "Nenhum workspace ativo." };
   if (!input.name.trim()) return { error: "Dê um nome pro workflow." };
   if (input.steps.length === 0) return { error: "Adicione pelo menos um passo." };
+  const headerError = stepsHeaderError(input.steps);
+  if (headerError) return { error: headerError };
   if (input.schedule) {
     const invalid = scheduleError(input.schedule);
     if (invalid) return { error: invalid };
@@ -395,4 +432,22 @@ export async function getWorkflowRuns(workflowId: string): Promise<WorkflowRunRo
       events: eventsByRun.get(r.id) || [],
     };
   });
+}
+
+// Todos os passos de "Chamar webhook" (também os de dentro de condição), pra validar os cabeçalhos.
+function stepsHeaderError(steps: WorkflowStepInput[]): string | null {
+  const leaves = steps.flatMap((st) => (st.step_type === "condition" ? [...st.yesSteps, ...st.noSteps] : [st]));
+  for (const st of leaves) {
+    const c = st.config as { action_type?: string; headers?: WebhookHeader[] } | null;
+    if (c?.action_type !== "http_request") continue;
+    const err = validateHeaders(c.headers);
+    if (err) return err;
+  }
+  return null;
+}
+
+function maskStepConfig(config: unknown): unknown {
+  const c = config as { action_type?: string; headers?: WebhookHeader[] } | null;
+  if (!c || c.action_type !== "http_request" || !c.headers) return config;
+  return { ...c, headers: maskHeaders(c.headers) };
 }

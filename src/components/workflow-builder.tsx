@@ -10,6 +10,7 @@ import {
   type WorkflowInput,
 } from "@/app/actions/workflows";
 import type { WorkflowListRow } from "@/app/actions/workflows";
+import type { WebhookHeader } from "@/lib/webhook-headers";
 import type { WorkflowTemplateSeed } from "@/lib/workflow-templates";
 import { STAGE_LABELS, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import type { PipelineWithStages } from "@/app/actions/pipelines";
@@ -957,14 +958,14 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
         <WorkflowSendConfig
           config={config}
           onChange={(next) => onChange({ ...config, ...next })}
-          textPlaceholder="Use {{nome}}, {{primeiro_nome}}, {{sobrenome}}, {{telefone}}, {{empresa}}, {{etapa}}, {{responsavel}}, {{data_criacao}}, {{campo:chave}}"
+          textPlaceholder="Use {{nome}}, {{primeiro_nome}}, {{sobrenome}}, {{telefone}}, {{email}}, {{empresa}}, {{etapa}}, {{responsavel}}, {{data_criacao}}, {{campo:chave}}"
         />
       )}
       {config.action_type === "add_note" && (
         <textarea
           value={config.text}
           onChange={(e) => onChange({ ...config, text: e.target.value })}
-          placeholder="Use {{nome}}, {{primeiro_nome}}, {{sobrenome}}, {{telefone}}, {{empresa}}, {{etapa}}, {{responsavel}}, {{data_criacao}}, {{campo:chave}}"
+          placeholder="Use {{nome}}, {{primeiro_nome}}, {{sobrenome}}, {{telefone}}, {{email}}, {{empresa}}, {{etapa}}, {{responsavel}}, {{data_criacao}}, {{campo:chave}}"
           rows={2}
           className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-none"
         />
@@ -996,14 +997,21 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
               className="flex-1 min-w-0 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface"
             />
           </div>
+          <WebhookHeadersFields headers={config.headers ?? []} onChange={(headers) => onChange({ ...config, headers })} />
           {config.method !== "GET" && (
-            <textarea
-              value={config.body}
-              onChange={(e) => onChange({ ...config, body: e.target.value })}
-              placeholder={'Corpo JSON (opcional) — ex: {"nome": "{{nome}}", "telefone": "{{telefone}}"}'}
-              rows={2}
-              className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-none font-mono"
-            />
+            <>
+              <textarea
+                value={config.body}
+                onChange={(e) => onChange({ ...config, body: e.target.value })}
+                placeholder={'Corpo JSON (opcional) — ex: {"nome": "{{nome}}", "email": "{{email}}", "telefone": "{{telefone}}"}'}
+                rows={6}
+                className="border border-border rounded-md px-2.5 py-2 text-sm outline-none focus:border-primary bg-surface resize-y font-mono"
+              />
+              <p className="text-[11px] text-text-muted">
+                Variáveis: {"{{nome}}"}, {"{{telefone}}"}, {"{{email}}"}, {"{{empresa}}"}, {"{{etapa}}"}, {"{{campo:chave}}"} (campo coletado, ex.{" "}
+                {"{{campo:produto}}"}). Aspas e quebras de linha dos valores são tratadas automaticamente.
+              </p>
+            </>
           )}
         </div>
       )}
@@ -1167,6 +1175,45 @@ function ScheduleEditor({ value, onChange }: { value: WorkflowSchedule; onChange
         <p className="text-xs text-danger font-medium">{invalid}</p>
       ) : (
         <p className="text-xs text-text-muted">As mensagens saem {describeSchedule(value)}. Fora disso, esperam a próxima janela.</p>
+      )}
+    </div>
+  );
+}
+
+// Cabeçalhos da chamada (ex.: token_exact da Exact Sales, Authorization de outro CRM). O valor é segredo:
+// vai cifrado pro banco e não volta pra tela; "salvo" no campo quer dizer que já existe um valor guardado.
+function WebhookHeadersFields({ headers, onChange }: { headers: WebhookHeader[]; onChange: (h: WebhookHeader[]) => void }) {
+  const update = (i: number, patch: Partial<WebhookHeader>) => onChange(headers.map((h, j) => (j === i ? { ...h, ...patch } : h)));
+  return (
+    <div className="flex flex-col gap-1.5">
+      {headers.map((h, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <input
+            value={h.name}
+            // Nome novo = valor novo: o cifrado antigo era de outro cabeçalho.
+            onChange={(e) => update(i, { name: e.target.value, value_enc: undefined })}
+            placeholder="Cabeçalho (ex.: token_exact)"
+            aria-label="Nome do cabeçalho"
+            className="w-40 shrink-0 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface font-mono"
+          />
+          <input
+            type="password"
+            autoComplete="off"
+            value={h.value ?? ""}
+            onChange={(e) => update(i, { value: e.target.value })}
+            placeholder={h.value_enc ? "•••• salvo (digite pra trocar)" : "Valor (ex.: o token)"}
+            aria-label="Valor do cabeçalho"
+            className="flex-1 min-w-0 border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface"
+          />
+          <button type="button" onClick={() => onChange(headers.filter((_, j) => j !== i))} aria-label="Remover cabeçalho" className="text-text-muted hover:text-danger cursor-pointer px-1">
+            ×
+          </button>
+        </div>
+      ))}
+      {headers.length < 5 && (
+        <button type="button" onClick={() => onChange([...headers, { name: "" }])} className="text-xs font-bold text-primary-strong w-fit cursor-pointer">
+          + Cabeçalho (token de autenticação)
+        </button>
       )}
     </div>
   );

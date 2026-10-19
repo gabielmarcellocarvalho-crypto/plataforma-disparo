@@ -7,8 +7,10 @@ import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudTemplate } from "@/lib/metacloud";
 import { fieldValue } from "@/lib/template-send";
+import { openHeaders } from "@/lib/webhook-headers";
 import {
   interpolateVariables,
+  jsonStringEscape,
   type ActionConfig,
   type AudienceConfig,
   type ConditionConfig,
@@ -81,6 +83,7 @@ async function resolveVariableContext(supabase: AdminClient, contact: Contact) {
   return {
     name: contact.name,
     phone: contact.phone,
+    email: contact.email ?? null,
     stage: contact.stage,
     company_name: companyName,
     responsible_name: responsibleName,
@@ -509,17 +512,20 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
   }
 
   if (action.action_type === "http_request") {
-    const url = interpolateVariables(action.url, vars);
-    const body = action.method === "GET" ? undefined : interpolateVariables(action.body, vars);
+    const url = interpolateVariables(action.url, vars, encodeURIComponent);
+    const body = action.method === "GET" ? undefined : interpolateVariables(action.body, vars, jsonStringEscape);
     try {
       // safeFetch: só endereço público (sem rede interna/metadados de nuvem), redirecionamentos revalidados.
       const res = await safeFetch(url, {
         method: action.method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
+        headers: { ...openHeaders(action.headers), ...(body ? { "Content-Type": "application/json" } : {}) },
         body,
         signal: AbortSignal.timeout(10_000),
       });
-      return { ok: res.ok, detail: { url, method: action.method, status: res.status } };
+      // Começo da resposta no histórico da execução: é onde aparece o id criado do outro lado (ex.: lead
+      // na Exact) ou o motivo da recusa.
+      const resposta = (await res.text().catch(() => "")).slice(0, 500);
+      return { ok: res.ok, detail: { url, method: action.method, status: res.status, resposta } };
     } catch (err) {
       if (err instanceof UnsafeUrlError) return { ok: false, detail: { error: `endereço não permitido: ${err.message}`, url } };
       return { ok: false, detail: { error: "falha ao chamar o webhook", url } };

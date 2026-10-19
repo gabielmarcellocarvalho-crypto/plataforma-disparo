@@ -1,6 +1,7 @@
 
 import type { ContactStage } from "@/lib/crm-stages";
 import type { WorkflowSchedule } from "@/lib/workflow-schedule";
+import type { WebhookHeader } from "@/lib/webhook-headers";
 
 // Catálogo Fase 1 (linear, sem ramificação SIM/NÃO — isso é Fase 2). Cada tipo aqui tem um shape de
 // config específico guardado em jsonb; os campos abaixo documentam o que cada um espera.
@@ -74,7 +75,7 @@ export type ActionConfig =
   | { action_type: "create_task"; title: string }
   | { action_type: "change_stage"; stage: ContactStage; pipelineStageId?: string | null }
   | { action_type: "add_note"; text: string }
-  | { action_type: "http_request"; method: HttpMethod; url: string; body: string };
+  | { action_type: "http_request"; method: HttpMethod; url: string; body: string; headers?: WebhookHeader[] };
 
 export type WaitUnit = "minutes" | "hours" | "days";
 
@@ -148,6 +149,7 @@ export type WorkflowRow = {
 export type InterpolationContact = {
   name: string | null;
   phone: string | null;
+  email?: string | null;
   company_name?: string | null;
   stage?: string | null;
   responsible_name?: string | null;
@@ -155,26 +157,32 @@ export type InterpolationContact = {
   custom_fields?: Record<string, unknown> | null;
 };
 
-export function interpolateVariables(template: string, contact: InterpolationContact): string {
+// `escape`: aplicado em cada valor antes de entrar no texto. No corpo JSON do webhook é o escape de
+// string JSON — sem isso, um nome com aspas ou quebra de linha quebrava o corpo inteiro.
+export function interpolateVariables(template: string, contact: InterpolationContact, escape: (v: string) => string = (v) => v): string {
   const parts = (contact.name || "").trim().split(/\s+/).filter(Boolean);
   const firstName = parts[0] || "";
   const lastName = parts.slice(1).join(" ");
   const createdAt = contact.created_at ? new Date(contact.created_at).toLocaleDateString("pt-BR") : "";
 
   let result = template
-    .replaceAll("{{nome}}", contact.name || "")
-    .replaceAll("{{primeiro_nome}}", firstName)
-    .replaceAll("{{sobrenome}}", lastName)
-    .replaceAll("{{telefone}}", contact.phone || "")
-    .replaceAll("{{empresa}}", contact.company_name || "")
-    .replaceAll("{{etapa}}", contact.stage || "")
-    .replaceAll("{{responsavel}}", contact.responsible_name || "")
-    .replaceAll("{{data_criacao}}", createdAt);
+    .replaceAll("{{nome}}", escape(contact.name || ""))
+    .replaceAll("{{primeiro_nome}}", escape(firstName))
+    .replaceAll("{{sobrenome}}", escape(lastName))
+    .replaceAll("{{telefone}}", escape(contact.phone || ""))
+    .replaceAll("{{email}}", escape(contact.email || ""))
+    .replaceAll("{{empresa}}", escape(contact.company_name || ""))
+    .replaceAll("{{etapa}}", escape(contact.stage || ""))
+    .replaceAll("{{responsavel}}", escape(contact.responsible_name || ""))
+    .replaceAll("{{data_criacao}}", escape(createdAt));
 
   result = result.replace(/\{\{campo:([a-zA-Z0-9_-]+)\}\}/g, (_, key: string) => {
     const value = contact.custom_fields?.[key];
-    return value == null ? "" : String(value);
+    return escape(value == null ? "" : String(value));
   });
 
   return result;
 }
+
+// Valor dentro de uma string JSON: aspas, barra e quebra de linha escapadas (sem as aspas de fora).
+export const jsonStringEscape = (v: string) => JSON.stringify(v).slice(1, -1);
