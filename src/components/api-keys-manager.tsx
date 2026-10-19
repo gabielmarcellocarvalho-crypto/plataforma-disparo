@@ -10,17 +10,23 @@ function formatDate(iso: string | null) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteUrl: string }) {
+// Dois blocos separados em Configurações > API, cada um com as suas chaves:
+//   - "entrada": receber leads de fora (site, formulário, Zapier) — a chave só cria lead;
+//   - "leitura": enviar os dados pra um dashboard/BI — a chave só consulta.
+// Chave antiga ("completa", de antes da separação) aparece em "entrada", que era o uso dela.
+export type ApiKeyKind = "entrada" | "leitura";
+
+export function ApiKeysManager({ keys, siteUrl, kind }: { keys: ApiKeySummary[]; siteUrl: string; kind: ApiKeyKind }) {
   const [name, setName] = useState("");
-  const [scope, setScope] = useState<"completa" | "leitura">("completa");
   const [newKey, setNewKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const mine = keys.filter((k) => (kind === "leitura" ? k.scope === "leitura" : k.scope !== "leitura"));
 
   function handleCreate() {
     setError(null);
     startTransition(async () => {
-      const result = await createApiKey(name, scope);
+      const result = await createApiKey(name, kind);
       if (result.error) {
         setError(result.error);
       } else {
@@ -31,7 +37,8 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
   }
 
   function handleRevoke(id: string) {
-    if (!window.confirm("Revogar essa chave? Quem estiver usando ela pra enviar leads para de funcionar imediatamente.")) return;
+    const uso = kind === "leitura" ? "ler os dados" : "enviar leads";
+    if (!window.confirm(`Revogar essa chave? Quem estiver usando ela pra ${uso} para de funcionar imediatamente.`)) return;
     startTransition(async () => {
       await revokeApiKey(id);
     });
@@ -42,20 +49,26 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-text-muted">
-        Gere uma chave pra enviar leads pra este workspace (site, formulário, Zapier, Make, outro CRM) ou pra um dashboard ler os leads,
-        MQLs e SQLs. A chave <b>só de leitura</b> consulta os dados, mas não cria nem altera nada: é a indicada pra BI e dashboard.
+        {kind === "leitura"
+          ? "Chave pra um dashboard, BI ou planilha puxar os leads, MQLs e SQLs deste workspace. Ela só consulta: não cria nem altera nada."
+          : "Chave pra mandar leads pra este workspace direto de um site, formulário ou outra plataforma (Zapier, Make, outro CRM), sem passar pelo WhatsApp. Ela só cria leads."}
       </p>
 
-      {keys.length > 0 && (
+      {mine.length > 0 && (
         <div className="border border-border rounded-md divide-y divide-border">
-          {keys.map((k) => (
+          {mine.map((k) => (
             <div key={k.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-sm font-semibold truncate flex items-center gap-2">
                   {k.name}
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${k.scope === "leitura" ? "bg-info-soft text-info-text" : "bg-surface-2 text-text-muted"}`}>
-                    {k.scope === "leitura" ? "só leitura" : "envia e lê"}
-                  </span>
+                  {k.scope === "completa" && (
+                    <span
+                      title="Criada antes da separação: além de enviar leads, também consegue ler os dados."
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-surface-2 text-text-muted"
+                    >
+                      antiga · também lê
+                    </span>
+                  )}
                   {k.revoked_at && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-soft text-danger shrink-0">
                       revogada
@@ -92,18 +105,9 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Nome da chave (ex.: site institucional)"
+          placeholder={kind === "leitura" ? "Nome da chave (ex.: dashboard Looker)" : "Nome da chave (ex.: site institucional)"}
           className="flex-1 min-w-0 border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary"
         />
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as "completa" | "leitura")}
-          aria-label="Tipo da chave"
-          className="border border-border rounded-md px-2 py-2 text-sm bg-surface outline-none focus:border-primary cursor-pointer"
-        >
-          <option value="completa">Envia e lê</option>
-          <option value="leitura">Só leitura (dashboard)</option>
-        </select>
         <button
           type="button"
           onClick={handleCreate}
@@ -115,49 +119,49 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
       </div>
       {error && <p className="text-xs text-danger font-medium">{error}</p>}
 
-      <details className="text-xs text-text-muted">
-        <summary className="cursor-pointer font-semibold text-text">Como usar</summary>
-        <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
+      {kind === "entrada" ? (
+        <details className="text-xs text-text-muted">
+          <summary className="cursor-pointer font-semibold text-text">Como usar</summary>
+          <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
 {`curl -X POST ${siteUrl}${ENDPOINT} \\
   -H "Authorization: Bearer ${activeExample}" \\
   -H "Content-Type: application/json" \\
   -d '{"name":"Maria","phone":"5511999998888","email":"maria@exemplo.com","source":"site"}'`}
-        </pre>
-        <p className="mt-2">
-          <code>phone</code> ou <code>email</code> é obrigatório (pode mandar os dois). Campos extras vão em{" "}
-          <code>custom_fields</code> (objeto chave/valor). Para marcar o lead, mande <code>tags</code> (lista, ex.:{" "}<code>[&quot;Feira&quot;,&quot;Sócio&quot;]</code>): tag que já existe no workspace é reaproveitada e as tags que o lead já tinha são mantidas. O lead cai direto na lista de Contatos e no CRM, na fase
-          &quot;não abordado&quot;. Para gravar UTMs, mande em <code>custom_fields</code> com o nome <code>utm_source</code>,{" "}
-          <code>utm_medium</code>, <code>utm_campaign</code> etc.
-        </p>
-      </details>
-
-      <details className="text-xs text-text-muted">
-        <summary className="cursor-pointer font-semibold text-text">Ler os leads (BI, planilha, outro CRM)</summary>
-        <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
-{`curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
+          </pre>
+          <p className="mt-2">
+            <code>phone</code> ou <code>email</code> é obrigatório (pode mandar os dois). Campos extras vão em{" "}
+            <code>custom_fields</code> (objeto chave/valor). Para marcar o lead, mande <code>tags</code> (lista, ex.:{" "}<code>[&quot;Feira&quot;,&quot;Sócio&quot;]</code>): tag que já existe no workspace é reaproveitada e as tags que o lead já tinha são mantidas. O lead cai direto na lista de Contatos e no CRM, na fase
+            &quot;não abordado&quot;. Para gravar UTMs, mande em <code>custom_fields</code> com o nome <code>utm_source</code>,{" "}
+            <code>utm_medium</code>, <code>utm_campaign</code> etc.
+          </p>
+        </details>
+      ) : (
+        <details className="text-xs text-text-muted">
+          <summary className="cursor-pointer font-semibold text-text">Como usar</summary>
+          <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
+{`# Totais do período (leads, MQL, SQL, oportunidades, clientes, perdidos)
+curl "${siteUrl}/api/v1/funil?desde=2026-10-01&ate=2026-10-31" \\
   -H "Authorization: Bearer ${activeExample}"
 
-curl "${siteUrl}/api/v1/funil?desde=2026-10-01&ate=2026-10-31" \\
+# Lista de leads, com a classificação de cada um
+curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
   -H "Authorization: Bearer ${activeExample}"`}
-        </pre>
-        <p className="mt-2">
-          Filtros opcionais: <code>desde</code> e <code>ate</code> (AAAA-MM-DD, pela data de entrada do lead, horário de Brasília).
-          Paginação: <code>pagina</code> (a partir de 1) e <code>por_pagina</code> (até 500, padrão 100); a resposta traz{" "}
-          <code>paginacao.total</code> e <code>total_paginas</code>.
-        </p>
-        <p className="mt-2">
-          Cada lead vem com <code>id</code>, <code>nome</code>, <code>telefone</code>, <code>email</code>, <code>data_entrada</code>,{" "}
-          <code>fase</code> (nome da fase atual e <code>desde</code>, a data da última mudança), <code>resultado</code> (
-          <code>ganho</code>, <code>perdido</code> ou vazio), <code>valor_venda</code>, <code>motivo_perda</code>, <code>origem</code>{" "}
-          (source, UTMs, tags, se veio de campanha da Meta e a campanha/anúncio/formulário do Facebook Leads) e <code>campos</code>{" "}
-          (todos os campos personalizados), além de <code>qualificacao</code>: o nível do lead (<code>lead</code>, <code>mql</code>,{" "}
-          <code>sql</code>, <code>oportunidade</code>, <code>cliente</code> ou <code>perdido</code>) e se ele já é MQL/SQL, pelas regras abaixo.
-        </p>
-        <p className="mt-2">
-          <code>/api/v1/funil</code> devolve só os totais do período (leads, MQLs, SQLs, oportunidades, clientes e perdidos) e a contagem
-          por etapa, pronto pra um gráfico.
-        </p>
-      </details>
+          </pre>
+          <p className="mt-2">
+            Filtros opcionais: <code>desde</code> e <code>ate</code> (AAAA-MM-DD, pela data de entrada do lead, horário de Brasília).
+            Paginação: <code>pagina</code> (a partir de 1) e <code>por_pagina</code> (até 500, padrão 100); a resposta traz{" "}
+            <code>paginacao.total</code> e <code>total_paginas</code>.
+          </p>
+          <p className="mt-2">
+            Cada lead vem com <code>id</code>, <code>nome</code>, <code>telefone</code>, <code>email</code>, <code>data_entrada</code>,{" "}
+            <code>fase</code> (nome da fase atual e <code>desde</code>, a data da última mudança), <code>resultado</code> (
+            <code>ganho</code>, <code>perdido</code> ou vazio), <code>valor_venda</code>, <code>motivo_perda</code>, <code>origem</code>{" "}
+            (source, UTMs, tags, se veio de campanha da Meta e a campanha/anúncio/formulário do Facebook Leads), <code>campos</code>{" "}
+            (todos os campos personalizados) e <code>qualificacao</code>: o nível do lead (<code>lead</code>, <code>mql</code>,{" "}
+            <code>sql</code>, <code>oportunidade</code>, <code>cliente</code> ou <code>perdido</code>), pelas regras abaixo.
+          </p>
+        </details>
+      )}
     </div>
   );
 }

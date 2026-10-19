@@ -3,11 +3,12 @@ import type { createAdminClient } from "@/lib/supabase/admin";
 import { hashApiKey } from "@/lib/api-keys";
 import { hitRateLimit } from "@/lib/rate-limit-db";
 
-export type ApiKeyScope = "completa" | "leitura";
+// entrada = só cria lead (POST); leitura = só consulta (GET); completa = chave antiga, faz os dois.
+export type ApiKeyScope = "entrada" | "leitura" | "completa";
 export type AuthedKey = { id: string; workspace_id: string; scope: ApiKeyScope };
 
 // Chave de API do header (Authorization: Bearer <chave> ou x-api-key) → workspace dono dela.
-// `write`: rota que cria/altera dado; chave só de leitura (pra dashboard/BI) é recusada nela.
+// `write`: rota que cria lead (aceita chave de entrada); sem `write`, rota de leitura (aceita chave de leitura).
 export async function authenticateApiKey(
   req: Request,
   supabase: ReturnType<typeof createAdminClient>,
@@ -28,9 +29,12 @@ export async function authenticateApiKey(
   if (!key || key.revoked_at) {
     return { error: NextResponse.json({ error: "Chave de API inválida ou revogada." }, { status: 401 }) };
   }
-  const scope: ApiKeyScope = key.scope === "leitura" ? "leitura" : "completa";
+  const scope: ApiKeyScope = key.scope === "leitura" || key.scope === "entrada" ? key.scope : "completa";
   if (write && scope === "leitura") {
-    return { error: NextResponse.json({ error: "Essa chave é só de leitura: ela não envia leads, só consulta." }, { status: 403 }) };
+    return { error: NextResponse.json({ error: "Essa chave é de leitura: ela só consulta os dados, não envia leads." }, { status: 403 }) };
+  }
+  if (!write && scope === "entrada") {
+    return { error: NextResponse.json({ error: "Essa chave é de entrada: ela só envia leads. Pra ler os dados, gere uma chave de leitura." }, { status: 403 }) };
   }
   return { key: { id: key.id as string, workspace_id: key.workspace_id as string, scope } };
 }

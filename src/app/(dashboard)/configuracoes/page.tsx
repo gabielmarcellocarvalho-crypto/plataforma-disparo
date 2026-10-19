@@ -196,11 +196,13 @@ export default async function ConfiguracoesPage() {
             content: (
               <div className="flex flex-col gap-5 max-w-xl">
                 <div className={card}>
-                  <h3 className="font-bold text-[15px] mb-1">API — enviar e ler leads</h3>
-                  <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} />
+                  <h3 className="font-bold text-[15px] mb-1">Receber leads (de fora pra cá)</h3>
+                  <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} kind="entrada" />
                 </div>
                 <div className={card}>
-                  <h3 className="font-bold text-[15px] mb-1">Classificação dos leads (MQL, SQL)</h3>
+                  <h3 className="font-bold text-[15px] mb-1">Enviar dados (pra dashboard e BI)</h3>
+                  <ApiKeysManager keys={apiKeys} siteUrl={siteUrl} kind="leitura" />
+                  <h4 className="font-bold text-sm mt-6 mb-1">Classificação dos leads (MQL, SQL)</h4>
                   <LeadQualificationEditor
                     initial={resolveQualification(workspaceRow?.lead_qualification)}
                     stageLabels={resolveStageLabels(stageRow?.crm_stage_labels)}

@@ -24,7 +24,7 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
   const supabase = await createClient();
   const cols = "id, name, key_prefix, created_at, last_used_at, revoked_at";
   const { data, error } = await supabase.from("api_keys").select(`${cols}, scope`).eq("workspace_id", workspace.id).order("created_at", { ascending: false });
-  if (!error) return (data ?? []).map((k) => ({ ...k, scope: k.scope === "leitura" ? "leitura" : "completa" })) as ApiKeySummary[];
+  if (!error) return (data ?? []).map((k) => ({ ...k, scope: k.scope === "leitura" || k.scope === "entrada" ? k.scope : "completa" })) as ApiKeySummary[];
   // Antes da migration 0091 (sem a coluna scope) toda chave é completa.
   const { data: old } = await supabase.from("api_keys").select(cols).eq("workspace_id", workspace.id).order("created_at", { ascending: false });
   return (old ?? []).map((k) => ({ ...k, scope: "completa" as const }));
@@ -34,8 +34,8 @@ export type CreateApiKeyResult = { error: string | null; plainKey?: string };
 
 // A chave em texto puro só existe nesse retorno — depois disso só o hash fica salvo, então não tem
 // como recuperar de novo (mesma lógica de secret de API de qualquer plataforma).
-// `scope`: "leitura" = chave pra dashboard/BI, que só consulta (não cria nem altera lead).
-export async function createApiKey(name: string, scope: ApiKeyScope = "completa"): Promise<CreateApiKeyResult> {
+// `scope`: "entrada" = só envia leads pra cá; "leitura" = só consulta (dashboard/BI).
+export async function createApiKey(name: string, scope: "entrada" | "leitura"): Promise<CreateApiKeyResult> {
   const trimmed = name.trim();
   if (!trimmed) return { error: "Dê um nome pra identificar essa chave (ex.: site institucional)." };
 
@@ -50,7 +50,7 @@ export async function createApiKey(name: string, scope: ApiKeyScope = "completa"
     name: trimmed,
     key_prefix: displayPrefix,
     key_hash: hash,
-    ...(scope === "leitura" ? { scope: "leitura" } : {}),
+    scope,
   });
   if (error) return { error: "Não foi possível gerar a chave." };
 
