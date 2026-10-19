@@ -678,7 +678,7 @@ export function ConversationsPanel({
 
   return (
     <div
-      className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[360px_1fr] ${selected && contextOpen ? "xl:grid-cols-[360px_1fr_300px]" : ""} bg-surface overflow-hidden`}
+      className={`flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[360px_minmax(0,1fr)] ${selected && contextOpen ? "xl:grid-cols-[360px_minmax(0,1fr)_300px]" : ""} bg-surface overflow-hidden`}
     >
       <div className={`border-r border-border flex-col min-h-0 ${mobileView === "chat" ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border flex flex-col gap-2.5 max-h-[65%] overflow-y-auto shrink-0">
@@ -1167,7 +1167,7 @@ export function ConversationsPanel({
                   <Fragment key={m.id}>
                     {separator}
                     <div
-                      className={`max-w-[75%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
+                      className={`max-w-[75%] min-w-0 [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
                         m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
                       }`}
                     >
