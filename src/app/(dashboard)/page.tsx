@@ -190,6 +190,40 @@ export default async function OverviewPage({
 
   const funnelRows = shownFunnel.points.map((p) => ({ label: p.label, value: p.value, current: p.current }));
 
+  // "Precisam de você": sem funil (workspace só de disparo/e-mail) ele vai pra coluna da esquerda, que
+  // senão ficava vazia embaixo do Volume.
+  const attentionCard = (
+    <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
+      <CardHeader
+        title="Precisam de você"
+        description="Alertas do agente e conversas assumidas"
+        action={<Link href="/conversas" className="text-xs font-bold text-text-muted hover:text-text whitespace-nowrap">Abrir conversas</Link>}
+      />
+      {!myDay || myDay.attentionList.length === 0 ? (
+        <p className="text-sm text-text-muted py-6 text-center">Nada pendente.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {myDay.attentionList.map((c) => (
+            <li key={c.id}>
+              <Link href={`/conversas?contact=${c.id}`} className="flex items-center gap-3 py-2.5 group">
+                <span className="grid place-items-center w-8 h-8 rounded-full bg-primary-soft text-primary-strong text-[11px] font-bold shrink-0" aria-hidden>
+                  {c.name.trim().slice(0, 2).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold group-hover:text-primary-strong">{c.name}</span>
+                  <span className="block truncate text-xs text-text-muted">{c.reason}</span>
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${c.kind === "atencao" ? "bg-danger-soft text-danger" : "bg-warning-soft text-warning-text"}`}>
+                  {c.kind === "atencao" ? "atenção" : "alerta"}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
   return (
     <div className="relative flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -274,39 +308,11 @@ export default async function OverviewPage({
             )}
           </div>
         ) : (
-          <div />
+          attentionCard
         )}
 
         <div className="flex flex-col gap-5">
-        <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
-          <CardHeader
-            title="Precisam de você"
-            description="Alertas do agente e conversas assumidas"
-            action={<Link href="/conversas" className="text-xs font-bold text-text-muted hover:text-text whitespace-nowrap">Abrir conversas</Link>}
-          />
-          {!myDay || myDay.attentionList.length === 0 ? (
-            <p className="text-sm text-text-muted py-6 text-center">Nada pendente.</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {myDay.attentionList.map((c) => (
-                <li key={c.id}>
-                  <Link href={`/conversas?contact=${c.id}`} className="flex items-center gap-3 py-2.5 group">
-                    <span className="grid place-items-center w-8 h-8 rounded-full bg-primary-soft text-primary-strong text-[11px] font-bold shrink-0" aria-hidden>
-                      {c.name.trim().slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold group-hover:text-primary-strong">{c.name}</span>
-                      <span className="block truncate text-xs text-text-muted">{c.reason}</span>
-                    </span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${c.kind === "atencao" ? "bg-danger-soft text-danger" : "bg-warning-soft text-warning-text"}`}>
-                      {c.kind === "atencao" ? "atenção" : "alerta"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+          {hasConversion && attentionCard}
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
             <CardHeader title="Tarefas de hoje" action={<Link href="/agenda" className="text-xs font-bold text-text-muted hover:text-text">Ver todas</Link>} />
             {!myDay || myDay.tasks.length === 0 ? (
