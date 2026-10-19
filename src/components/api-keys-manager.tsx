@@ -113,7 +113,28 @@ export function ApiKeysManager({ keys, siteUrl }: { keys: ApiKeySummary[]; siteU
         <p className="mt-2">
           <code>phone</code> ou <code>email</code> é obrigatório (pode mandar os dois). Campos extras vão em{" "}
           <code>custom_fields</code> (objeto chave/valor). Para marcar o lead, mande <code>tags</code> (lista, ex.:{" "}<code>[&quot;Feira&quot;,&quot;Sócio&quot;]</code>): tag que já existe no workspace é reaproveitada e as tags que o lead já tinha são mantidas. O lead cai direto na lista de Contatos e no CRM, na fase
-          &quot;não abordado&quot;.
+          &quot;não abordado&quot;. Para gravar UTMs, mande em <code>custom_fields</code> com o nome <code>utm_source</code>,{" "}
+          <code>utm_medium</code>, <code>utm_campaign</code> etc.
+        </p>
+      </details>
+
+      <details className="text-xs text-text-muted">
+        <summary className="cursor-pointer font-semibold text-text">Ler os leads (BI, planilha, outro CRM)</summary>
+        <pre className="mt-2 bg-bg border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
+{`curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
+  -H "Authorization: Bearer ${activeExample}"`}
+        </pre>
+        <p className="mt-2">
+          Filtros opcionais: <code>desde</code> e <code>ate</code> (AAAA-MM-DD, pela data de entrada do lead, horário de Brasília).
+          Paginação: <code>pagina</code> (a partir de 1) e <code>por_pagina</code> (até 500, padrão 100); a resposta traz{" "}
+          <code>paginacao.total</code> e <code>total_paginas</code>.
+        </p>
+        <p className="mt-2">
+          Cada lead vem com <code>id</code>, <code>nome</code>, <code>telefone</code>, <code>email</code>, <code>data_entrada</code>,{" "}
+          <code>fase</code> (nome da fase atual e <code>desde</code>, a data da última mudança), <code>resultado</code> (
+          <code>ganho</code>, <code>perdido</code> ou vazio), <code>valor_venda</code>, <code>motivo_perda</code>, <code>origem</code>{" "}
+          (source, UTMs, tags, se veio de campanha da Meta e a campanha/anúncio/formulário do Facebook Leads) e <code>campos</code>{" "}
+          (todos os campos personalizados).
         </p>
       </details>
     </div>

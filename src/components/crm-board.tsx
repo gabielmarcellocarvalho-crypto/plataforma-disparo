@@ -22,6 +22,8 @@ import { bulkAssignTeamMember, bulkMoveContacts } from "@/app/actions/crm-bulk";
 import { addTagsToContacts } from "@/app/actions/contacts";
 import { analyzeLeads } from "@/app/actions/ai-features";
 import { TEMPERATURE_UI, type Temperature } from "@/lib/lead-analysis";
+import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { MetaIcon } from "@/components/meta-icon";
 
 type Contact = {
   id: string;
@@ -45,7 +47,16 @@ type Contact = {
   deal_value?: number | null;
   ai_score?: number | null;
   ai_temperature?: string | null;
+  ctwa_at?: string | null;
 };
+
+// Dica do selo da Meta: qual campanha/anúncio, quando a gente sabe.
+function metaOriginTitle(c: Contact) {
+  const f = c.custom_fields || {};
+  const det = [f.campanha_meta, f.anuncio_meta ?? f.anuncio_titulo].filter((v) => typeof v === "string" && v.trim()).join(" · ");
+  const tipo = f.origem === "Facebook" ? "Facebook Leads" : "Anúncio da Meta";
+  return det ? `${tipo}: ${det}` : `Veio de campanha da Meta (${tipo})`;
+}
 
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
@@ -54,11 +65,12 @@ type FieldFilter = { key: string; value: string };
 // Atalhos de visão rápida — mesma ideia dos itens da barra lateral do Kommo (Leads ativos/ganhos/
 // perdidos/etc.), só que como fileira de chips em vez de sidebar vertical, já que nosso board é
 // horizontal por natureza. "todos" = nenhum filtro de visão aplicado (estado inicial).
-type QuickView = "todos" | "atencao" | "quentes" | "parados" | "ganhos" | "perdidos";
+type QuickView = "todos" | "atencao" | "quentes" | "campanha" | "parados" | "ganhos" | "perdidos";
 const QUICK_VIEWS: { key: QuickView; label: string }[] = [
   { key: "todos", label: "Todos" },
   { key: "atencao", label: "Pontos de atenção" },
   { key: "quentes", label: "🔥 Quentes" },
+  { key: "campanha", label: "Campanha Meta" },
   { key: "parados", label: "Parados" },
   { key: "ganhos", label: "Ganhos" },
   { key: "perdidos", label: "Perdidos" },
@@ -401,8 +413,13 @@ function ContactCard({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold truncate group-hover:text-primary-strong transition-colors">
-            {contact.name || contact.phone || contact.email || "sem nome"}
+          <div className="text-sm font-semibold truncate group-hover:text-primary-strong transition-colors flex items-center gap-1.5">
+            <span className="truncate">{contact.name || contact.phone || contact.email || "sem nome"}</span>
+            {isMetaCampaignLead(contact) && (
+              <span title={metaOriginTitle(contact)} className="shrink-0 inline-flex">
+                <MetaIcon size={15} />
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-text-muted truncate">{contact.phone || contact.email || ""}</div>
         </div>
@@ -648,6 +665,7 @@ export function CrmBoard({
     return items.filter((c) => {
       if (quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
       if (quickView === "quentes" && c.ai_temperature !== "quente") return false;
+      if (quickView === "campanha" && !isMetaCampaignLead(c)) return false;
       if (quickView === "ganhos" && c.stage !== "concluido") return false;
       if (quickView === "perdidos" && c.stage !== "descartado") return false;
       if (quickView === "parados") {
@@ -684,9 +702,10 @@ export function CrmBoard({
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
-    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, quentes: 0, parados: 0, ganhos: 0, perdidos: 0 };
+    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, quentes: 0, campanha: 0, parados: 0, ganhos: 0, perdidos: 0 };
     for (const c of items) {
       if (c.ai_temperature === "quente") counts.quentes++;
+      if (isMetaCampaignLead(c)) counts.campanha++;
       if (c.needs_attention || c.flagged_reason) counts.atencao++;
       if (c.stage === "concluido") counts.ganhos++;
       if (c.stage === "descartado") counts.perdidos++;
@@ -1120,6 +1139,7 @@ export function CrmBoard({
                   active ? "border-primary-strong bg-primary-strong text-white" : "border-border text-text-muted hover:border-primary-soft hover:text-primary-strong"
                 }`}
               >
+                {qv.key === "campanha" && <MetaIcon size={14} className={`inline -mt-0.5 mr-1 ${active ? "brightness-0 invert" : ""}`} />}
                 {qv.label} <span className={active ? "opacity-80" : "opacity-60"}>({quickViewCounts[qv.key]})</span>
               </button>
             );

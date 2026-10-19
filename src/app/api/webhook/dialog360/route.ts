@@ -245,7 +245,20 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
       console.error("Chatbot (360dialog/metacloud) falhou:", err instanceof Error ? err.message : err);
       return false;
     });
-    if (handledByBot) continue;
+    if (handledByBot) {
+      // O bot já criou/achou o contato; sem isso, lead de anúncio atendido pelo bot ficava sem a marca de campanha.
+      if (msg.referral) {
+        const { data: botContact } = await supabase
+          .from("contacts")
+          .select("id")
+          .eq("workspace_id", instance.workspace_id)
+          .in("phone", [msg.from, brPhoneVariant(msg.from) ?? msg.from])
+          .limit(1)
+          .maybeSingle();
+        if (botContact) await saveAdReferral(supabase, botContact.id, msg.ad);
+      }
+      continue;
+    }
 
     let { data: contact } = await supabase.from("contacts").select("id, stage").eq("workspace_id", instance.workspace_id).eq("phone", msg.from).maybeSingle();
     if (!contact) {

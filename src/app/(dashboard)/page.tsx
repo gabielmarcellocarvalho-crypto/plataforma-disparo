@@ -14,6 +14,7 @@ import { getMyDay, getReceivedByDay } from "@/lib/my-day";
 import { hasRedesignColumns } from "@/lib/redesign-columns";
 import { normalizeInsights } from "@/lib/ai-insights";
 import { AiInsightsCard } from "@/components/ai-insights-card";
+import { DonutChart } from "@/components/charts/donut-chart";
 import { AlertTriangle, ArrowRight, CalendarCheck, MessageSquare, UserPlus } from "lucide-react";
 
 // Atalho do "Seu dia" (estilo home do HubSpot): ícone, número e o que fazer com ele.
@@ -308,7 +309,18 @@ export default async function OverviewPage({
             )}
           </div>
         ) : (
-          attentionCard
+          // Sem funil não tem a aba Conversão (onde fica "Fontes de lead"), então a origem vem aqui.
+          <div className="flex flex-col gap-5">
+            {attentionCard}
+            <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
+              <CardHeader title="Origem dos leads" description={`Leads que entraram ${period.label}: campanha da Meta, API ou WhatsApp direto.`} />
+              {leadSources.length === 0 ? (
+                <p className="text-sm text-text-muted text-center py-8">Nenhum lead recebido nesse período ainda.</p>
+              ) : (
+                <DonutChart data={leadSources} />
+              )}
+            </div>
+          </div>
         )}
 
         <div className="flex flex-col gap-5">

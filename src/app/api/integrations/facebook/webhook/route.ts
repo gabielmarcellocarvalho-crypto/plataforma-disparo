@@ -117,6 +117,10 @@ async function saveLeadForWorkspace(
   // Campos do formulário + origem. Campo que o formulário não trouxe não apaga o que já existia.
   const custom: Record<string, string> = { ...mapped.custom, origem: "Facebook" };
   if (cityKey && mapped.city) custom[cityKey] = mapped.city;
+  // Campanha/anúncio/formulário de onde veio: a API de leitura (GET /api/v1/leads) devolve isso como origem.
+  if (data.campaign_name?.trim()) custom.campanha_meta = data.campaign_name.trim();
+  if (data.ad_name?.trim()) custom.anuncio_meta = data.ad_name.trim();
+  if (form.form_name?.trim()) custom.formulario_meta = form.form_name.trim();
 
   const formTag = (form.tag || form.form_name || "").trim();
   const campaignTag = (data.campaign_name || "").trim();

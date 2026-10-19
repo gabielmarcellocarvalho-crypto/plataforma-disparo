@@ -3,27 +3,84 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { hashApiKey } from "@/lib/api-keys";
 import { normalizePhone } from "@/lib/import-contacts";
 import { mergeTags, normalizeTags, reuseExistingTags } from "@/lib/contact-tags";
+import { hitRateLimit } from "@/lib/rate-limit-db";
+import { resolveStageLabels } from "@/lib/crm-stages";
+import { parseLeadsQuery, toApiLead, type LeadRow } from "@/lib/leads-api";
 
-// Endpoint público pra plataforma terceira (form de site, outro CRM, Zapier/Make) jogar lead direto
-// na lista de contatos, sem passar pelo WhatsApp. Autenticado por chave de API (gerada em
+// Endpoint público pra plataforma terceira (form de site, outro CRM, Zapier/Make): POST joga lead direto
+// na lista de contatos, sem passar pelo WhatsApp; GET lê os leads de volta. Autenticado por chave de API (gerada em
 // /configuracoes), não por sessão — por isso usa o client admin (service role) pra gravar.
-export async function POST(req: Request) {
+// Chave de API do header (Authorization: Bearer <chave> ou x-api-key) → workspace dono dela.
+async function authenticate(req: Request, supabase: ReturnType<typeof createAdminClient>) {
   const auth = req.headers.get("authorization") || "";
   const apiKey = auth.startsWith("Bearer ") ? auth.slice(7).trim() : req.headers.get("x-api-key");
   if (!apiKey) {
-    return NextResponse.json({ error: "Chave de API ausente. Envie em Authorization: Bearer <chave>." }, { status: 401 });
+    return { error: NextResponse.json({ error: "Chave de API ausente. Envie em Authorization: Bearer <chave>." }, { status: 401 }) };
   }
-
-  const supabase = createAdminClient();
   const { data: key } = await supabase
     .from("api_keys")
     .select("id, workspace_id, revoked_at")
     .eq("key_hash", hashApiKey(apiKey))
     .maybeSingle();
-
   if (!key || key.revoked_at) {
-    return NextResponse.json({ error: "Chave de API inválida ou revogada." }, { status: 401 });
+    return { error: NextResponse.json({ error: "Chave de API inválida ou revogada." }, { status: 401 }) };
   }
+  return { key: key as { id: string; workspace_id: string } };
+}
+
+// Leitura dos leads pra BI/planilha/outro CRM: dados, fase atual, ganho/perdido com valor e origem.
+// Paginado e com filtro pela data de entrada; ordem fixa (entrada, id) pra a paginação não pular lead.
+export async function GET(req: Request) {
+  const supabase = createAdminClient();
+  const authed = await authenticate(req, supabase);
+  if ("error" in authed) return authed.error;
+  const { key } = authed;
+
+  // Devolve dado pessoal em lote: limita por chave (120/min) pra uma chave vazada não virar exportação contínua.
+  const limit = await hitRateLimit(`api-leads:${key.id}`, 120, 60);
+  if (!limit.allowed) {
+    return NextResponse.json({ error: "Muitas requisições. Tente de novo em instantes." }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } });
+  }
+
+  const parsed = parseLeadsQuery(new URL(req.url).searchParams);
+  if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const { fromIso, toIso, page, perPage } = parsed.query;
+
+  let q = supabase
+    .from("contacts")
+    .select(
+      "id, name, phone, email, created_at, stage, stage_changed_at, pipeline_stage_id, lost_reason, custom_fields, tags, ctwa_at, deal_value",
+      { count: "exact" }
+    )
+    .eq("workspace_id", key.workspace_id);
+  if (fromIso) q = q.gte("created_at", fromIso);
+  if (toIso) q = q.lte("created_at", toIso);
+  const from = (page - 1) * perPage;
+  const [{ data: rows, count, error }, { data: ws }, { data: stages }] = await Promise.all([
+    q.order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, from + perPage - 1),
+    supabase.from("workspaces").select("crm_stage_labels").eq("id", key.workspace_id).maybeSingle(),
+    supabase.from("pipeline_stages").select("id, name, signal, pipelines!inner(workspace_id)").eq("pipelines.workspace_id", key.workspace_id),
+  ]);
+  if (error) return NextResponse.json({ error: "Não foi possível ler os leads." }, { status: 500 });
+
+  await supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", key.id);
+
+  const ctx = {
+    stageLabels: resolveStageLabels(ws?.crm_stage_labels),
+    pipelineStages: new Map((stages ?? []).map((st) => [st.id as string, { name: st.name as string, signal: st.signal as string }])),
+  };
+  const total = count ?? 0;
+  return NextResponse.json({
+    data: ((rows ?? []) as unknown as LeadRow[]).map((r) => toApiLead(r, ctx)),
+    paginacao: { pagina: page, por_pagina: perPage, total, total_paginas: Math.ceil(total / perPage) },
+  });
+}
+
+export async function POST(req: Request) {
+  const supabase = createAdminClient();
+  const authed = await authenticate(req, supabase);
+  if ("error" in authed) return authed.error;
+  const { key } = authed;
 
   let body: Record<string, unknown>;
   try {
