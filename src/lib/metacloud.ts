@@ -174,6 +174,28 @@ export async function registerMetaCloudPhoneWithFallback(phoneNumberId: string, 
   }
 }
 
+// Coexistência (número que continua no app WhatsApp Business): pede pra Meta mandar o histórico de
+// conversas (webhook `history`) ou os contatos do app (`smb_app_state_sync`). Cada um só pode ser pedido
+// uma vez por conexão e até 24h depois dela; fora disso, o cliente precisa desconectar e conectar de novo.
+export async function requestMetaCloudAppSync(phoneNumberId: string, syncType: "history" | "smb_app_state_sync"): Promise<string | null> {
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}/smb_app_data`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${systemUserToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", sync_type: syncType }),
+  });
+  if (!res.ok) throw new Error(`Falha ao pedir sincronização (${syncType}): ${res.status} ${await res.text().catch(() => "")}`);
+  const data = (await res.json().catch(() => null)) as { request_id?: string } | null;
+  return data?.request_id ?? null;
+}
+
+// No fim da conexão com coexistência o popup pode mandar só o WABA; o número sai da lista dele.
+export async function getFirstWabaPhoneNumberId(wabaId: string): Promise<string | null> {
+  const res = await fetch(`${BASE_URL}/${wabaId}/phone_numbers?fields=id`, { headers: { Authorization: `Bearer ${systemUserToken()}` } });
+  if (!res.ok) return null;
+  const data = (await res.json().catch(() => null)) as { data?: { id?: string }[] } | null;
+  return data?.data?.[0]?.id ?? null;
+}
+
 // Troca o `code` do Embedded Signup (FB.login com response_type: 'code') por um token — usado só
 // como verificação server-side de que o popup foi legítimo (o code prova que veio do fluxo real da
 // Meta). O envio em si usa o token de System User, não esse token de curta duração.

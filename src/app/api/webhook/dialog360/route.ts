@@ -16,6 +16,8 @@ import { secureEqual } from "@/lib/secure-compare";
 import { metaSignatureMode, verifyMetaSignature } from "@/lib/meta-signature";
 import { handleChatbotInbound, inboundMediaPlaceholder } from "@/lib/chatbot-engine";
 import { parseTemplateCategoryChanges, saveTemplateCategoryChanges } from "@/lib/meta-template-events";
+import { parseCoexistenceMessages } from "@/lib/smb-coexistence";
+import { saveCoexistenceMessages } from "@/lib/smb-coexistence-save";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -168,12 +170,17 @@ async function processDialog360Webhook(body: Dialog360WebhookBody | null, metaTr
   if (!body) return;
   const incoming = parseDialog360IncomingMessages(body);
 
+  // Coexistência (número também no app WhatsApp Business): mensagem enviada pelo celular e histórico do app.
+  // Evento que só a Meta manda, então exige a origem confiável.
+  const coex = metaTrusted ? parseCoexistenceMessages(body) : [];
+  if (coex.length) await saveCoexistenceMessages(createAdminClient(), coex);
+
   // Rede de segurança pro canal metacloud (Tech Provider direto): esse endpoint foi validado contra o
   // formato real do 360dialog, mas nunca recebeu um evento de verdade vindo direto da Meta ainda. Se
   // chegar um payload com entry/changes mas o parser não extrair nenhuma mensagem, loga o corpo bruto —
   // sem isso, uma mudança de formato passaria batido (a Meta sempre responde 200 aqui, não teria erro
   // visível em lugar nenhum, só mensagem "sumida" silenciosamente).
-  if (incoming.length === 0 && (body.entry?.length ?? 0) > 0) {
+  if (incoming.length === 0 && coex.length === 0 && (body.entry?.length ?? 0) > 0) {
     // Só a forma do payload, nunca o conteúdo: o corpo tem telefone e texto de cliente (LGPD).
     const shape = body.entry?.map((e) => ({ changes: (e as { changes?: { field?: string }[] }).changes?.map((c) => c.field) }));
     console.warn("Webhook 360dialog/metacloud: payload com entry mas 0 mensagens extraídas —", JSON.stringify(shape).slice(0, 500));

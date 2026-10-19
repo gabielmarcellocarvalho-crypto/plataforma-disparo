@@ -20,8 +20,8 @@ declare global {
 // pela Meta) — é daqui que tiramos waba_id/phone_number_id, não do retorno do FB.login em si.
 type EmbeddedSignupMessage = {
   type?: string;
-  event?: "FINISH" | "CANCEL" | "ERROR";
-  data?: { waba_id?: string; phone_number_id?: string };
+  event?: "FINISH" | "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" | "CANCEL" | "ERROR";
+  data?: { waba_id?: string; phone_number_id?: string; error_message?: string };
 };
 
 // Conecta um número novo direto pela Meta (Tech Provider/Embedded Signup) — sem QR code e sem API key
@@ -40,9 +40,13 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
   const codeRef = useRef<string | null>(null);
   const finishDataRef = useRef<{ wabaId: string; phoneNumberId: string } | null>(null);
   const finalizedRef = useRef(false);
+  // Coexistência: o número continua no app WhatsApp Business do celular. Usa outra configuração do
+  // Embedded Signup (v4, com o produto "WhatsApp Business app" marcado no App Dashboard da Meta).
+  const coexRef = useRef(false);
 
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID;
+  const coexConfigId = process.env.NEXT_PUBLIC_META_COEX_CONFIG_ID;
 
   // Inicializa via onReady do <Script> em vez de window.fbAsyncInit de propósito — fbAsyncInit é o
   // padrão "clássico" do SDK, mas depende de definir esse global ANTES do script carregar; com
@@ -66,7 +70,7 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
     if (!code || !finish) return;
     finalizedRef.current = true;
     startTransition(async () => {
-      const result = await connectMetaCloudInstance(finish.wabaId, finish.phoneNumberId, code, department);
+      const result = await connectMetaCloudInstance(finish.wabaId, finish.phoneNumberId, code, department, coexRef.current);
       if (result.error) {
         setError(result.error);
         finalizedRef.current = false; // permite tentar de novo sem precisar reabrir o popup
@@ -107,8 +111,13 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
       if (payload.event === "FINISH" && payload.data?.waba_id && payload.data?.phone_number_id) {
         finishDataRef.current = { wabaId: payload.data.waba_id, phoneNumberId: payload.data.phone_number_id };
         tryFinalize();
+      } else if (payload.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" && payload.data?.waba_id) {
+        // Número do app: o id do número pode não vir aqui; o servidor busca pelo WABA.
+        finishDataRef.current = { wabaId: payload.data.waba_id, phoneNumberId: payload.data.phone_number_id ?? "" };
+        tryFinalize();
       } else if (payload.event === "CANCEL") {
-        setError("Conexão cancelada.");
+        // Na v4 o erro também chega como CANCEL, com a mensagem da Meta.
+        setError(payload.data?.error_message ? `A Meta recusou: ${payload.data.error_message}` : "Conexão cancelada.");
       } else if (payload.event === "ERROR") {
         setError("A Meta retornou um erro durante a conexão — tenta de novo.");
       }
@@ -117,12 +126,14 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
     return () => window.removeEventListener("message", handleMessage);
   }, [department, onConnected]);
 
-  function handleClick() {
+  function handleClick(coexistence = false) {
     setError(null);
+    coexRef.current = coexistence;
     codeRef.current = null;
     finishDataRef.current = null;
     finalizedRef.current = false;
-    if (!window.FB || !configId) {
+    const launchConfig = coexistence ? coexConfigId : configId;
+    if (!window.FB || !launchConfig) {
       setError("Embedded Signup não está configurado (faltam NEXT_PUBLIC_META_APP_ID/NEXT_PUBLIC_META_CONFIG_ID).");
       return;
     }
@@ -144,10 +155,11 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
         }
       },
       {
-        config_id: configId,
+        config_id: launchConfig,
         response_type: "code",
         override_default_response_type: true,
-        extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+        // v4 escolhe o fluxo pela configuração e exige extras vazio; a conexão padrão segue na v3.
+        extras: coexistence ? {} : { setup: {}, featureType: "", sessionInfoVersion: "3" },
       }
     );
   }
@@ -167,14 +179,33 @@ export function MetacloudConnect({ department, onConnected }: { department: stri
           remounts com o script já carregado (troca de workspace, reabrir o formulário), diferente de
           onLoad que só dispara 1x na vida da página. */}
       <Script src="https://connect.facebook.net/en_US/sdk.js" strategy="afterInteractive" onReady={handleSdkLoad} />
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={!sdkReady || pending}
-        className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md w-fit cursor-pointer disabled:opacity-60"
-      >
-        {pending ? "Conectando…" : sdkReady ? "Conectar via Meta" : "Carregando…"}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => handleClick(false)}
+          disabled={!sdkReady || pending}
+          className="bg-primary-strong text-white text-sm font-bold px-4 py-2.5 rounded-md w-fit cursor-pointer disabled:opacity-60"
+        >
+          {pending ? "Conectando…" : sdkReady ? "Conectar via Meta" : "Carregando…"}
+        </button>
+        {coexConfigId && (
+          <button
+            type="button"
+            onClick={() => handleClick(true)}
+            disabled={!sdkReady || pending}
+            className="border border-primary-strong text-primary-strong text-sm font-bold px-4 py-2.5 rounded-md w-fit cursor-pointer disabled:opacity-60"
+          >
+            Já uso esse número no WhatsApp Business
+          </button>
+        )}
+      </div>
+      {coexConfigId && (
+        <p className="text-xs text-text-muted">
+          Número que já está no app WhatsApp Business do celular: use o segundo botão e escaneie o QR code com o celular. O número
+          continua funcionando no app (app na versão 2.24.17 ou mais nova), e as mensagens enviadas por lá aparecem aqui em Conversas.
+          O botão principal é pra número que não está em nenhum app do WhatsApp.
+        </p>
+      )}
       {error && <p className="text-sm text-danger font-medium">{error}</p>}
     </div>
   );

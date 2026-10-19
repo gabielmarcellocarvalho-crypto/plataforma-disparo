@@ -10,6 +10,8 @@ import {
   exchangeMetaCloudCode,
   subscribeMetaCloudWebhook,
   registerMetaCloudPhoneWithFallback,
+  requestMetaCloudAppSync,
+  getFirstWabaPhoneNumberId,
   getMetaCloudPhoneInfo,
   listMetaCloudTemplates,
   updateMetaCloudProfilePhoto,
@@ -128,23 +130,30 @@ export type MetaCloudConnectResult = { error: string | null; ok?: boolean };
 // `code` do FB.login por token, provando que veio do fluxo real de OAuth da Meta, e (2) chama a Graph
 // API com o token de System User da própria AutomaX pra confirmar que esse WABA/número é acessível de
 // verdade — se não for, a chamada falha e nada é salvo.
+// `coexistence`: número que continua no app WhatsApp Business do celular (o cliente escaneou o QR no
+// popup). Ele já está registrado pela Meta — registrar de novo não é permitido — e o histórico do app
+// é pedido logo depois de conectar (a Meta só aceita esse pedido nas primeiras 24h).
 export async function connectMetaCloudInstance(
   wabaId: string,
-  phoneNumberId: string,
+  phoneNumberIdIn: string,
   code: string,
-  department: string
+  department: string,
+  coexistence = false
 ): Promise<MetaCloudConnectResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
-  if (!wabaId || !phoneNumberId || !code) return { error: "Dados incompletos do Embedded Signup — tente conectar de novo." };
+  if (!wabaId || !code) return { error: "Dados incompletos do Embedded Signup — tente conectar de novo." };
+  let phoneNumberId = phoneNumberIdIn;
 
   try {
     const businessToken = await exchangeMetaCloudCode(code);
     await subscribeMetaCloudWebhook(wabaId);
+    if (!phoneNumberId && coexistence) phoneNumberId = (await getFirstWabaPhoneNumberId(wabaId)) ?? "";
+    if (!phoneNumberId) return { error: "A Meta não informou o número conectado — tente conectar de novo." };
     // Sem isso, todo envio (template, texto, mídia) falha com "(#133010) Account not registered" —
     // passo separado da assinatura do webhook, exigido pela Cloud API mesmo com o número já
     // aparecendo conectado no Business Manager.
-    await registerMetaCloudPhoneWithFallback(phoneNumberId, businessToken);
+    if (!coexistence) await registerMetaCloudPhoneWithFallback(phoneNumberId, businessToken);
     const phoneInfo = await getMetaCloudPhoneInfo(phoneNumberId);
 
     // Upsert manual em vez de .upsert({onConflict:"phone_number_id"}) de propósito — esse índice é
@@ -166,6 +175,13 @@ export async function connectMetaCloudInstance(
       ? await supabase.from("whatsapp_instances").update(row).eq("id", existing.id)
       : await supabase.from("whatsapp_instances").insert(row);
     if (error) return { error: `Conectou na Meta, mas não deu pra salvar: ${error.message}` };
+
+    if (coexistence) {
+      // Sem histórico a conexão continua valendo: só as conversas antigas do app não aparecem.
+      await requestMetaCloudAppSync(phoneNumberId, "history").catch((err) =>
+        console.error("Pedido de histórico (coexistência) falhou:", { phoneNumberId, error: (err as Error).message })
+      );
+    }
 
     void phoneInfo; // só validação por ora — exibir nome/telefone formatado fica pra quando tiver UI de edição
     revalidatePath("/configuracoes");
