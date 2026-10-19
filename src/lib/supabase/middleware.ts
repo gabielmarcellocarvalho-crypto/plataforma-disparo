@@ -18,6 +18,7 @@ const PUBLIC_PATHS = [
   "/auth/callback",
   "/api/webhook",
   "/api/v1/leads",
+  "/api/v1/funil", // leitura pra dashboard: a chave de API no header é a autenticação
   "/api/cron",
   "/api/unsubscribe",
   "/api/e",
