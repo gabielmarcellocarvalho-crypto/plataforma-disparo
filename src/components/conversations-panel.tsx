@@ -518,10 +518,17 @@ export function ConversationsPanel({
   }, [selectedContactId, notesVersion]);
   const currentDetail = detail && detail.id === selectedContactId ? detail : null;
   // Linha do tempo: mensagens + notas internas na ordem em que aconteceram.
+  // As que a equipe acabou de mandar (ainda não vieram do servidor) ficam sempre no fim, na ordem em que
+  // foram escritas: a hora delas é a do navegador, de quando foram digitadas, e a do servidor é a de
+  // quando o WhatsApp confirmou — comparar as duas jogava a 2ª mensagem da fila pra antes da 1ª.
+  const pendingLocal = orderedMessages.filter((m) => m.id.startsWith("local-"));
   const timeline = [
-    ...orderedMessages.map((m) => ({ kind: "msg" as const, at: m.created_at, msg: m })),
-    ...(currentDetail?.notes ?? []).map((n) => ({ kind: "note" as const, at: n.created_at, note: n })),
-  ].sort((a, b) => a.at.localeCompare(b.at));
+    ...[
+      ...orderedMessages.filter((m) => !m.id.startsWith("local-")).map((m) => ({ kind: "msg" as const, at: m.created_at, msg: m })),
+      ...(currentDetail?.notes ?? []).map((n) => ({ kind: "note" as const, at: n.created_at, note: n })),
+    ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()),
+    ...pendingLocal.map((m) => ({ kind: "msg" as const, at: m.created_at, msg: m })),
+  ];
 
   const quickQuery = composerMode === "mensagem" ? quickReplyQuery(draft) : null;
   const quickMatches = quickQuery === null ? [] : matchQuickReplies(quickReplies, quickQuery);
