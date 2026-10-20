@@ -113,6 +113,8 @@ type Message = {
   media_url: string | null;
   media_type: "image" | "audio" | "document" | null;
   created_at: string;
+  // Só nas mensagens que a equipe acabou de mandar e o servidor ainda não confirmou.
+  local?: "enviando" | "falhou";
 };
 export type Vendor = { id: string; name: string };
 
@@ -235,26 +237,64 @@ export function ConversationsPanel({
 
   // Mensagens que a equipe acabou de mandar: aparecem na hora, sem esperar a página inteira recarregar do
   // servidor. Saem daqui quando os dados novos chegam (o servidor já tem a mensagem de verdade).
+  // Enviada (sem `local`) sai daqui assim que a mesma mensagem aparece nos dados do servidor; "enviando"
+  // e "falhou" ficam até terminar ou alguém reenviar.
   const [sentLocal, setSentLocal] = useState<Message[]>([]);
   useEffect(() => {
-    setSentLocal([]);
+    setSentLocal((cur) => cur.filter((m) => m.local || !serverHasMessage(serverConversations, m)));
   }, [serverConversations]);
-  const conversations = useMemo(
-    () =>
-      sentLocal.length === 0
-        ? serverConversations
-        : serverConversations.map((c) => {
-            const extra = sentLocal.filter((m) => m.contact_id === c.contact.id && m.agent_id === (c.agent?.id ?? null));
-            return extra.length ? { ...c, messages: [...extra.slice().reverse(), ...c.messages] } : c;
-          }),
-    [serverConversations, sentLocal]
-  );
+  // Status, etapa e responsável mudam na tela no clique; o servidor confirma depois. Sem isso cada troca
+  // esperava a gravação + a página inteira recarregar, e as outras caixas ficavam travadas nesse meio-tempo.
+  const [contactPatches, setContactPatches] = useState<Record<string, ContactPatch>>({});
+  const [ticketPatches, setTicketPatches] = useState<Record<string, TicketPatch>>({});
+  const conversations = useMemo(() => {
+    const hasPatches = Object.keys(contactPatches).length > 0 || Object.keys(ticketPatches).length > 0;
+    if (sentLocal.length === 0 && !hasPatches) return serverConversations;
+    return serverConversations.map((c) => {
+      const extra = sentLocal.filter((m) => m.contact_id === c.contact.id && m.agent_id === (c.agent?.id ?? null) && (m.local || !serverHasMessage([c], m)));
+      const cp = contactPatches[c.contact.id];
+      const tp = ticketPatches[keyOf(c)];
+      if (!extra.length && !cp && !tp) return c;
+      return {
+        ...c,
+        ...tp,
+        contact: cp ? { ...c.contact, ...cp } : c.contact,
+        messages: extra.length ? [...extra.slice().reverse(), ...c.messages] : c.messages,
+      };
+    });
+  }, [serverConversations, sentLocal, contactPatches, ticketPatches]);
   function showSentNow(contactId: string, agentId: string | null, content: string) {
     setSentLocal((cur) => [
       ...cur,
       { id: `local-${Date.now()}-${cur.length}`, contact_id: contactId, agent_id: agentId, role: "assistant", content, media_url: null, media_type: null, created_at: new Date().toISOString() },
     ]);
     router.refresh();
+  }
+  // Aplica na tela, grava e, ao terminar, larga a mudança local — mas só se ninguém trocou de novo
+  // nesse meio-tempo (duas trocas seguidas não podem piscar o valor do meio).
+  async function patchContact(contactId: string, patch: ContactPatch, save: () => Promise<{ error: string | null }>) {
+    setError(null);
+    setContactPatches((cur) => ({ ...cur, [contactId]: { ...cur[contactId], ...patch } }));
+    let result: { error: string | null };
+    try {
+      result = await save();
+    } catch {
+      result = { error: "Não foi possível salvar. Verifique a conexão e tente de novo." };
+    }
+    if (result.error) setError(result.error);
+    setContactPatches((cur) => dropPatch(cur, contactId, patch));
+  }
+  async function patchTicket(key: string, patch: TicketPatch, save: () => Promise<{ error: string | null }>) {
+    setError(null);
+    setTicketPatches((cur) => ({ ...cur, [key]: { ...cur[key], ...patch } }));
+    let result: { error: string | null };
+    try {
+      result = await save();
+    } catch {
+      result = { error: "Não foi possível salvar. Verifique a conexão e tente de novo." };
+    }
+    if (result.error) setError(result.error);
+    setTicketPatches((cur) => dropPatch(cur, key, patch));
   }
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
@@ -420,7 +460,9 @@ export function ConversationsPanel({
   const orderedMessages = selected ? [...selected.messages].reverse() : [];
   // Composer travado: conversa com agente de IA que ainda não foi assumida manualmente, ou uma
   // ação em andamento — mesma regra pro texto, anexo e gravação de áudio.
-  const composerLocked = (Boolean(selected?.agent) && !selected?.contact.needs_attention) || pending;
+  // Mensagem de texto não entra aqui: dá pra escrever e mandar a próxima enquanto a anterior ainda sai.
+  const composerLocked = Boolean(selected?.agent) && !selected?.contact.needs_attention;
+  const attachLocked = composerLocked || pending;
   // Nota interna pode ser escrita mesmo com o agente conduzindo — ela não vai pro WhatsApp.
   const inputLocked = composerMode === "nota" ? pending : composerLocked;
 
@@ -488,37 +530,23 @@ export function ConversationsPanel({
   }
 
   function handleResponsavel(contactId: string, userId: string) {
-    startTransition(async () => {
-      await updateContactResponsible(contactId, userId);
-    });
+    patchContact(contactId, { responsible_user_id: userId || null }, () => updateContactResponsible(contactId, userId));
   }
 
-  function handleTicketStatus(contactId: string, agentId: string | null, status: TicketStatus) {
-    startTransition(async () => {
-      await setConversationStatus(contactId, agentId, status);
-    });
+  function handleTicketStatus(c: Conversation, status: TicketStatus) {
+    patchTicket(keyOf(c), { ticket_status: status }, () => setConversationStatus(c.contact.id, c.agent?.id ?? null, status));
   }
 
-  function handleTicketResponsible(contactId: string, agentId: string | null, userId: string) {
-    startTransition(async () => {
-      await setConversationResponsible(contactId, agentId, userId || null);
-    });
+  function handleTicketResponsible(c: Conversation, userId: string) {
+    patchTicket(keyOf(c), { ticket_responsible_user_id: userId || null }, () => setConversationResponsible(c.contact.id, c.agent?.id ?? null, userId || null));
   }
 
   function handleStageChange(contactId: string, stage: string) {
-    setError(null);
-    startTransition(async () => {
-      const result = await updateContactStage(contactId, stage);
-      if (result.error) setError(result.error);
-    });
+    patchContact(contactId, { stage }, () => updateContactStage(contactId, stage));
   }
 
   function handlePipelineStageChange(contactId: string, stageId: string) {
-    setError(null);
-    startTransition(async () => {
-      const result = await moveContactToStage(contactId, stageId);
-      if (result.error) setError(result.error);
-    });
+    patchContact(contactId, { pipeline_stage_id: stageId }, () => moveContactToStage(contactId, stageId));
   }
 
   function handleClearHistory(contactId: string, agentId: string | null) {
@@ -560,17 +588,55 @@ export function ConversationsPanel({
       });
       return;
     }
-    startTransition(async () => {
-      const result = selected.agent
-        ? await sendManualMessage(selected.contact.id, selected.agent.id, text)
-        : await sendInstanceMessage(selected.contact.id, selected.instance!.id, text);
-      if (result.error) setError(result.error);
-      else {
-        setDraft("");
-        showSentNow(selected.contact.id, selected.agent?.id ?? null, text);
+    queueSend(selected, text.trim());
+    setDraft("");
+  }
+
+  // Igual ao WhatsApp: a mensagem entra na conversa na hora (com "enviando…") e o campo já fica livre pra
+  // próxima. Os envios saem um de cada vez, na ordem em que foram escritos.
+  const sendQueue = useRef<Promise<void>>(Promise.resolve());
+  const localSeq = useRef(0);
+  function queueSend(conv: Conversation, text: string) {
+    const id = `local-q-${++localSeq.current}`;
+    const agentId = conv.agent?.id ?? null;
+    setSentLocal((cur) => [
+      ...cur,
+      { id, contact_id: conv.contact.id, agent_id: agentId, role: "assistant", content: text, media_url: null, media_type: null, created_at: new Date().toISOString(), local: "enviando" },
+    ]);
+    sendQueue.current = sendQueue.current.then(async () => {
+      let result: { error: string | null };
+      try {
+        result = conv.agent ? await sendManualMessage(conv.contact.id, conv.agent.id, text) : await sendInstanceMessage(conv.contact.id, conv.instance!.id, text);
+      } catch {
+        result = { error: "Não foi possível enviar. Verifique a conexão e tente de novo." };
       }
+      if (result.error) setError(result.error);
+      setSentLocal((cur) => cur.map((m) => (m.id === id ? { ...m, local: result.error ? "falhou" : undefined } : m)));
+      if (!result.error) router.refresh();
     });
   }
+
+  function retrySend(m: Message) {
+    const conv = conversations.find((c) => c.contact.id === m.contact_id && (c.agent?.id ?? null) === m.agent_id);
+    setSentLocal((cur) => cur.filter((x) => x.id !== m.id));
+    if (conv) queueSend(conv, m.content);
+  }
+
+  // Campo cresce com o texto (Shift+Enter pula linha) até ~6 linhas; depois rola por dentro.
+  const draftRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = draftRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [draft]);
+
+  // Conversa aberta ou mensagem nova: vai pro fim, onde está o que acabou de acontecer.
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const lastItemAt = timeline.length ? timeline[timeline.length - 1].at : "";
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ block: "end" });
+  }, [selectedKey, timeline.length, lastItemAt]);
 
   // O arquivo sobe direto do navegador pro Storage (URL assinada) e o servidor só recebe o caminho —
   // passar os bytes pelo server action estourava o teto de ~4,5MB da Vercel e derrubava a tela.
@@ -999,7 +1065,6 @@ export function ConversationsPanel({
                 <select
                   value={pipelineStageOf(selected.contact)!.id}
                   onChange={(e) => handlePipelineStageChange(selected.contact.id, e.target.value)}
-                  disabled={pending}
                   title="Etapa do funil"
                   className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 max-w-[170px] cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
                 >
@@ -1011,7 +1076,6 @@ export function ConversationsPanel({
                 <select
                   value={selected.contact.stage}
                   onChange={(e) => handleStageChange(selected.contact.id, e.target.value)}
-                  disabled={pending}
                   title="Etapa do CRM"
                   className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${STAGE_BADGE[selected.contact.stage] || STAGE_BADGE.nao_abordado}`}
                 >
@@ -1025,7 +1089,6 @@ export function ConversationsPanel({
                 <select
                   value={selected.contact.responsible_user_id || ""}
                   onChange={(e) => handleResponsavel(selected.contact.id, e.target.value)}
-                  disabled={pending}
                   title="Vendedor responsável por esse lead"
                   className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
                 >
@@ -1038,8 +1101,7 @@ export function ConversationsPanel({
 
               <select
                 value={selected.ticket_status}
-                onChange={(e) => handleTicketStatus(selected.contact.id, selected.agent?.id ?? null, e.target.value as TicketStatus)}
-                disabled={pending}
+                onChange={(e) => handleTicketStatus(selected, e.target.value as TicketStatus)}
                 title="Status do atendimento"
                 className={`text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border-none outline-none disabled:opacity-60 ${TICKET_STATUS_BADGE[selected.ticket_status]}`}
               >
@@ -1051,8 +1113,7 @@ export function ConversationsPanel({
               {vendors.length > 0 && (
                 <select
                   value={selected.ticket_responsible_user_id || ""}
-                  onChange={(e) => handleTicketResponsible(selected.contact.id, selected.agent?.id ?? null, e.target.value)}
-                  disabled={pending}
+                  onChange={(e) => handleTicketResponsible(selected, e.target.value)}
                   title="Responsável por esse atendimento"
                   className="text-xs font-bold px-2.5 py-2 rounded-md shrink-0 cursor-pointer border border-border text-text-muted disabled:opacity-60 outline-none focus:border-primary bg-surface"
                 >
@@ -1167,17 +1228,31 @@ export function ConversationsPanel({
                   <Fragment key={m.id}>
                     {separator}
                     <div
-                      className={`max-w-[75%] min-w-0 [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
+                      className={`max-w-[75%] min-w-0 [overflow-wrap:anywhere] whitespace-pre-wrap rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm ${
                         m.role === "user" ? "bg-surface border border-border self-start" : "bg-primary-soft text-primary-strong self-end"
-                      }`}
+                      } ${m.local === "enviando" ? "opacity-70" : ""} ${m.local === "falhou" ? "ring-1 ring-danger" : ""}`}
                     >
                       {m.media_url && m.media_type && <MediaAttachment url={m.media_url} type={m.media_type} tone={m.role === "user" ? "in" : "out"} />}
                       {!(m.media_url && MEDIA_ONLY_PLACEHOLDER.test(m.content)) && m.content}
-                      <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>{formatTime(m.created_at)}</div>
+                      <div className={`text-xs mt-1.5 ${m.role === "user" ? "text-text-muted" : "text-primary-strong/70"}`}>
+                        {m.local === "enviando" ? (
+                          "enviando…"
+                        ) : m.local === "falhou" ? (
+                          <span className="text-danger font-semibold">
+                            Não enviada ·{" "}
+                            <button type="button" onClick={() => retrySend(m)} className="underline cursor-pointer">
+                              tentar de novo
+                            </button>
+                          </span>
+                        ) : (
+                          formatTime(m.created_at)
+                        )}
+                      </div>
                     </div>
                   </Fragment>
                 );
               })}
+              <div ref={chatEndRef} />
             </div>
 
             <div className="flex items-center gap-1 px-4 pt-3 border-t border-border">
@@ -1239,7 +1314,7 @@ export function ConversationsPanel({
                 }
                 handleSend();
               }}
-              className={`flex items-center gap-2 p-4 pt-2 ${composerMode === "nota" ? "bg-warning-soft/40" : ""}`}
+              className={`flex items-end gap-2 p-4 pt-2 ${composerMode === "nota" ? "bg-warning-soft/40" : ""}`}
             >
               <input
                 ref={fileInputRef}
@@ -1251,7 +1326,7 @@ export function ConversationsPanel({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={composerLocked || recording}
+                disabled={attachLocked || recording}
                 title="Anexar arquivo"
                 aria-label="Anexar arquivo"
                 className="grid place-items-center w-9 h-9 rounded-full shrink-0 text-text-muted hover:text-text hover:bg-bg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1260,14 +1335,23 @@ export function ConversationsPanel({
                   <path d="M21.44 11.05 12.25 20.24a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.67 3.67 0 0 1 5.19 5.19l-9.2 9.19a1.83 1.83 0 0 1-2.6-2.6l8.49-8.48" />
                 </svg>
               </button>
-              <VoiceInput listening={recording} disabled={composerLocked} onStart={startRecording} onStop={stopRecording} />
-              <input
+              <VoiceInput listening={recording} disabled={attachLocked} onStart={startRecording} onStop={stopRecording} />
+              <textarea
+                ref={draftRef}
+                rows={1}
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
                   setQuickIndex(0);
                 }}
                 onKeyDown={(e) => {
+                  // Enter envia; Shift+Enter quebra a linha (igual ao WhatsApp Web). Durante a composição de
+                  // acento/IME o Enter é do teclado, não do envio.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                    return;
+                  }
                   if (quickQuery === null || quickMatches.length === 0) return;
                   if (e.key === "ArrowDown") {
                     e.preventDefault();
@@ -1287,7 +1371,7 @@ export function ConversationsPanel({
                       ? "Escreva a mensagem… (/ para respostas rápidas)"
                       : "Assuma a conversa pra escrever manualmente"
                 }
-                className="flex-1 border border-border rounded-full px-4 py-2.5 text-[15px] outline-none focus:border-primary disabled:opacity-60 bg-surface"
+                className="flex-1 min-w-0 resize-none border border-border rounded-2xl px-4 py-2.5 text-[15px] leading-snug outline-none focus:border-primary disabled:opacity-60 bg-surface"
               />
               {composerMode === "mensagem" && (
                 <button
@@ -1410,6 +1494,31 @@ function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => voi
     >
       {children}
     </button>
+  );
+}
+
+type ContactPatch = Partial<Pick<Contact, "stage" | "pipeline_stage_id" | "responsible_user_id">>;
+type TicketPatch = Partial<Pick<Conversation, "ticket_status" | "ticket_responsible_user_id">>;
+
+// Tira a mudança local que acabou de ser gravada — só os campos que ainda têm o valor gravado.
+function dropPatch<P extends Record<string, unknown>>(cur: Record<string, P>, key: string, saved: P): Record<string, P> {
+  const entry = cur[key];
+  if (!entry) return cur;
+  const rest = Object.fromEntries(Object.entries(entry).filter(([k, v]) => saved[k] !== v)) as P;
+  const next = { ...cur };
+  if (Object.keys(rest).length) next[key] = rest;
+  else delete next[key];
+  return next;
+}
+
+// A mensagem enviada daqui já veio do servidor? (mesma conversa, mesmo texto, gravada depois do envio)
+function serverHasMessage(convs: Conversation[], m: Message) {
+  const since = new Date(m.created_at).getTime() - 60_000;
+  return convs.some(
+    (c) =>
+      c.contact.id === m.contact_id &&
+      (c.agent?.id ?? null) === m.agent_id &&
+      c.messages.some((s) => s.role === "assistant" && s.content === m.content && new Date(s.created_at).getTime() >= since)
   );
 }
 
