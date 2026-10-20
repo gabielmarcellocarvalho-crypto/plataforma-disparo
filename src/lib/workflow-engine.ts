@@ -71,6 +71,33 @@ function chunk<T>(items: T[], size: number): T[][] {
 // Resolve os campos que exigem 1 lookup extra (nome da empresa, nome do responsável) só quando o
 // contato de fato tem esses ids — mensagem/tarefa/webhook usam isso pra interpolar {{empresa}} e
 // {{responsavel}}.
+// Por qual número enviar. Lead que chegou pelo agente de IA não tem whatsapp_instance_id no cadastro (fica
+// ligado ao agente), e o envio falhava com "contato sem instância". Ordem: número do cadastro; senão o do
+// agente que conversou por último com o lead; senão o único número do workspace.
+async function resolveSendTarget(supabase: AdminClient, contact: Contact): Promise<{ instanceId: string; agentId: string | null } | null> {
+  const agentOfInstance = async (instanceId: string) =>
+    (await supabase.from("agents").select("id").eq("whatsapp_instance_id", instanceId).limit(1).maybeSingle()).data?.id ?? null;
+
+  if (contact.whatsapp_instance_id) return { instanceId: contact.whatsapp_instance_id, agentId: await agentOfInstance(contact.whatsapp_instance_id) };
+
+  const { data: lastAgentMsg } = await supabase
+    .from("messages")
+    .select("agent_id")
+    .eq("contact_id", contact.id)
+    .not("agent_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastAgentMsg?.agent_id) {
+    const { data: agent } = await supabase.from("agents").select("id, whatsapp_instance_id").eq("id", lastAgentMsg.agent_id).maybeSingle();
+    if (agent?.whatsapp_instance_id) return { instanceId: agent.whatsapp_instance_id as string, agentId: agent.id as string };
+  }
+
+  const { data: instances } = await supabase.from("whatsapp_instances").select("id").eq("workspace_id", contact.workspace_id).limit(2);
+  if (instances && instances.length === 1) return { instanceId: instances[0].id as string, agentId: await agentOfInstance(instances[0].id as string) };
+  return null;
+}
+
 async function resolveVariableContext(supabase: AdminClient, contact: Contact) {
   const [companyName, responsibleName] = await Promise.all([
     contact.company_id
@@ -393,11 +420,12 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
 
   if (action.action_type === "send_message") {
     if (!contact.phone) return { ok: false, detail: { error: "contato sem telefone" } };
-    if (!contact.whatsapp_instance_id) return { ok: false, detail: { error: "contato sem instância de WhatsApp" } };
+    const target = await resolveSendTarget(supabase, contact);
+    if (!target) return { ok: false, detail: { error: "contato sem número de WhatsApp pra enviar (nem no cadastro, nem pelo agente)" } };
     const { data: instance } = await supabase
       .from("whatsapp_instances")
       .select("channel, instance_name, dialog360_api_key, phone_number_id, meta_waba_id")
-      .eq("id", contact.whatsapp_instance_id)
+      .eq("id", target.instanceId)
       .maybeSingle();
     if (!instance) return { ok: false, detail: { error: "instância não encontrada" } };
 
@@ -455,7 +483,8 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
     const { error: logError } = await supabase.from("messages").insert({
       workspace_id: contact.workspace_id,
       contact_id: contact.id,
-      agent_id: null,
+      // Com agente, entra na conversa dele (em Conversas e no contexto do agente); sem agente, na do número.
+      agent_id: target.agentId,
       role: "assistant",
       content,
       billing_category: billing,
