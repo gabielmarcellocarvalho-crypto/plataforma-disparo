@@ -300,6 +300,43 @@ export function ConversationsPanel({
   const contactParam = searchParams.get("contact");
   const [refreshing, startRefresh] = useTransition();
 
+  // Ao vivo: mensagem nova ou status de atendimento mudado no workspace → recarrega os dados da tela.
+  // Vem pelo Realtime do Supabase (conexão aberta, filtrada pelo RLS), não por checagem periódica: sem
+  // novidade, nenhuma requisição. Vários eventos juntos (o agente manda 3 bolhas) viram um recarregamento
+  // só; com a aba escondida, espera ela voltar.
+  useEffect(() => {
+    if (!workspaceId) return;
+    const supabase = createBrowserSupabase();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let missed = false;
+    const refreshSoon = () => {
+      if (document.hidden) {
+        missed = true;
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => router.refresh(), 700);
+    };
+    const onVisible = () => {
+      if (!document.hidden && missed) {
+        missed = false;
+        refreshSoon();
+      }
+    };
+    const filter = `workspace_id=eq.${workspaceId}`;
+    const channel = supabase
+      .channel(`conversas:${workspaceId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter }, refreshSoon)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversation_tickets", filter }, refreshSoon)
+      .subscribe();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      supabase.removeChannel(channel);
+    };
+  }, [workspaceId, router]);
+
   function handleRefresh() {
     startRefresh(() => router.refresh());
   }
