@@ -1405,7 +1405,7 @@ export function ConversationsPanel({
                   composerMode === "nota"
                     ? "Nota interna — o lead não vê…"
                     : !selected.agent || selected.contact.needs_attention
-                      ? "Escreva a mensagem… (/ para respostas rápidas)"
+                      ? "Escrever mensagem"
                       : "Assuma a conversa pra escrever manualmente"
                 }
                 className="flex-1 min-w-0 resize-none border border-border rounded-2xl px-4 py-2.5 text-[15px] leading-snug outline-none focus:border-primary disabled:opacity-60 bg-surface"

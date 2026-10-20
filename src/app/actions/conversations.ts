@@ -40,6 +40,28 @@ function mensagemDeFalha(e: unknown): string {
   return `Falha ao enviar pelo WhatsApp: ${detalhe.slice(0, 300)}`;
 }
 
+// Número oficial (Meta direta / 360dialog): texto livre e mídia só entram até 24h depois da última
+// mensagem do contato. Fora disso a API da Meta ACEITA o envio e só depois descarta a mensagem (erro
+// 131047 no webhook de status) — a equipe via a mensagem na conversa e o lead nunca recebia. Por isso a
+// checagem é feita aqui, antes de mandar.
+const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+async function closedWindowError(supabase: Awaited<ReturnType<typeof createClient>>, contactId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("messages")
+    .select("created_at")
+    .eq("contact_id", contactId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (data && Date.now() - new Date(data.created_at).getTime() < SERVICE_WINDOW_MS) return null;
+  const desde = data
+    ? ` (a última mensagem dele foi em ${new Date(data.created_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })})`
+    : "";
+  return `Mensagem não enviada: passaram mais de 24h desde a última mensagem do contato${desde}. Pelo número oficial a Meta só entrega um modelo aprovado — use uma automação ou disparo com template pra reabrir a conversa.`;
+}
+
 // Humano assume a conversa manualmente — agente para de responder esse contato até "devolver".
 export async function takeOverConversation(contactId: string): Promise<ActionResult> {
   const supabase = await createClient();
@@ -108,6 +130,10 @@ export async function sendManualMessage(contactId: string, agentId: string, text
   // número oficial, que é exatamente onde a equipe mais assume a conversa na mão.
   const channel = await resolveAgentChannel(createAdminClient(), agent);
   if (!channel) return { error: "Esse agente não tem número de WhatsApp configurado." };
+  if (channel.kind !== "evolution") {
+    const closed = await closedWindowError(supabase, contactId);
+    if (closed) return { error: closed };
+  }
 
   try {
     await agentSendText(channel, contact.phone, trimmed);
@@ -191,6 +217,10 @@ export async function sendManualMedia(contactId: string, agentId: string, upload
   const admin = createAdminClient();
   const channel = await resolveAgentChannel(admin, agent);
   if (!channel) return { error: "Esse agente não tem número de WhatsApp configurado." };
+  if (channel.kind !== "evolution") {
+    const closed = await closedWindowError(supabase, contactId);
+    if (closed) return { error: closed };
+  }
 
   const media = resolveUploadedMedia(admin, contact.workspace_id, contactId, upload);
   if ("error" in media) return { error: media.error };
@@ -228,6 +258,10 @@ export async function sendInstanceMessage(contactId: string, instanceId: string,
   ]);
   if (!contact || !instance) return { error: "Conversa não encontrada." };
   if (!contact.phone) return { error: "Contato sem telefone." };
+  if (instance.channel === "360dialog" || instance.channel === "metacloud") {
+    const closed = await closedWindowError(supabase, contactId);
+    if (closed) return { error: closed };
+  }
 
   try {
     if (instance.channel === "360dialog") {
@@ -268,6 +302,10 @@ export async function sendInstanceMedia(contactId: string, instanceId: string, u
   ]);
   if (!contact || !instance) return { error: "Conversa não encontrada." };
   if (!contact.phone) return { error: "Contato sem telefone." };
+  if (instance.channel === "360dialog" || instance.channel === "metacloud") {
+    const closed = await closedWindowError(supabase, contactId);
+    if (closed) return { error: closed };
+  }
 
   const admin = createAdminClient();
   const media = resolveUploadedMedia(admin, contact.workspace_id, contactId, upload);
