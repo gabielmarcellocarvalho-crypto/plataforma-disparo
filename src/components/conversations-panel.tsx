@@ -33,6 +33,9 @@ import { sortStages, stageForSignal } from "@/lib/pipelines";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
 import { mp4OpusToOgg } from "@/lib/audio-remux";
+import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { MetaIcon } from "@/components/meta-icon";
+import { matchesSavedFilter, type SavedFilter } from "@/lib/crm-saved-filters";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir um arquivo grande à toa.
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -100,6 +103,14 @@ type Contact = {
   flagged_reason: string | null;
   responsible_user_id: string | null;
   origin_campaign: string | null;
+  // Usados pelos filtros salvos do Pipeline e pelo filtro de leads da Meta.
+  stage_changed_at?: string | null;
+  team_member_id?: string | null;
+  branch_id?: string | null;
+  lost_reason?: string | null;
+  custom_fields?: Record<string, unknown> | null;
+  ctwa_at?: string | null;
+  ai_temperature?: string | null;
 };
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
 // Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
@@ -225,6 +236,7 @@ export function ConversationsPanel({
   vendors,
   showResponsavel,
   workspaceId = "",
+  savedFilters = [],
 }: {
   conversations: Conversation[];
   stageLabels: Record<string, string>;
@@ -232,6 +244,8 @@ export function ConversationsPanel({
   vendors: Vendor[];
   showResponsavel: boolean;
   workspaceId?: string;
+  // Filtros salvos pela pessoa no Pipeline — aparecem aqui também.
+  savedFilters?: SavedFilter[];
 }) {
   const router = useRouter();
 
@@ -348,6 +362,7 @@ export function ConversationsPanel({
     listPipelines().then(setPipelines).catch(() => setPipelines([]));
   }, []);
 
+  const defaultPipelineId = pipelines.find((p) => p.is_default)?.id ?? null;
   // Lead sem funil pertence ao padrão, posicionado pelo sinal — mesma regra do Kanban e da ficha.
   function pipelineOf(c: Contact) {
     return pipelines.find((p) => p.id === c.pipeline_id) ?? pipelines.find((p) => p.is_default) ?? pipelines[0] ?? null;
@@ -389,6 +404,10 @@ export function ConversationsPanel({
   const [responsavelFilter, setResponsavelFilter] = useState("");
   const [ticketFilter, setTicketFilter] = useState<TicketStatus | "">("");
   const [inboxTab, setInboxTab] = useState<InboxTab>("todas");
+  // Só leads que vieram de campanha da Meta (anúncio ou formulário) — mesma regra do selo no Pipeline.
+  const [metaOnly, setMetaOnly] = useState(false);
+  const [savedFilterId, setSavedFilterId] = useState<string | null>(null);
+  const savedSel = savedFilters.find((s) => s.id === savedFilterId) ?? null;
   // Painel de contexto do lead (3ª coluna, só em tela larga). Preferência fica no navegador.
   const [contextOpen, setContextOpen] = useState(true);
   useEffect(() => {
@@ -465,9 +484,12 @@ export function ConversationsPanel({
       }
       if (ticketFilter && c.ticket_status !== ticketFilter) return false;
       if (!inInboxTab(c, inboxTab)) return false;
+      if (metaOnly && !isMetaCampaignLead(c.contact)) return false;
+      if (savedSel && !matchesSavedFilter(c.contact, savedSel.filters, defaultPipelineId)) return false;
       return true;
     });
-  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab]);
+  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, savedSel, defaultPipelineId]);
+  const metaCount = useMemo(() => conversations.filter((c) => isMetaCampaignLead(c.contact)).length, [conversations]);
   const tabCounts = useMemo(() => {
     const out = {} as Record<InboxTab, number>;
     for (const t of INBOX_TABS) out[t.key] = conversations.filter((c) => inInboxTab(c, t.key)).length;
@@ -477,7 +499,7 @@ export function ConversationsPanel({
   // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
   // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
   // dos filtros em que foi ampliado e só vale enquanto ela for a mesma.
-  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab].join("|");
+  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, savedFilterId].join("|");
   const [expanded, setExpanded] = useState<{ sig: string; limit: number }>({ sig: "", limit: LIST_PAGE_FIRST });
   const listLimit = expanded.sig === filterSig ? expanded.limit : LIST_PAGE_FIRST;
   const shown = filtered.slice(0, listLimit);
@@ -491,7 +513,9 @@ export function ConversationsPanel({
     (waitFilter ? 1 : 0) +
     (campaignFilter ? 1 : 0) +
     (responsavelFilter ? 1 : 0) +
-    (ticketFilter ? 1 : 0);
+    (ticketFilter ? 1 : 0) +
+    (metaOnly ? 1 : 0) +
+    (savedSel ? 1 : 0);
 
   const selected = conversations.find((c) => keyOf(c) === selectedKey) || null;
   const orderedMessages = selected ? [...selected.messages].reverse() : [];
@@ -844,19 +868,49 @@ export function ConversationsPanel({
           </div>
 
           {/* Com o filtro fechado, a caixa escolhida continua visível (e removível) embaixo da busca. */}
-          {!filtersOpen && inboxTab !== "todas" && (
-            <div className="flex items-center gap-1.5">
-              <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
-                {INBOX_TABS.find((t) => t.key === inboxTab)?.label} · {tabCounts[inboxTab]}
-                <button type="button" onClick={() => setInboxTab("todas")} aria-label="Mostrar todas as conversas" className="cursor-pointer font-bold">
-                  ×
-                </button>
-              </span>
+          {!filtersOpen && (inboxTab !== "todas" || metaOnly || savedSel) && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {inboxTab !== "todas" && (
+                <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                  {INBOX_TABS.find((t) => t.key === inboxTab)?.label} · {tabCounts[inboxTab]}
+                  <button type="button" onClick={() => setInboxTab("todas")} aria-label="Mostrar todas as conversas" className="cursor-pointer font-bold">
+                    ×
+                  </button>
+                </span>
+              )}
+              {metaOnly && (
+                <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                  Leads da Meta
+                  <button type="button" onClick={() => setMetaOnly(false)} aria-label="Tirar o filtro de leads da Meta" className="cursor-pointer font-bold">
+                    ×
+                  </button>
+                </span>
+              )}
+              {savedSel && (
+                <span className="flex items-center gap-1.5 text-[11px] font-bold bg-info-soft text-info-text rounded-full px-2.5 py-1">
+                  {savedSel.name}
+                  <button type="button" onClick={() => setSavedFilterId(null)} aria-label={`Tirar o filtro ${savedSel.name}`} className="cursor-pointer font-bold">
+                    ×
+                  </button>
+                </span>
+              )}
             </div>
           )}
 
           {filtersOpen && (
             <div className="flex flex-col gap-3.5 pt-3 border-t border-border">
+              {savedFilters.length > 0 && (
+                <FilterSection title="Meus filtros" hint="salvos no Pipeline">
+                  <div className="flex flex-wrap gap-1.5">
+                    {savedFilters.map((s) => (
+                      <FilterChip key={s.id} on={savedFilterId === s.id} onClick={() => setSavedFilterId((cur) => (cur === s.id ? null : s.id))}>
+                        {s.name}
+                      </FilterChip>
+                    ))}
+                  </div>
+                </FilterSection>
+              )}
+
               <FilterSection title="Caixa">
                 <div className="flex flex-wrap gap-1.5">
                   {INBOX_TABS.map((t) => (
@@ -910,9 +964,17 @@ export function ConversationsPanel({
                 </div>
               </FilterSection>
 
-              {(campaignOptions.length > 0 || allTags.length > 0) && (
+              {(campaignOptions.length > 0 || allTags.length > 0 || metaCount > 0 || metaOnly) && (
                 <FilterSection title="Origem e tags">
                   <div className="flex flex-col gap-2">
+                    {(metaCount > 0 || metaOnly) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <FilterChip on={metaOnly} onClick={() => setMetaOnly((v) => !v)}>
+                          <MetaIcon size={12} className={`inline -mt-0.5 mr-1 ${metaOnly ? "brightness-0 invert" : ""}`} />
+                          Leads da Meta <span className="opacity-70">{metaCount}</span>
+                        </FilterChip>
+                      </div>
+                    )}
                     {campaignOptions.length > 0 && (
                       <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className={filterSelect} aria-label="Campanha de origem">
                         <option value="">Campanha de origem: todas</option>
@@ -970,6 +1032,8 @@ export function ConversationsPanel({
                       setCampaignFilter("");
                       setResponsavelFilter("");
                       setTicketFilter("");
+                      setMetaOnly(false);
+                      setSavedFilterId(null);
                     }}
                     className="text-[11px] font-bold text-text-muted hover:text-danger cursor-pointer"
                   >

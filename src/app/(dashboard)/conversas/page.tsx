@@ -8,6 +8,8 @@ import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { getConversationTickets } from "@/app/actions/conversation-tickets";
 import { conversationKey } from "@/lib/conversation-tickets";
 import { fetchAllParallel } from "@/lib/paged-fetch";
+import { hasRedesignColumns } from "@/lib/redesign-columns";
+import { listSavedFilters } from "@/app/actions/crm-saved-filters";
 
 const DEPARTMENT_LABEL: Record<string, string> = { vendas: "Vendas", financeiro: "Financeiro" };
 
@@ -61,6 +63,14 @@ type ContactRow = {
   flagged_reason: string | null;
   responsible_user_id: string | null;
   whatsapp_instance_id: string | null;
+  // Pra aplicar os filtros salvos do Pipeline e o filtro de leads da Meta.
+  stage_changed_at: string | null;
+  team_member_id: string | null;
+  branch_id: string | null;
+  lost_reason: string | null;
+  custom_fields: Record<string, unknown> | null;
+  ctwa_at: string | null;
+  ai_temperature?: string | null;
 };
 
 // Mesma busca em páginas paralelas de fetchRecentMessages — filtrar por workspace_id direto em vez de
@@ -69,6 +79,7 @@ type ContactRow = {
 // falhava calada (o erro nunca era checado), fazendo a lista parecer vazia mesmo com mensagens reais.
 async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient>>, workspaceId: string): Promise<ContactRow[]> {
   const { count } = await supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId);
+  const extra = (await hasRedesignColumns()) ? ", ai_temperature" : "";
   return fetchAllParallel<ContactRow>({
     total: count,
     maxRows: 20000,
@@ -76,7 +87,9 @@ async function fetchAllContacts(supabase: Awaited<ReturnType<typeof createClient
     page: (from, to) =>
       supabase
         .from("contacts")
-        .select("id, name, phone, photo_url, stage, pipeline_id, pipeline_stage_id, tags, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id")
+        .select(
+          "id, name, phone, photo_url, stage, pipeline_id, pipeline_stage_id, tags, needs_attention, attention_reason, flagged_reason, responsible_user_id, whatsapp_instance_id, stage_changed_at, team_member_id, branch_id, lost_reason, custom_fields, ctwa_at" + extra
+        )
         .eq("workspace_id", workspaceId)
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<{ data: ContactRow[] | null }>,
@@ -98,7 +111,7 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
 
   // Tudo que não depende das mensagens sai junto com elas (antes os contatos, a origem e os vendedores
   // só começavam depois que as mensagens terminavam, e o tempo de espera somava).
-  const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets, contacts, { data: originRows }, vendors] = await Promise.all([
+  const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets, contacts, { data: originRows }, vendors, savedFilters] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name, photo_url, evolution_instance_name")
@@ -127,6 +140,7 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
       .select("user_id, profiles(full_name)")
       .eq("workspace_id", workspace.id)
       .then(({ data }) => (data || []).map((m) => ({ id: m.user_id as string, name: (m.profiles as unknown as { full_name: string | null } | null)?.full_name || "sem nome" }))),
+    listSavedFilters(),
   ]);
 
   // Vindo do CRM (?contact=<id>): a conversa desse lead precisa existir aqui mesmo que ela não esteja
@@ -223,6 +237,7 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
         vendors={vendors}
         showResponsavel={showResponsavel}
         workspaceId={workspace?.id ?? ""}
+        savedFilters={savedFilters}
       />
     </div>
   );
