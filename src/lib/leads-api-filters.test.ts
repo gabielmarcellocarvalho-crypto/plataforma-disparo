@@ -33,6 +33,14 @@ describe("leadFilterOps", () => {
     expect(expr).toContain("custom_fields->>campanha_meta.not.is.null");
   });
 
+  it("origem=google_ads usa a mesma regra do selo do Google (gclid, utm_source ou origem)", () => {
+    const [o] = ops("origem=google_ads");
+    const expr = (o as { expr: string }).expr;
+    expect(expr).toContain("custom_fields->>gclid.not.is.null");
+    expect(expr).toContain("custom_fields->>utm_source.ilike.*google*");
+    expect(ops("origem=google")).toEqual(ops("origem=google_ads"));
+  });
+
   it("whatsapp_direto = nada de Meta e sem origem gravada", () => {
     const list = ops("origem=whatsapp_direto");
     expect(list).toContainEqual({ op: "is_null", col: "ctwa_at" });

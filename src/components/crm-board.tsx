@@ -24,8 +24,9 @@ import { bulkAssignTeamMember, bulkMoveContacts } from "@/app/actions/crm-bulk";
 import { addTagsToContacts } from "@/app/actions/contacts";
 import { analyzeLeads } from "@/app/actions/ai-features";
 import { TEMPERATURE_UI, type Temperature } from "@/lib/lead-analysis";
-import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { isGoogleAdsLead, isMetaCampaignLead } from "@/lib/lead-origin";
 import { MetaIcon } from "@/components/meta-icon";
+import { GoogleAdsIcon } from "@/components/google-ads-icon";
 
 type Contact = {
   id: string;
@@ -60,6 +61,12 @@ function metaOriginTitle(c: Contact) {
   return det ? `${tipo}: ${det}` : `Veio de campanha da Meta (${tipo})`;
 }
 
+// Dica do selo do Google Ads: a campanha (utm_campaign), quando o site repassou.
+function googleOriginTitle(c: Contact) {
+  const camp = c.custom_fields?.utm_campaign;
+  return typeof camp === "string" && camp.trim() ? `Google Ads: ${camp.trim()}` : "Veio de campanha do Google Ads";
+}
+
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 type FieldFilter = { key: string; value: string };
@@ -67,12 +74,13 @@ type FieldFilter = { key: string; value: string };
 // Atalhos de visão rápida — mesma ideia dos itens da barra lateral do Kommo (Leads ativos/ganhos/
 // perdidos/etc.), só que como fileira de chips em vez de sidebar vertical, já que nosso board é
 // horizontal por natureza. "todos" = nenhum filtro de visão aplicado (estado inicial).
-type QuickView = "todos" | "atencao" | "quentes" | "campanha" | "parados" | "ganhos" | "perdidos";
+type QuickView = "todos" | "atencao" | "quentes" | "campanha" | "google" | "parados" | "ganhos" | "perdidos";
 const QUICK_VIEWS: { key: QuickView; label: string }[] = [
   { key: "todos", label: "Todos" },
   { key: "atencao", label: "Pontos de atenção" },
   { key: "quentes", label: "🔥 Quentes" },
   { key: "campanha", label: "Campanha Meta" },
+  { key: "google", label: "Google Ads" },
   { key: "parados", label: "Parados" },
   { key: "ganhos", label: "Ganhos" },
   { key: "perdidos", label: "Perdidos" },
@@ -422,6 +430,11 @@ function ContactCard({
                 <MetaIcon size={15} />
               </span>
             )}
+            {isGoogleAdsLead(contact) && (
+              <span title={googleOriginTitle(contact)} className="shrink-0 inline-flex">
+                <GoogleAdsIcon size={14} />
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-text-muted truncate">{contact.phone || contact.email || ""}</div>
         </div>
@@ -678,6 +691,7 @@ export function CrmBoard({
       if (quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
       if (quickView === "quentes" && c.ai_temperature !== "quente") return false;
       if (quickView === "campanha" && !isMetaCampaignLead(c)) return false;
+      if (quickView === "google" && !isGoogleAdsLead(c)) return false;
       if (quickView === "ganhos" && c.stage !== "concluido") return false;
       if (quickView === "perdidos" && c.stage !== "descartado") return false;
       if (quickView === "parados") {
@@ -715,10 +729,11 @@ export function CrmBoard({
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
-    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, quentes: 0, campanha: 0, parados: 0, ganhos: 0, perdidos: 0 };
+    const counts: Record<QuickView, number> = { todos: items.length, atencao: 0, quentes: 0, campanha: 0, google: 0, parados: 0, ganhos: 0, perdidos: 0 };
     for (const c of items) {
       if (c.ai_temperature === "quente") counts.quentes++;
       if (isMetaCampaignLead(c)) counts.campanha++;
+      if (isGoogleAdsLead(c)) counts.google++;
       if (c.needs_attention || c.flagged_reason) counts.atencao++;
       if (c.stage === "concluido") counts.ganhos++;
       if (c.stage === "descartado") counts.perdidos++;
@@ -1213,6 +1228,7 @@ export function CrmBoard({
                 }`}
               >
                 {qv.key === "campanha" && <MetaIcon size={14} className={`inline -mt-0.5 mr-1 ${active ? "brightness-0 invert" : ""}`} />}
+                {qv.key === "google" && <GoogleAdsIcon size={13} className="inline -mt-0.5 mr-1" />}
                 {qv.label} <span className={active ? "opacity-80" : "opacity-60"}>({quickViewCounts[qv.key]})</span>
               </button>
             );

@@ -3,7 +3,7 @@
 // envelhece ("entrou em outubro" deixa de servir em novembro).
 import { STALE_AFTER_DAYS, daysSince } from "@/lib/crm-stages";
 import { readMultiValue } from "@/lib/custom-fields";
-import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { isGoogleAdsLead, isMetaCampaignLead } from "@/lib/lead-origin";
 
 export type SavedFilterValues = {
   quickView: string;
@@ -89,6 +89,7 @@ export function matchesSavedFilter(c: MatchableContact, f: SavedFilterValues, de
   if (f.quickView === "atencao" && !c.needs_attention && !c.flagged_reason) return false;
   if (f.quickView === "quentes" && c.ai_temperature !== "quente") return false;
   if (f.quickView === "campanha" && !isMetaCampaignLead(c)) return false;
+  if (f.quickView === "google" && !isGoogleAdsLead(c)) return false;
   if (f.quickView === "ganhos" && c.stage !== "concluido") return false;
   if (f.quickView === "perdidos" && c.stage !== "descartado") return false;
   if (f.quickView === "parados" && (fechado || !c.stage_changed_at || daysSince(c.stage_changed_at) < STALE_AFTER_DAYS)) return false;

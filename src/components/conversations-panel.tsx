@@ -33,8 +33,9 @@ import { sortStages, stageForSignal } from "@/lib/pipelines";
 import type { WhatsappChannel } from "@/lib/whatsapp-channel";
 import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
 import { mp4OpusToOgg } from "@/lib/audio-remux";
-import { isMetaCampaignLead } from "@/lib/lead-origin";
+import { isGoogleAdsLead, isMetaCampaignLead } from "@/lib/lead-origin";
 import { MetaIcon } from "@/components/meta-icon";
+import { GoogleAdsIcon } from "@/components/google-ads-icon";
 import { matchesSavedFilter, type SavedFilter } from "@/lib/crm-saved-filters";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir um arquivo grande à toa.
@@ -406,6 +407,7 @@ export function ConversationsPanel({
   const [inboxTab, setInboxTab] = useState<InboxTab>("todas");
   // Só leads que vieram de campanha da Meta (anúncio ou formulário) — mesma regra do selo no Pipeline.
   const [metaOnly, setMetaOnly] = useState(false);
+  const [googleOnly, setGoogleOnly] = useState(false);
   const [savedFilterId, setSavedFilterId] = useState<string | null>(null);
   const savedSel = savedFilters.find((s) => s.id === savedFilterId) ?? null;
   // Painel de contexto do lead (3ª coluna, só em tela larga). Preferência fica no navegador.
@@ -485,11 +487,13 @@ export function ConversationsPanel({
       if (ticketFilter && c.ticket_status !== ticketFilter) return false;
       if (!inInboxTab(c, inboxTab)) return false;
       if (metaOnly && !isMetaCampaignLead(c.contact)) return false;
+      if (googleOnly && !isGoogleAdsLead(c.contact)) return false;
       if (savedSel && !matchesSavedFilter(c.contact, savedSel.filters, defaultPipelineId)) return false;
       return true;
     });
-  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, savedSel, defaultPipelineId]);
+  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedSel, defaultPipelineId]);
   const metaCount = useMemo(() => conversations.filter((c) => isMetaCampaignLead(c.contact)).length, [conversations]);
+  const googleCount = useMemo(() => conversations.filter((c) => isGoogleAdsLead(c.contact)).length, [conversations]);
   const tabCounts = useMemo(() => {
     const out = {} as Record<InboxTab, number>;
     for (const t of INBOX_TABS) out[t.key] = conversations.filter((c) => inInboxTab(c, t.key)).length;
@@ -499,7 +503,7 @@ export function ConversationsPanel({
   // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
   // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
   // dos filtros em que foi ampliado e só vale enquanto ela for a mesma.
-  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, savedFilterId].join("|");
+  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedFilterId].join("|");
   const [expanded, setExpanded] = useState<{ sig: string; limit: number }>({ sig: "", limit: LIST_PAGE_FIRST });
   const listLimit = expanded.sig === filterSig ? expanded.limit : LIST_PAGE_FIRST;
   const shown = filtered.slice(0, listLimit);
@@ -515,6 +519,7 @@ export function ConversationsPanel({
     (responsavelFilter ? 1 : 0) +
     (ticketFilter ? 1 : 0) +
     (metaOnly ? 1 : 0) +
+    (googleOnly ? 1 : 0) +
     (savedSel ? 1 : 0);
 
   const selected = conversations.find((c) => keyOf(c) === selectedKey) || null;
@@ -868,7 +873,7 @@ export function ConversationsPanel({
           </div>
 
           {/* Com o filtro fechado, a caixa escolhida continua visível (e removível) embaixo da busca. */}
-          {!filtersOpen && (inboxTab !== "todas" || metaOnly || savedSel) && (
+          {!filtersOpen && (inboxTab !== "todas" || metaOnly || googleOnly || savedSel) && (
             <div className="flex items-center gap-1.5 flex-wrap">
               {inboxTab !== "todas" && (
                 <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
@@ -882,6 +887,14 @@ export function ConversationsPanel({
                 <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
                   Leads da Meta
                   <button type="button" onClick={() => setMetaOnly(false)} aria-label="Tirar o filtro de leads da Meta" className="cursor-pointer font-bold">
+                    ×
+                  </button>
+                </span>
+              )}
+              {googleOnly && (
+                <span className="flex items-center gap-1.5 text-[11px] font-bold bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                  Leads do Google Ads
+                  <button type="button" onClick={() => setGoogleOnly(false)} aria-label="Tirar o filtro de leads do Google Ads" className="cursor-pointer font-bold">
                     ×
                   </button>
                 </span>
@@ -964,15 +977,23 @@ export function ConversationsPanel({
                 </div>
               </FilterSection>
 
-              {(campaignOptions.length > 0 || allTags.length > 0 || metaCount > 0 || metaOnly) && (
+              {(campaignOptions.length > 0 || allTags.length > 0 || metaCount > 0 || metaOnly || googleCount > 0 || googleOnly) && (
                 <FilterSection title="Origem e tags">
                   <div className="flex flex-col gap-2">
-                    {(metaCount > 0 || metaOnly) && (
+                    {(metaCount > 0 || metaOnly || googleCount > 0 || googleOnly) && (
                       <div className="flex flex-wrap gap-1.5">
-                        <FilterChip on={metaOnly} onClick={() => setMetaOnly((v) => !v)}>
-                          <MetaIcon size={12} className={`inline -mt-0.5 mr-1 ${metaOnly ? "brightness-0 invert" : ""}`} />
-                          Leads da Meta <span className="opacity-70">{metaCount}</span>
-                        </FilterChip>
+                        {(metaCount > 0 || metaOnly) && (
+                          <FilterChip on={metaOnly} onClick={() => setMetaOnly((v) => !v)}>
+                            <MetaIcon size={12} className={`inline -mt-0.5 mr-1 ${metaOnly ? "brightness-0 invert" : ""}`} />
+                            Leads da Meta <span className="opacity-70">{metaCount}</span>
+                          </FilterChip>
+                        )}
+                        {(googleCount > 0 || googleOnly) && (
+                          <FilterChip on={googleOnly} onClick={() => setGoogleOnly((v) => !v)}>
+                            <GoogleAdsIcon size={11} className="inline -mt-0.5 mr-1" />
+                            Leads do Google Ads <span className="opacity-70">{googleCount}</span>
+                          </FilterChip>
+                        )}
                       </div>
                     )}
                     {campaignOptions.length > 0 && (
@@ -1033,6 +1054,7 @@ export function ConversationsPanel({
                       setResponsavelFilter("");
                       setTicketFilter("");
                       setMetaOnly(false);
+                      setGoogleOnly(false);
                       setSavedFilterId(null);
                     }}
                     className="text-[11px] font-bold text-text-muted hover:text-danger cursor-pointer"

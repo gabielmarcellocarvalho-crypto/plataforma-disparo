@@ -4,7 +4,7 @@
 //
 // Valor que vem da URL nunca entra num .or() montado à mão: só nos filtros simples (eq/ilike/overlaps/in),
 // que o cliente do Supabase codifica. Os .or() abaixo são texto fixo.
-import { META_ORIGINS } from "@/lib/lead-origin";
+import { GOOGLE_CLICK_IDS, META_ORIGINS } from "@/lib/lead-origin";
 import { STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import { normalizeTags } from "@/lib/contact-tags";
 import { QUAL_LEVELS, type QualConfig } from "@/lib/lead-qualification";
@@ -33,6 +33,15 @@ const META_LIST = `(${META_ORIGINS.map((o) => `"${o}"`).join(",")})`;
 // Mesma regra de isMetaCampaignLead (src/lib/lead-origin.ts), escrita como filtro do banco.
 const META_MARKERS = ["campanha_meta", "anuncio_titulo", "anuncio_link"];
 const META_OR = ["ctwa_at.not.is.null", `custom_fields->>origem.in.${META_LIST}`, ...META_MARKERS.map((k) => `custom_fields->>${k}.not.is.null`)].join(",");
+
+// Mesma regra de isGoogleAdsLead (src/lib/lead-origin.ts): id de clique do Google, utm_source do Google
+// ou origem com "google".
+const GOOGLE_OR = [
+  ...GOOGLE_CLICK_IDS.map((k) => `custom_fields->>${k}.not.is.null`),
+  "custom_fields->>utm_source.ilike.*google*",
+  "custom_fields->>utm_source.ilike.*adwords*",
+  "custom_fields->>origem.ilike.*google*",
+].join(",");
 
 export function parseLeadFilters(params: URLSearchParams): { filters: LeadFilters } | { error: string } {
   const get = (k: string) => params.get(k)?.trim() || "";
@@ -92,10 +101,15 @@ export function leadFilterOps(f: LeadFilters, cfg: QualConfig, tagsDoWorkspace: 
 
   const origem = f.origem?.toLowerCase();
   if (origem === "meta") ops.push({ op: "or", expr: META_OR });
+  else if (origem === "google_ads" || origem === "google") ops.push({ op: "or", expr: GOOGLE_OR });
   else if (origem === "nao_meta" || origem === "whatsapp_direto") {
     ops.push({ op: "is_null", col: "ctwa_at" });
     for (const k of META_MARKERS) ops.push({ op: "is_null", col: `custom_fields->>${k}` });
-    if (origem === "whatsapp_direto") ops.push({ op: "is_null", col: "custom_fields->>origem" });
+    if (origem === "whatsapp_direto") {
+      ops.push({ op: "is_null", col: "custom_fields->>origem" });
+      for (const k of GOOGLE_CLICK_IDS) ops.push({ op: "is_null", col: `custom_fields->>${k}` });
+      ops.push({ op: "is_null", col: "custom_fields->>utm_source" });
+    }
     else ops.push({ op: "or", expr: `custom_fields->>origem.is.null,custom_fields->>origem.not.in.${META_LIST}` });
   } else if (f.origem) ops.push(sameText("custom_fields->>origem", f.origem));
 

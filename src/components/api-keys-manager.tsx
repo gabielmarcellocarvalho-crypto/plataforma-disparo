@@ -158,7 +158,8 @@ curl "${siteUrl}${ENDPOINT}?origem=meta&desde=2026-10-01" \\
           </p>
           <p className="mt-2">
             Para pegar só uma parte dos leads (vale para <code>/leads</code> e <code>/funil</code>, e dá para combinar):{" "}
-            <code>origem</code> (<code>meta</code> = anúncio ou formulário da Meta, <code>nao_meta</code>, <code>whatsapp_direto</code>{" "}
+            <code>origem</code> (<code>meta</code> = anúncio ou formulário da Meta, <code>google_ads</code> = clique em anúncio do
+            Google, <code>nao_meta</code>, <code>whatsapp_direto</code>{" "}
             ou o nome da origem, ex.: <code>api</code>, <code>site</code>), <code>tag</code> (uma ou várias separadas por vírgula; o lead
             precisa ter pelo menos uma), <code>etapa</code> (ex.: <code>interessado,encaminhamento</code>), <code>resultado</code>{" "}
             (<code>ganho</code>, <code>perdido</code> ou <code>aberto</code>), <code>qualificacao</code> (<code>mql</code>,{" "}

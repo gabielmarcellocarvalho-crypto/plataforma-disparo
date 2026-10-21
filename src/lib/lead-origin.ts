@@ -4,6 +4,8 @@
 //   - "Facebook": formulário do Facebook Leads (webhook da integração), com a campanha em campanha_meta;
 //   - o `source` de quem chamou POST /api/v1/leads (padrão "api").
 // Lead sem origem gravada escreveu direto no WhatsApp ou foi importado.
+// Google Ads não tem integração própria: o lead chega pela API de entrada (site/formulário) e é
+// reconhecido pelo que a página repassa — gclid/gbraid/wbraid, utm_source do Google ou origem "Google…".
 
 export const META_ORIGINS = ["Anúncio Meta", "Facebook"] as const;
 
@@ -18,6 +20,19 @@ export function isMetaCampaignLead(c: OriginInput): boolean {
   return Boolean(f.anuncio_titulo || f.anuncio_link || f.campanha_meta);
 }
 
+// Campos que o Google Ads põe na URL de quem clicou no anúncio (o site repassa em custom_fields).
+export const GOOGLE_CLICK_IDS = ["gclid", "gbraid", "wbraid"] as const;
+const GOOGLE_SOURCE = /google|adwords/i;
+
+// Veio de campanha do Google Ads. Mesma regra do filtro origem=google_ads da API (leads-api-filters.ts).
+export function isGoogleAdsLead(c: OriginInput): boolean {
+  const f = c.custom_fields || {};
+  if (GOOGLE_CLICK_IDS.some((k) => f[k])) return true;
+  const utm = typeof f.utm_source === "string" ? f.utm_source : "";
+  const origem = typeof f.origem === "string" ? f.origem : "";
+  return GOOGLE_SOURCE.test(utm) || /google/i.test(origem);
+}
+
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : null);
 
 // Origem detalhada pra API de leitura: source, UTMs (qualquer campo utm_*), tags e campanha da Meta.
@@ -30,7 +45,11 @@ export function leadOriginDetail(c: OriginInput & { tags?: string[] | null }) {
   }
   return {
     source: str(f.origem) ?? (c.ctwa_at ? "Anúncio Meta" : "WhatsApp direto"),
+    // Canal pago de onde o lead veio: "meta", "google_ads" ou null (orgânico, WhatsApp direto, outro).
+    canal: isMetaCampaignLead(c) ? "meta" : isGoogleAdsLead(c) ? "google_ads" : null,
     campanha_meta: isMetaCampaignLead(c),
+    google_ads: isGoogleAdsLead(c),
+    google_gclid: str(f.gclid) ?? str(f.gbraid) ?? str(f.wbraid),
     utms,
     tags: c.tags ?? [],
     facebook_campanha: str(f.campanha_meta),
