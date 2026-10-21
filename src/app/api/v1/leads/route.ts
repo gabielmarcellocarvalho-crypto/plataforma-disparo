@@ -6,6 +6,7 @@ import { authenticateApiKey, readRateLimit } from "@/lib/api-auth";
 import { resolveQualification } from "@/lib/lead-qualification";
 import { resolveStageLabels } from "@/lib/crm-stages";
 import { parseLeadsQuery, toApiLead, type LeadRow } from "@/lib/leads-api";
+import { applyLeadFilterOps, describeFilters, leadFilterOps, parseLeadFilters } from "@/lib/leads-api-filters";
 
 // Endpoint público pra plataforma terceira (form de site, outro CRM, Zapier/Make): POST joga lead direto
 // na lista de contatos, sem passar pelo WhatsApp; GET lê os leads de volta. Autenticado por chave de API (gerada em
@@ -20,9 +21,22 @@ export async function GET(req: Request) {
   const limited = await readRateLimit(key.id);
   if (limited) return limited;
 
-  const parsed = parseLeadsQuery(new URL(req.url).searchParams);
+  const params = new URL(req.url).searchParams;
+  const parsed = parseLeadsQuery(params);
   if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const parsedFilters = parseLeadFilters(params);
+  if ("error" in parsedFilters) return NextResponse.json({ error: parsedFilters.error }, { status: 400 });
   const { fromIso, toIso, page, perPage } = parsed.query;
+  const { filters } = parsedFilters;
+
+  // As regras de MQL/SQL e a grafia das tags entram no filtro, então vêm antes da consulta dos leads.
+  const [{ data: ws }, { data: stages }, { data: wsTags }] = await Promise.all([
+    supabase.from("workspaces").select("crm_stage_labels, lead_qualification").eq("id", key.workspace_id).maybeSingle(),
+    supabase.from("pipeline_stages").select("id, name, signal, pipelines!inner(workspace_id)").eq("pipelines.workspace_id", key.workspace_id),
+    filters.tags.length ? supabase.rpc("workspace_tags", { ws_id: key.workspace_id }) : Promise.resolve({ data: [] }),
+  ]);
+  const qualification = resolveQualification(ws?.lead_qualification);
+  const ops = leadFilterOps(filters, qualification, ((wsTags as { tag: string }[] | null) ?? []).map((t) => t.tag));
 
   let q = supabase
     .from("contacts")
@@ -33,25 +47,23 @@ export async function GET(req: Request) {
     .eq("workspace_id", key.workspace_id);
   if (fromIso) q = q.gte("created_at", fromIso);
   if (toIso) q = q.lte("created_at", toIso);
+  q = applyLeadFilterOps(q, ops);
   const from = (page - 1) * perPage;
-  const [{ data: rows, count, error }, { data: ws }, { data: stages }] = await Promise.all([
-    q.order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, from + perPage - 1),
-    supabase.from("workspaces").select("crm_stage_labels, lead_qualification").eq("id", key.workspace_id).maybeSingle(),
-    supabase.from("pipeline_stages").select("id, name, signal, pipelines!inner(workspace_id)").eq("pipelines.workspace_id", key.workspace_id),
-  ]);
+  const { data: rows, count, error } = await q.order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, from + perPage - 1);
   if (error) return NextResponse.json({ error: "Não foi possível ler os leads." }, { status: 500 });
 
   await supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", key.id);
 
   const ctx = {
     stageLabels: resolveStageLabels(ws?.crm_stage_labels),
-    qualification: resolveQualification(ws?.lead_qualification),
+    qualification,
     pipelineStages: new Map((stages ?? []).map((st) => [st.id as string, { name: st.name as string, signal: st.signal as string }])),
   };
   const total = count ?? 0;
   return NextResponse.json({
     data: ((rows ?? []) as unknown as LeadRow[]).map((r) => toApiLead(r, ctx)),
     paginacao: { pagina: page, por_pagina: perPage, total, total_paginas: Math.ceil(total / perPage) },
+    filtros: describeFilters(filters),
   });
 }
 

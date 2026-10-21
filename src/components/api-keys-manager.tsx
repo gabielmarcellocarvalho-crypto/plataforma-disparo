@@ -145,12 +145,26 @@ curl "${siteUrl}/api/v1/funil?desde=2026-10-01&ate=2026-10-31" \\
 
 # Lista de leads, com a classificação de cada um
 curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
+  -H "Authorization: Bearer ${activeExample}"
+
+# Só os leads que vieram de campanha da Meta (funciona igual no /funil)
+curl "${siteUrl}${ENDPOINT}?origem=meta&desde=2026-10-01" \\
   -H "Authorization: Bearer ${activeExample}"`}
           </pre>
           <p className="mt-2">
             Filtros opcionais: <code>desde</code> e <code>ate</code> (AAAA-MM-DD, pela data de entrada do lead, horário de Brasília).
             Paginação: <code>pagina</code> (a partir de 1) e <code>por_pagina</code> (até 500, padrão 100); a resposta traz{" "}
             <code>paginacao.total</code> e <code>total_paginas</code>.
+          </p>
+          <p className="mt-2">
+            Para pegar só uma parte dos leads (vale para <code>/leads</code> e <code>/funil</code>, e dá para combinar):{" "}
+            <code>origem</code> (<code>meta</code> = anúncio ou formulário da Meta, <code>nao_meta</code>, <code>whatsapp_direto</code>{" "}
+            ou o nome da origem, ex.: <code>api</code>, <code>site</code>), <code>tag</code> (uma ou várias separadas por vírgula; o lead
+            precisa ter pelo menos uma), <code>etapa</code> (ex.: <code>interessado,encaminhamento</code>), <code>resultado</code>{" "}
+            (<code>ganho</code>, <code>perdido</code> ou <code>aberto</code>), <code>qualificacao</code> (<code>mql</code>,{" "}
+            <code>sql</code>, <code>oportunidade</code>, <code>cliente</code> ou <code>perdido</code>), <code>campanha</code> (nome da
+            campanha do Facebook Leads) e <code>utm_source</code>, <code>utm_medium</code>, <code>utm_campaign</code>,{" "}
+            <code>utm_content</code>, <code>utm_term</code>. A resposta repete em <code>filtros</code> o que foi aplicado.
           </p>
           <p className="mt-2">
             Cada lead vem com <code>id</code>, <code>nome</code>, <code>telefone</code>, <code>email</code>, <code>data_entrada</code>,{" "}
