@@ -41,6 +41,15 @@ describe("leadFilterOps", () => {
     expect(ops("origem=google")).toEqual(ops("origem=google_ads"));
   });
 
+  it("meta e google_ads juntos numa chamada (origem=meta,google_ads ou origem=pago)", () => {
+    const [o] = ops("origem=meta,google_ads");
+    const expr = (o as { expr: string }).expr;
+    expect(expr).toContain("ctwa_at.not.is.null");
+    expect(expr).toContain("custom_fields->>gclid.not.is.null");
+    expect(ops("origem=pago")).toEqual(ops("origem=meta,google_ads"));
+    expect(parse("origem=meta,site")).toHaveProperty("error");
+  });
+
   it("whatsapp_direto = nada de Meta e sem origem gravada", () => {
     const list = ops("origem=whatsapp_direto");
     expect(list).toContainEqual({ op: "is_null", col: "ctwa_at" });

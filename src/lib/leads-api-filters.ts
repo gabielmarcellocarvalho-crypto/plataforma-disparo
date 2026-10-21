@@ -43,6 +43,14 @@ const GOOGLE_OR = [
   "custom_fields->>origem.ilike.*google*",
 ].join(",");
 
+// Canais pagos que dá pra pedir juntos (origem=meta,google_ads ou origem=pago): o lead entra se veio de
+// QUALQUER um deles — é o que o dashboard usa pra ver Meta e Google lado a lado numa chamada só.
+const PAID_OR: Record<string, string> = { meta: META_OR, google_ads: GOOGLE_OR, google: GOOGLE_OR };
+function paidOrigins(origem: string): string[] | null {
+  const parts = origem.toLowerCase().split(",").map((s) => s.trim()).filter(Boolean).flatMap((p) => (p === "pago" ? ["meta", "google_ads"] : [p]));
+  return parts.length > 0 && parts.every((p) => p in PAID_OR) ? parts : null;
+}
+
 export function parseLeadFilters(params: URLSearchParams): { filters: LeadFilters } | { error: string } {
   const get = (k: string) => params.get(k)?.trim() || "";
 
@@ -61,6 +69,11 @@ export function parseLeadFilters(params: URLSearchParams): { filters: LeadFilter
   const qualificacao = get("qualificacao");
   if (qualificacao && !(QUAL_VALUES as readonly string[]).includes(qualificacao)) {
     return { error: `qualificacao precisa ser ${QUAL_VALUES.join(", ")}.` };
+  }
+
+  const origemRaw = get("origem");
+  if (origemRaw.includes(",") && !paidOrigins(origemRaw)) {
+    return { error: "origem com vírgula só combina os canais pagos: meta e google_ads (ex.: origem=meta,google_ads)." };
   }
 
   const utms: Record<string, string> = {};
@@ -100,8 +113,8 @@ export function leadFilterOps(f: LeadFilters, cfg: QualConfig, tagsDoWorkspace: 
   const ops: LeadFilterOp[] = [];
 
   const origem = f.origem?.toLowerCase();
-  if (origem === "meta") ops.push({ op: "or", expr: META_OR });
-  else if (origem === "google_ads" || origem === "google") ops.push({ op: "or", expr: GOOGLE_OR });
+  const pagos = origem ? paidOrigins(origem) : null;
+  if (pagos) ops.push({ op: "or", expr: [...new Set(pagos.map((p) => PAID_OR[p]))].join(",") });
   else if (origem === "nao_meta" || origem === "whatsapp_direto") {
     ops.push({ op: "is_null", col: "ctwa_at" });
     for (const k of META_MARKERS) ops.push({ op: "is_null", col: `custom_fields->>${k}` });

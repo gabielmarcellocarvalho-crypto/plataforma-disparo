@@ -126,13 +126,25 @@ export function ApiKeysManager({ keys, siteUrl, kind }: { keys: ApiKeySummary[];
 {`curl -X POST ${siteUrl}${ENDPOINT} \\
   -H "Authorization: Bearer ${activeExample}" \\
   -H "Content-Type: application/json" \\
-  -d '{"name":"Maria","phone":"5511999998888","email":"maria@exemplo.com","source":"site"}'`}
+  -d '{"name":"Maria","phone":"5511999998888","email":"maria@exemplo.com","source":"site"}'
+
+# Lead que veio de anúncio do Google Ads: repasse o gclid e as UTMs da URL da página
+curl -X POST ${siteUrl}${ENDPOINT} \\
+  -H "Authorization: Bearer ${activeExample}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"João","phone":"5511988887777","source":"Google Ads","custom_fields":{"gclid":"EAIaIQobChMI...","utm_source":"google","utm_medium":"cpc","utm_campaign":"black-friday"}}'`}
           </pre>
           <p className="mt-2">
             <code>phone</code> ou <code>email</code> é obrigatório (pode mandar os dois). Campos extras vão em{" "}
             <code>custom_fields</code> (objeto chave/valor). Para marcar o lead, mande <code>tags</code> (lista, ex.:{" "}<code>[&quot;Feira&quot;,&quot;Sócio&quot;]</code>): tag que já existe no workspace é reaproveitada e as tags que o lead já tinha são mantidas. O lead cai direto na lista de Contatos e no CRM, na fase
             &quot;não abordado&quot;. Para gravar UTMs, mande em <code>custom_fields</code> com o nome <code>utm_source</code>,{" "}
             <code>utm_medium</code>, <code>utm_campaign</code> etc.
+          </p>
+          <p className="mt-2">
+            <b>Google Ads:</b> o site precisa pegar o <code>gclid</code> da URL de quem clicou no anúncio (o Google acrescenta{" "}
+            <code>?gclid=…</code> sozinho com a marcação automática ligada; em iPhone pode vir <code>gbraid</code> ou{" "}
+            <code>wbraid</code>) e mandar em <code>custom_fields</code>, junto com as UTMs. Com isso o lead ganha o selo do Google no
+            Pipeline e sai na API de leitura com <code>origem.canal = &quot;google_ads&quot;</code> e o <code>google_gclid</code>.
           </p>
         </details>
       ) : (
@@ -149,6 +161,10 @@ curl "${siteUrl}${ENDPOINT}?desde=2026-10-01&pagina=1&por_pagina=100" \\
 
 # Só os leads que vieram de campanha da Meta (funciona igual no /funil)
 curl "${siteUrl}${ENDPOINT}?origem=meta&desde=2026-10-01" \\
+  -H "Authorization: Bearer ${activeExample}"
+
+# Meta e Google Ads juntos, cada lead dizendo de qual veio em origem.canal
+curl "${siteUrl}${ENDPOINT}?origem=meta,google_ads&desde=2026-10-01" \\
   -H "Authorization: Bearer ${activeExample}"`}
           </pre>
           <p className="mt-2">
@@ -159,7 +175,7 @@ curl "${siteUrl}${ENDPOINT}?origem=meta&desde=2026-10-01" \\
           <p className="mt-2">
             Para pegar só uma parte dos leads (vale para <code>/leads</code> e <code>/funil</code>, e dá para combinar):{" "}
             <code>origem</code> (<code>meta</code> = anúncio ou formulário da Meta, <code>google_ads</code> = clique em anúncio do
-            Google, <code>nao_meta</code>, <code>whatsapp_direto</code>{" "}
+            Google, <code>meta,google_ads</code> ou <code>pago</code> = os dois juntos, <code>nao_meta</code>, <code>whatsapp_direto</code>{" "}
             ou o nome da origem, ex.: <code>api</code>, <code>site</code>), <code>tag</code> (uma ou várias separadas por vírgula; o lead
             precisa ter pelo menos uma), <code>etapa</code> (ex.: <code>interessado,encaminhamento</code>), <code>resultado</code>{" "}
             (<code>ganho</code>, <code>perdido</code> ou <code>aberto</code>), <code>qualificacao</code> (<code>mql</code>,{" "}
@@ -171,7 +187,8 @@ curl "${siteUrl}${ENDPOINT}?origem=meta&desde=2026-10-01" \\
             Cada lead vem com <code>id</code>, <code>nome</code>, <code>telefone</code>, <code>email</code>, <code>data_entrada</code>,{" "}
             <code>fase</code> (nome da fase atual e <code>desde</code>, a data da última mudança), <code>resultado</code> (
             <code>ganho</code>, <code>perdido</code> ou vazio), <code>valor_venda</code>, <code>motivo_perda</code>, <code>origem</code>{" "}
-            (source, UTMs, tags, se veio de campanha da Meta e a campanha/anúncio/formulário do Facebook Leads), <code>campos</code>{" "}
+            (source, UTMs, tags, <code>canal</code> = <code>meta</code>, <code>google_ads</code> ou vazio, o{" "}
+            <code>google_gclid</code> e a campanha/anúncio/formulário do Facebook Leads), <code>campos</code>{" "}
             (todos os campos personalizados) e <code>qualificacao</code>: o nível do lead (<code>lead</code>, <code>mql</code>,{" "}
             <code>sql</code>, <code>oportunidade</code>, <code>cliente</code> ou <code>perdido</code>), pelas regras abaixo.
           </p>
