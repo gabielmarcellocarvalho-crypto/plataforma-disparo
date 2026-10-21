@@ -11,6 +11,8 @@ import { formatFieldValue, readMultiValue, type CustomFieldDef } from "@/lib/cus
 import { LOST_STAGE } from "@/lib/lost-reasons";
 import type { BranchRow, TeamMemberRow } from "@/app/actions/team";
 import { moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
+import { deleteCrmFilter, saveCrmFilter } from "@/app/actions/crm-saved-filters";
+import { countSavedFilters, normalizeSavedFilters, type SavedFilter, type SavedFilterValues } from "@/lib/crm-saved-filters";
 import { sortStages, stageForSignal } from "@/lib/pipelines";
 import { PipelinesEditor } from "@/components/pipelines-editor";
 import { useRouter } from "next/navigation";
@@ -506,6 +508,7 @@ export function CrmBoard({
   pipelines,
   activity,
   meetings = [],
+  savedFilters = [],
 }: {
   contacts: Contact[];
   stageLabels: Record<ContactStage, string>;
@@ -520,6 +523,8 @@ export function CrmBoard({
   activity: ContactActivity;
   // [contact_id, starts_at] das reuniões futuras, em ordem de início.
   meetings?: [string, string][];
+  // Filtros salvos da pessoa logada (cada vendedor monta os seus).
+  savedFilters?: SavedFilter[];
 }) {
   const [items, setItems] = useState(contacts);
   const [stageLabels, setStageLabels] = useState(initialStageLabels);
@@ -605,10 +610,17 @@ export function CrmBoard({
   const [lostReasonFilter, setLostReasonFilter] = useState("");
   // Tags que tiram o lead da lista (filtrar "pra fora"): quem tem QUALQUER uma delas some do funil.
   const [excludeTags, setExcludeTags] = useState<string[]>([]);
+  // Tags que o lead PRECISA ter (qualquer uma delas) — ex.: o departamento que o chatbot marcou.
+  const [includeTags, setIncludeTags] = useState<string[]>([]);
   const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
   const [pickerKey, setPickerKey] = useState("");
   const [pickerValue, setPickerValue] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [saved, setSaved] = useState(savedFilters);
+  // null = fechado; string = nome sendo digitado pra salvar os filtros atuais.
+  const [savingName, setSavingName] = useState<string | null>(null);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [savedBusy, setSavedBusy] = useState(false);
 
   const cardDefs = useMemo(() => fieldDefs.filter((d) => d.show_in_card), [fieldDefs]);
 
@@ -683,6 +695,7 @@ export function CrmBoard({
         if (lostReasonFilter === "__nenhum__" ? c.stage !== LOST_STAGE || c.lost_reason : c.lost_reason !== lostReasonFilter) return false;
       }
       if (excludeTags.length > 0 && (c.tags ?? []).some((t) => excludeTags.includes(t.toLowerCase()))) return false;
+      if (includeTags.length > 0 && !(c.tags ?? []).some((t) => includeTags.includes(t.toLowerCase()))) return false;
       if (search) {
         const q = search.toLowerCase();
         const hay = `${c.name || ""} ${c.phone || ""} ${c.email || ""}`.toLowerCase();
@@ -698,7 +711,7 @@ export function CrmBoard({
       }
       return true;
     });
-  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, channelFilter, lostReasonFilter, excludeTags, fieldFilters]);
+  }, [items, search, dateFrom, dateTo, quickView, stageFilter, teamFilter, branchFilter, channelFilter, lostReasonFilter, excludeTags, includeTags, fieldFilters]);
 
   // Contagem por atalho — cada item já mostra quantos leads tem ali, igual o resumo do topo do Kommo.
   const quickViewCounts = useMemo(() => {
@@ -851,6 +864,7 @@ export function CrmBoard({
     (channelFilter ? 1 : 0) +
     (lostReasonFilter ? 1 : 0) +
     excludeTags.length +
+    includeTags.length +
     fieldFilters.length;
   const activeFilterCount = (search ? 1 : 0) + (quickView !== "todos" ? 1 : 0) + propertyFilterCount;
 
@@ -928,7 +942,66 @@ export function CrmBoard({
     setChannelFilter("");
     setLostReasonFilter("");
     setExcludeTags([]);
+    setIncludeTags([]);
     setFieldFilters([]);
+  }
+
+  // Filtros salvos: o que está aplicado agora, no formato gravado (sem busca nem período).
+  const currentFilters: SavedFilterValues = normalizeSavedFilters({
+    quickView,
+    stage: stageFilter,
+    team: teamFilter,
+    branch: branchFilter,
+    channel: channelFilter,
+    lostReason: lostReasonFilter,
+    includeTags,
+    excludeTags,
+    fields: fieldFilters,
+    pipelineId: pipelines.length > 1 ? activePipelineId : null,
+  });
+  const currentKey = JSON.stringify(currentFilters);
+  const canSaveFilters = countSavedFilters(currentFilters) > 0;
+
+  function applySaved(s: SavedFilter) {
+    const f = s.filters;
+    // Responsável ou filial apagados depois de salvar: o filtro cai, senão esconderia todo mundo.
+    const ok = (id: string, list: { id: string }[]) => (id === "__nenhum__" || list.some((x) => x.id === id) ? id : "");
+    setQuickView(QUICK_VIEWS.some((q) => q.key === f.quickView) ? (f.quickView as QuickView) : "todos");
+    setStageFilter(f.stage as ContactStage | "");
+    setTeamFilter(f.team ? ok(f.team, teamMembers) : "");
+    setBranchFilter(f.branch ? ok(f.branch, branches) : "");
+    setChannelFilter(f.channel);
+    setLostReasonFilter(f.lostReason);
+    setIncludeTags(f.includeTags);
+    setExcludeTags(f.excludeTags);
+    setFieldFilters(f.fields);
+    if (f.pipelineId && pipelines.some((p) => p.id === f.pipelineId)) setActivePipelineId(f.pipelineId);
+    setSavedMsg(null);
+  }
+
+  async function saveCurrentFilters() {
+    const name = (savingName ?? "").trim();
+    if (!name) return;
+    setSavedBusy(true);
+    setSavedMsg(null);
+    const r = await saveCrmFilter(name, currentFilters);
+    setSavedBusy(false);
+    if (r.error || !r.filter) {
+      setSavedMsg(r.error ?? "Não foi possível salvar o filtro.");
+      return;
+    }
+    setSaved((cur) => [...cur, r.filter!]);
+    setSavingName(null);
+  }
+
+  async function removeSaved(id: string) {
+    const antes = saved;
+    setSaved((cur) => cur.filter((s) => s.id !== id));
+    const r = await deleteCrmFilter(id);
+    if (r.error) {
+      setSaved(antes);
+      setSavedMsg(r.error);
+    }
   }
 
   const totalNoFunil = modoFunil ? items.filter(pertenceAoFunil).length : items.length;
@@ -1200,6 +1273,91 @@ export function CrmBoard({
           </div>
         </div>
 
+        {/* Filtros salvos: cada pessoa guarda as combinações que usa (ex.: "Comercial — meus leads")
+            e aplica com um clique. São só dela; o resto da equipe tem os seus. */}
+        {(saved.length > 0 || canSaveFilters) && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted mr-1">Meus filtros</span>
+            {saved.map((s) => {
+              const active = JSON.stringify(s.filters) === currentKey;
+              return (
+                <span
+                  key={s.id}
+                  className={`flex items-center gap-1 text-xs font-bold rounded-full border transition-colors ${
+                    active ? "border-info-text bg-info-soft text-info-text" : "border-border text-text-muted hover:border-primary-soft hover:text-primary-strong"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => (active ? clearFilters() : applySaved(s))}
+                    aria-pressed={active}
+                    title={active ? "Tirar este filtro" : `Aplicar: ${s.name}`}
+                    className="pl-3 py-1.5 cursor-pointer"
+                  >
+                    {s.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSaved(s.id)}
+                    aria-label={`Apagar o filtro salvo ${s.name}`}
+                    title="Apagar filtro salvo"
+                    className="pr-2.5 py-1.5 cursor-pointer opacity-60 hover:opacity-100 hover:text-danger"
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
+            {savingName === null
+              ? canSaveFilters &&
+                !saved.some((s) => JSON.stringify(s.filters) === currentKey) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavingName("");
+                      setSavedMsg(null);
+                    }}
+                    className="text-xs font-bold text-primary-strong hover:underline cursor-pointer px-1"
+                  >
+                    + salvar filtros atuais
+                  </button>
+                )
+              : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    saveCurrentFilters();
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    autoFocus
+                    value={savingName}
+                    onChange={(e) => setSavingName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setSavingName(null);
+                    }}
+                    maxLength={40}
+                    placeholder="Nome (ex: Comercial)"
+                    aria-label="Nome do filtro salvo"
+                    className="border border-border rounded-md px-2 py-1 text-xs outline-none focus:border-primary w-44"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savedBusy || !savingName.trim()}
+                    className="text-xs font-bold text-primary-strong hover:underline cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    salvar
+                  </button>
+                  <button type="button" onClick={() => setSavingName(null)} className="text-xs font-semibold text-text-muted hover:text-text cursor-pointer">
+                    cancelar
+                  </button>
+                </form>
+              )}
+            {savedMsg && <span className="text-[11px] text-danger">{savedMsg}</span>}
+          </div>
+        )}
+
         {filtersOpen && (
           <div className="flex flex-col gap-2.5 border-t border-border pt-3">
             <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Propriedades do lead</span>
@@ -1304,6 +1462,27 @@ export function CrmBoard({
                   value=""
                   onChange={(e) => {
                     const t = e.target.value;
+                    if (t) setIncludeTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
+                  }}
+                  title="Mostra só os leads que têm a tag escolhida"
+                  className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+                >
+                  <option value="">Só com a tag…</option>
+                  {allTags
+                    .filter((t) => !includeTags.includes(t))
+                    .map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                </select>
+              )}
+
+              {allTags.length > 0 && (
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const t = e.target.value;
                     if (t) setExcludeTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
                   }}
                   title="Esconde os leads que têm a tag escolhida"
@@ -1320,6 +1499,20 @@ export function CrmBoard({
                 </select>
               )}
             </div>
+
+            {includeTags.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold text-text-muted">Com a tag:</span>
+                {includeTags.map((t) => (
+                  <span key={t} className="flex items-center gap-1.5 text-[11px] bg-primary-faint text-primary-strong rounded-full px-2.5 py-1">
+                    {t}
+                    <button type="button" onClick={() => setIncludeTags((cur) => cur.filter((x) => x !== t))} aria-label={`Tirar o filtro da tag ${t}`} className="cursor-pointer font-bold">
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {excludeTags.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap">

@@ -5,6 +5,8 @@ import { resolveLostReasons } from "@/lib/lost-reasons";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { listBranches, listTeamMembers } from "@/app/actions/team";
 import { listPipelines } from "@/app/actions/pipelines";
+import { listSavedFilters } from "@/app/actions/crm-saved-filters";
+import type { SavedFilter } from "@/lib/crm-saved-filters";
 import { getContactActivity } from "@/lib/contact-activity";
 import { CrmBoard } from "@/components/crm-board";
 import { fetchAllParallel } from "@/lib/paged-fetch";
@@ -90,7 +92,7 @@ export default async function CrmPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines, activity, meetings] = workspace
+  const [rows, { data: workspaceRow }, fieldDefs, teamMembers, branches, pipelines, activity, meetings, savedFilters] = workspace
     ? await Promise.all([
         fetchAllContacts(supabase, workspace.id),
         supabase.from("workspaces").select("crm_stage_labels, crm_hidden_stages, lost_reasons, ask_lost_reason").eq("id", workspace.id).maybeSingle(),
@@ -100,8 +102,9 @@ export default async function CrmPage() {
         listPipelines(),
         getContactActivity(supabase, workspace.id),
         fetchUpcomingMeetings(supabase, workspace.id),
+        listSavedFilters(),
       ])
-    : [[] as ContactRow[], { data: null }, [], [], [], [], { nextTaskAt: [], interactions: [] }, [] as [string, string][]];
+    : [[] as ContactRow[], { data: null }, [], [], [], [], { nextTaskAt: [], interactions: [] }, [] as [string, string][], [] as SavedFilter[]];
 
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const hiddenStages = resolveHiddenStages(workspaceRow?.crm_hidden_stages);
@@ -125,6 +128,7 @@ export default async function CrmPage() {
         pipelines={pipelines}
         activity={activity}
         meetings={meetings}
+        savedFilters={savedFilters}
       />
     </div>
   );
