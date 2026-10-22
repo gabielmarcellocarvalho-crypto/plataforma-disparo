@@ -4,7 +4,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { resolveStageLabels, getVisibleStages, resolveHiddenStages } from "@/lib/crm-stages";
 import { resolveWorkspacePlan, planHasSdr } from "@/lib/workspace-plan";
 import { ConversationsPanel, type Conversation } from "@/components/conversations-panel";
-import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 import { getConversationTickets } from "@/app/actions/conversation-tickets";
 import { conversationKey } from "@/lib/conversation-tickets";
 import { fetchAllParallel } from "@/lib/paged-fetch";
@@ -178,11 +178,12 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
   const instancesById = new Map(
     (instances || []).map((i) => [i.id, { id: i.id, name: DEPARTMENT_LABEL[i.department] || i.department, channel: i.channel as WhatsappChannel }])
   );
-  // Agente que fala por número oficial da Meta: fora da janela de 24h a conversa só reabre com template.
+  // Agente que fala por número oficial (Meta direta ou 360dialog): fora da janela de 24h a conversa só
+  // reabre com template.
   const agentsById = new Map(
     (agents || []).map(({ whatsapp_instance_id, ...a }) => [
       a.id,
-      { ...a, official: !a.evolution_instance_name && Boolean(whatsapp_instance_id) && instancesById.get(whatsapp_instance_id as string)?.channel === "metacloud" },
+      { ...a, official: !a.evolution_instance_name && Boolean(whatsapp_instance_id) && isOfficialWhatsappChannel(instancesById.get(whatsapp_instance_id as string)?.channel ?? "") },
     ])
   );
 

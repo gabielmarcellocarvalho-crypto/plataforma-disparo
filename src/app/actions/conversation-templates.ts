@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMetaCloudTemplates, sendMetaCloudTemplate } from "@/lib/metacloud";
+import { listDialog360Templates, sendDialog360Template } from "@/lib/dialog360";
 import { variableCount } from "@/lib/template-variables";
-import { templateLogContent, fillTemplateBody } from "@/lib/template-log";
+import { fillTemplateBody } from "@/lib/template-log";
 import { templateHeaderSupported, templateParamsFor } from "@/lib/conversation-template";
 import { interruptChatbotForContact } from "@/lib/chatbot-engine";
 
@@ -31,8 +32,11 @@ type ContactRow = {
   companies: { name: string } | { name: string }[] | null;
 };
 
-// Número oficial da Meta dessa conversa: a do agente (whatsapp_instance_id dele) ou o número do disparo
-// avulso. As leituras de contato/agente/número passam pela RLS — quem não é do workspace não chega aqui.
+// Número oficial dessa conversa (Meta direta ou 360dialog): o do agente (whatsapp_instance_id dele) ou o
+// número do disparo avulso. As leituras de contato/agente/número passam pela RLS — quem não é do
+// workspace não chega aqui.
+type OfficialChannel = { kind: "metacloud"; phoneNumberId: string; wabaId: string } | { kind: "360dialog"; apiKey: string };
+type ChannelTemplate = { name: string; language: string; category: string; bodyText: string | null; headerFormat: string | null };
 async function officialTarget(contactId: string, agentId: string | null, instanceId: string | null) {
   const supabase = await createClient();
   const { data: contact } = await supabase
@@ -57,10 +61,29 @@ async function officialTarget(contactId: string, agentId: string | null, instanc
     .eq("id", numberId)
     .maybeSingle();
   if (!instance || instance.workspace_id !== contact.workspace_id) return { error: "Número da conversa não encontrado." } as const;
-  if (instance.channel !== "metacloud") return { error: "Template só existe no número oficial da Meta." } as const;
-  if (!instance.phone_number_id || !instance.meta_waba_id) return { error: "Esse número não tem o WABA da Meta vinculado — reconecte em Configurações." } as const;
 
-  return { error: null, supabase, contact, phoneNumberId: instance.phone_number_id as string, wabaId: instance.meta_waba_id as string } as const;
+  let channel: OfficialChannel;
+  if (instance.channel === "metacloud") {
+    if (!instance.phone_number_id || !instance.meta_waba_id) return { error: "Esse número não tem o WABA da Meta vinculado — reconecte em Configurações." } as const;
+    channel = { kind: "metacloud", phoneNumberId: instance.phone_number_id as string, wabaId: instance.meta_waba_id as string };
+  } else if (instance.channel === "360dialog") {
+    // A API key é lida com o admin, e só depois de o número ter sido confirmado (pela RLS) como do
+    // workspace do contato.
+    const { data: key } = await createAdminClient().from("whatsapp_instances").select("dialog360_api_key").eq("id", numberId).maybeSingle();
+    if (!key?.dialog360_api_key) return { error: "Esse número ainda não tem a API key do 360dialog configurada." } as const;
+    channel = { kind: "360dialog", apiKey: key.dialog360_api_key as string };
+  } else {
+    return { error: "Template só existe no número oficial da Meta." } as const;
+  }
+
+  return { error: null, supabase, contact, channel } as const;
+}
+
+// Templates aprovados do número. Na 360dialog o cabeçalho não vem na listagem (mesmo comportamento das
+// campanhas desse canal), então lá todo template aparece como mandável.
+async function templatesOf(channel: OfficialChannel): Promise<ChannelTemplate[]> {
+  if (channel.kind === "metacloud") return listMetaCloudTemplates(channel.wabaId);
+  return (await listDialog360Templates(channel.apiKey)).map((t) => ({ ...t, headerFormat: t.headerFormat ?? null }));
 }
 
 function companyOf(contact: ContactRow): string | null {
@@ -78,7 +101,7 @@ export async function listConversationTemplates(contactId: string, agentId: stri
   const t = await officialTarget(contactId, agentId, instanceId);
   if (t.error !== null) return { error: t.error };
   try {
-    const [templates, mappings] = await Promise.all([listMetaCloudTemplates(t.wabaId), mappingsOf(t.contact.workspace_id)]);
+    const [templates, mappings] = await Promise.all([templatesOf(t.channel), mappingsOf(t.contact.workspace_id)]);
     const company = companyOf(t.contact);
     const data = templates.map((tpl): ConversationTemplate => {
       const body = tpl.bodyText || "";
@@ -91,7 +114,7 @@ export async function listConversationTemplates(contactId: string, agentId: stri
     data.sort((a, b) => Number(Boolean(a.blocked)) - Number(Boolean(b.blocked)) || a.name.localeCompare(b.name));
     return { error: null, data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
+    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates do número." };
   }
 }
 
@@ -110,11 +133,11 @@ export async function sendConversationTemplate(
   // Mesma regra do envio manual: com agente de IA, só depois de assumir a conversa (senão os dois falam).
   if (agentId && !contact.needs_attention) return { error: "Assuma a conversa antes de mandar mensagem manual." };
 
-  let tpl: Awaited<ReturnType<typeof listMetaCloudTemplates>>[number] | undefined;
+  let tpl: ChannelTemplate | undefined;
   try {
-    tpl = (await listMetaCloudTemplates(t.wabaId)).find((x) => x.name === template.name && x.language === template.language);
+    tpl = (await templatesOf(t.channel)).find((x) => x.name === template.name && x.language === template.language);
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
+    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates do número." };
   }
   if (!tpl) return { error: "Template não encontrado ou não está mais aprovado pela Meta." };
   if (!templateHeaderSupported(tpl.headerFormat)) return { error: "Template com mídia no cabeçalho: mande por uma campanha." };
@@ -125,14 +148,17 @@ export async function sendConversationTemplate(
 
   let externalId: string | null = null;
   try {
-    const sent = await sendMetaCloudTemplate(t.phoneNumberId, contact.phone, tpl.name, tpl.language, p.params);
+    const sent =
+      t.channel.kind === "metacloud"
+        ? await sendMetaCloudTemplate(t.channel.phoneNumberId, contact.phone, tpl.name, tpl.language, p.params)
+        : await sendDialog360Template(t.channel.apiKey, contact.phone, tpl.name, tpl.language, p.params);
     externalId = sent?.id ?? null;
   } catch (err) {
     return { error: `Falha ao enviar o template: ${err instanceof Error ? err.message.slice(0, 300) : "erro desconhecido"}` };
   }
 
-  const admin = createAdminClient();
-  const content = await templateLogContent(admin, { wabaId: t.wabaId }, tpl.name, tpl.language, p.params);
+  // Na conversa fica o texto que o contato recebeu (o agente de IA lê esse histórico).
+  const content = tpl.bodyText ? `[Template: ${tpl.name}]\n${fillTemplateBody(tpl.bodyText, p.params)}` : `[Template: ${tpl.name}]`;
   const { error: logError } = await t.supabase.from("messages").insert({
     workspace_id: contact.workspace_id,
     contact_id: contact.id,
@@ -144,7 +170,7 @@ export async function sendConversationTemplate(
     billing_category: (tpl.category || "marketing").toLowerCase(),
   });
   if (logError) console.error("Template da conversa enviado mas não registrado:", logError.code, logError.message);
-  if (!agentId) await interruptChatbotForContact(admin, contact.id);
+  if (!agentId) await interruptChatbotForContact(createAdminClient(), contact.id);
 
   revalidatePath("/conversas");
   return { error: null };

@@ -31,7 +31,7 @@ import { VoiceMessageBubble } from "@/components/ui/voice-message-bubble";
 import { STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
 import { listPipelines, moveContactToStage, type PipelineWithStages } from "@/app/actions/pipelines";
 import { sortStages, stageForSignal } from "@/lib/pipelines";
-import type { WhatsappChannel } from "@/lib/whatsapp-channel";
+import { isOfficialWhatsappChannel, type WhatsappChannel } from "@/lib/whatsapp-channel";
 import { CONVERSATION_MEDIA_ACCEPT, resolveFileMime } from "@/lib/conversation-media";
 import { mp4OpusToOgg } from "@/lib/audio-remux";
 import { isGoogleAdsLead, isMetaCampaignLead } from "@/lib/lead-origin";
@@ -116,7 +116,7 @@ type Contact = {
   ctwa_at?: string | null;
   ai_temperature?: string | null;
 };
-// official: fala por número oficial da Meta (fora da janela de 24h só template entra).
+// official: fala por número oficial (Meta direta ou 360dialog) — fora da janela de 24h só template entra.
 type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string; official?: boolean };
 // Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
 type Instance = { id: string; name: string; channel: WhatsappChannel };
@@ -536,7 +536,7 @@ export function ConversationsPanel({
   // Número oficial da Meta (agente com número oficial ou disparo avulso pela Meta): passou 24h da última
   // mensagem do contato e só template aprovado entra. Texto, anexo e áudio ficam travados e a tela
   // aponta pro template. Sem mensagem do contato carregada também conta como fechada.
-  const officialNumber = selected ? (selected.agent ? Boolean(selected.agent.official) : selected.instance?.channel === "metacloud") : false;
+  const officialNumber = selected ? (selected.agent ? Boolean(selected.agent.official) : isOfficialWhatsappChannel(selected.instance?.channel ?? "")) : false;
   const lastContactMsgAt = selected?.messages.find((m) => m.role === "user")?.created_at ?? null;
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -1700,11 +1700,11 @@ function TemplatePicker({
           <div className="flex items-center gap-2 text-xs">
             <b>{chosen.name}</b>
             <span className="px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted text-[10px] font-bold">
-              {TEMPLATE_CATEGORY_LABEL[chosen.category] || chosen.category}
+              {TEMPLATE_CATEGORY_LABEL[chosen.category.toUpperCase()] || chosen.category}
             </span>
           </div>
           <p className="text-sm whitespace-pre-wrap bg-bg border border-border rounded-md px-3 py-2 max-h-48 overflow-y-auto">{chosen.preview}</p>
-          {chosen.category === "MARKETING" && <p className="text-[11px] text-text-muted">A Meta cobra esse envio como mensagem de marketing.</p>}
+          {chosen.category.toUpperCase() === "MARKETING" && <p className="text-[11px] text-text-muted">A Meta cobra esse envio como mensagem de marketing.</p>}
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={() => onChoose(null)} disabled={sending} className="text-xs font-bold px-3 py-2 rounded-md border border-border cursor-pointer">
               Voltar
@@ -1736,7 +1736,7 @@ function TemplatePicker({
               <div className="flex items-center gap-2 text-xs">
                 <b className="truncate">{t.name}</b>
                 <span className="px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted text-[10px] font-bold shrink-0">
-                  {TEMPLATE_CATEGORY_LABEL[t.category] || t.category}
+                  {TEMPLATE_CATEGORY_LABEL[t.category.toUpperCase()] || t.category}
                 </span>
                 <span className="text-[10px] text-text-muted shrink-0">{t.language}</span>
               </div>
