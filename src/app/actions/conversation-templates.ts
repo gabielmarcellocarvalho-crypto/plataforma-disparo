@@ -1,0 +1,151 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { listMetaCloudTemplates, sendMetaCloudTemplate } from "@/lib/metacloud";
+import { variableCount } from "@/lib/template-variables";
+import { templateLogContent, fillTemplateBody } from "@/lib/template-log";
+import { templateHeaderSupported, templateParamsFor } from "@/lib/conversation-template";
+import { interruptChatbotForContact } from "@/lib/chatbot-engine";
+
+type Result<T> = { error: string; data?: undefined } | { error: null; data: T };
+
+export type ConversationTemplate = {
+  name: string;
+  language: string;
+  category: string;
+  // Texto já com os dados do contato (ou o motivo de não dar pra mandar pra ele).
+  preview: string;
+  blocked: string | null;
+};
+
+type ContactRow = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  custom_fields: Record<string, unknown> | null;
+  workspace_id: string;
+  needs_attention: boolean | null;
+  companies: { name: string } | { name: string }[] | null;
+};
+
+// Número oficial da Meta dessa conversa: a do agente (whatsapp_instance_id dele) ou o número do disparo
+// avulso. As leituras de contato/agente/número passam pela RLS — quem não é do workspace não chega aqui.
+async function officialTarget(contactId: string, agentId: string | null, instanceId: string | null) {
+  const supabase = await createClient();
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("id, name, phone, email, custom_fields, workspace_id, needs_attention, companies(name)")
+    .eq("id", contactId)
+    .maybeSingle<ContactRow>();
+  if (!contact) return { error: "Conversa não encontrada." } as const;
+
+  let numberId = instanceId;
+  if (agentId) {
+    const { data: agent } = await supabase.from("agents").select("evolution_instance_name, whatsapp_instance_id").eq("id", agentId).maybeSingle();
+    if (!agent) return { error: "Conversa não encontrada." } as const;
+    if (agent.evolution_instance_name || !agent.whatsapp_instance_id) return { error: "Template só existe no número oficial da Meta." } as const;
+    numberId = agent.whatsapp_instance_id as string;
+  }
+  if (!numberId) return { error: "Conversa sem número de WhatsApp." } as const;
+
+  const { data: instance } = await supabase
+    .from("whatsapp_instances")
+    .select("channel, phone_number_id, meta_waba_id, workspace_id")
+    .eq("id", numberId)
+    .maybeSingle();
+  if (!instance || instance.workspace_id !== contact.workspace_id) return { error: "Número da conversa não encontrado." } as const;
+  if (instance.channel !== "metacloud") return { error: "Template só existe no número oficial da Meta." } as const;
+  if (!instance.phone_number_id || !instance.meta_waba_id) return { error: "Esse número não tem o WABA da Meta vinculado — reconecte em Configurações." } as const;
+
+  return { error: null, supabase, contact, phoneNumberId: instance.phone_number_id as string, wabaId: instance.meta_waba_id as string } as const;
+}
+
+function companyOf(contact: ContactRow): string | null {
+  const c = contact.companies;
+  return Array.isArray(c) ? c[0]?.name ?? null : c?.name ?? null;
+}
+
+async function mappingsOf(workspaceId: string): Promise<Map<string, string[]>> {
+  const { data } = await createAdminClient().from("template_variable_maps").select("template_name, language, variables").eq("workspace_id", workspaceId);
+  return new Map((data || []).map((m) => [`${m.template_name}|${m.language}`, (m.variables as string[]) || []]));
+}
+
+// Templates aprovados do número da conversa, cada um com a prévia já preenchida pra esse contato.
+export async function listConversationTemplates(contactId: string, agentId: string | null, instanceId: string | null): Promise<Result<ConversationTemplate[]>> {
+  const t = await officialTarget(contactId, agentId, instanceId);
+  if (t.error !== null) return { error: t.error };
+  try {
+    const [templates, mappings] = await Promise.all([listMetaCloudTemplates(t.wabaId), mappingsOf(t.contact.workspace_id)]);
+    const company = companyOf(t.contact);
+    const data = templates.map((tpl): ConversationTemplate => {
+      const body = tpl.bodyText || "";
+      const p = templateParamsFor(variableCount(body), mappings.get(`${tpl.name}|${tpl.language}`), t.contact, company);
+      const blocked = !templateHeaderSupported(tpl.headerFormat)
+        ? "Tem imagem/arquivo no cabeçalho — mande por uma campanha, que tem o envio da mídia."
+        : p.error;
+      return { name: tpl.name, language: tpl.language, category: tpl.category, preview: p.params ? fillTemplateBody(body, p.params) : body, blocked };
+    });
+    data.sort((a, b) => Number(Boolean(a.blocked)) - Number(Boolean(b.blocked)) || a.name.localeCompare(b.name));
+    return { error: null, data };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
+  }
+}
+
+// Dispara um template aprovado só pra esse contato. Serve principalmente pra reabrir a conversa depois
+// das 24h, quando texto livre não entra mais.
+export async function sendConversationTemplate(
+  contactId: string,
+  agentId: string | null,
+  instanceId: string | null,
+  template: { name: string; language: string }
+): Promise<{ error: string | null }> {
+  const t = await officialTarget(contactId, agentId, instanceId);
+  if (t.error !== null) return { error: t.error };
+  const { contact } = t;
+  if (!contact.phone) return { error: "Contato sem telefone." };
+  // Mesma regra do envio manual: com agente de IA, só depois de assumir a conversa (senão os dois falam).
+  if (agentId && !contact.needs_attention) return { error: "Assuma a conversa antes de mandar mensagem manual." };
+
+  let tpl: Awaited<ReturnType<typeof listMetaCloudTemplates>>[number] | undefined;
+  try {
+    tpl = (await listMetaCloudTemplates(t.wabaId)).find((x) => x.name === template.name && x.language === template.language);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
+  }
+  if (!tpl) return { error: "Template não encontrado ou não está mais aprovado pela Meta." };
+  if (!templateHeaderSupported(tpl.headerFormat)) return { error: "Template com mídia no cabeçalho: mande por uma campanha." };
+
+  const mappings = await mappingsOf(contact.workspace_id);
+  const p = templateParamsFor(variableCount(tpl.bodyText || ""), mappings.get(`${tpl.name}|${tpl.language}`), contact, companyOf(contact));
+  if (p.error !== null) return { error: p.error };
+
+  let externalId: string | null = null;
+  try {
+    const sent = await sendMetaCloudTemplate(t.phoneNumberId, contact.phone, tpl.name, tpl.language, p.params);
+    externalId = sent?.id ?? null;
+  } catch (err) {
+    return { error: `Falha ao enviar o template: ${err instanceof Error ? err.message.slice(0, 300) : "erro desconhecido"}` };
+  }
+
+  const admin = createAdminClient();
+  const content = await templateLogContent(admin, { wabaId: t.wabaId }, tpl.name, tpl.language, p.params);
+  const { error: logError } = await t.supabase.from("messages").insert({
+    workspace_id: contact.workspace_id,
+    contact_id: contact.id,
+    agent_id: agentId,
+    role: "assistant",
+    content,
+    external_id: externalId,
+    // A coluna só aceita minúsculas (check de messages.billing_category).
+    billing_category: (tpl.category || "marketing").toLowerCase(),
+  });
+  if (logError) console.error("Template da conversa enviado mas não registrado:", logError.code, logError.message);
+  if (!agentId) await interruptChatbotForContact(admin, contact.id);
+
+  revalidatePath("/conversas");
+  return { error: null };
+}

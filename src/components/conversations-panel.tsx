@@ -18,6 +18,7 @@ import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 import { addContactNote, getContactDetail, updateContactResponsible, updateContactStage, type ContactDetail, type ContactNote } from "@/app/actions/contacts";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { suggestReply } from "@/app/actions/ai-features";
+import { listConversationTemplates, sendConversationTemplate, type ConversationTemplate } from "@/app/actions/conversation-templates";
 import { listTeamMembers, type TeamMemberRow } from "@/app/actions/team";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import { ConversationContextPanel } from "@/components/conversation-context-panel";
@@ -40,6 +41,8 @@ import { matchesSavedFilter, type SavedFilter } from "@/lib/crm-saved-filters";
 
 // Mesmo teto do servidor (prepareManualUpload) — checado antes pra não subir um arquivo grande à toa.
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+// Janela de atendimento da Meta: até 24h depois da última mensagem do contato entra texto livre.
+const SERVICE_WINDOW_MS = 24 * 3_600_000;
 
 const TICKET_STATUS_LABELS: Record<TicketStatus, string> = { aberto: "Aberto", pendente: "Pendente", resolvido: "Resolvido" };
 const TICKET_STATUS_BADGE: Record<TicketStatus, string> = {
@@ -113,7 +116,8 @@ type Contact = {
   ctwa_at?: string | null;
   ai_temperature?: string | null;
 };
-type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string };
+// official: fala por número oficial da Meta (fora da janela de 24h só template entra).
+type Agent = { id: string; name: string; photo_url: string | null; evolution_instance_name: string; official?: boolean };
 // Conversa de número sem agente de IA (disparo avulso) — "name" já vem traduzido (Vendas/Financeiro).
 type Instance = { id: string; name: string; channel: WhatsappChannel };
 type Message = {
@@ -528,9 +532,76 @@ export function ConversationsPanel({
   // ação em andamento — mesma regra pro texto, anexo e gravação de áudio.
   // Mensagem de texto não entra aqui: dá pra escrever e mandar a próxima enquanto a anterior ainda sai.
   const composerLocked = Boolean(selected?.agent) && !selected?.contact.needs_attention;
-  const attachLocked = composerLocked || pending;
+
+  // Número oficial da Meta (agente com número oficial ou disparo avulso pela Meta): passou 24h da última
+  // mensagem do contato e só template aprovado entra. Texto, anexo e áudio ficam travados e a tela
+  // aponta pro template. Sem mensagem do contato carregada também conta como fechada.
+  const officialNumber = selected ? (selected.agent ? Boolean(selected.agent.official) : selected.instance?.channel === "metacloud") : false;
+  const lastContactMsgAt = selected?.messages.find((m) => m.role === "user")?.created_at ?? null;
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const windowClosed = officialNumber && (!lastContactMsgAt || nowTick - new Date(lastContactMsgAt).getTime() >= SERVICE_WINDOW_MS);
+
+  const attachLocked = composerLocked || pending || windowClosed;
   // Nota interna pode ser escrita mesmo com o agente conduzindo — ela não vai pro WhatsApp.
-  const inputLocked = composerMode === "nota" ? pending : composerLocked;
+  const inputLocked = composerMode === "nota" ? pending : composerLocked || windowClosed;
+
+  // Templates do número da conversa (carregados quando o seletor abre, por conversa).
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templates, setTemplates] = useState<{ key: string; list: ConversationTemplate[] } | null>(null);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [chosenTemplate, setChosenTemplate] = useState<ConversationTemplate | null>(null);
+  const [sendingTemplate, setSendingTemplate] = useState(false);
+  const selectedKeyForTemplates = selected ? keyOf(selected) : null;
+  const templateList = templates && templates.key === selectedKeyForTemplates ? templates.list : null;
+  // Trocou de conversa: o seletor fecha (o template escolhido era pra outro contato).
+  const [templatesFor, setTemplatesFor] = useState(selectedKeyForTemplates);
+  if (templatesFor !== selectedKeyForTemplates) {
+    setTemplatesFor(selectedKeyForTemplates);
+    setTemplatesOpen(false);
+    setChosenTemplate(null);
+  }
+
+  async function openTemplates() {
+    if (!selected) return;
+    if (templatesOpen) {
+      setTemplatesOpen(false);
+      return;
+    }
+    setError(null);
+    setChosenTemplate(null);
+    setTemplatesOpen(true);
+    const key = keyOf(selected);
+    if (templates?.key === key) return;
+    setTemplatesLoading(true);
+    const r = await listConversationTemplates(selected.contact.id, selected.agent?.id ?? null, selected.instance?.id ?? null);
+    setTemplatesLoading(false);
+    if (r.error !== null) {
+      setError(r.error);
+      setTemplatesOpen(false);
+    } else setTemplates({ key, list: r.data });
+  }
+
+  async function handleSendTemplate() {
+    if (!selected || !chosenTemplate) return;
+    if (!window.confirm(`Disparar o template "${chosenTemplate.name}" para ${selected.contact.name || selected.contact.phone}?`)) return;
+    setError(null);
+    setSendingTemplate(true);
+    const r = await sendConversationTemplate(selected.contact.id, selected.agent?.id ?? null, selected.instance?.id ?? null, {
+      name: chosenTemplate.name,
+      language: chosenTemplate.language,
+    });
+    setSendingTemplate(false);
+    if (r.error) setError(r.error);
+    else {
+      setChosenTemplate(null);
+      setTemplatesOpen(false);
+      router.refresh();
+    }
+  }
 
   const [detail, setDetail] = useState<{ id: string; contact: ContactDetail | null; notes: ContactNote[] } | null>(null);
   const selectedContactId = selected?.contact.id ?? null;
@@ -1409,6 +1480,39 @@ export function ConversationsPanel({
                 </button>
               )}
             </div>
+            {windowClosed && composerMode === "mensagem" && (
+              <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-md bg-warning-soft text-warning-text text-xs px-3 py-2">
+                <span className="flex-1 min-w-[200px]">
+                  <b>Janela de 24h fechada.</b> {lastContactMsgAt ? "O contato não fala há mais de um dia" : "O contato ainda não mandou mensagem"} — pelo
+                  número oficial a Meta só entrega um template aprovado. Quando ele responder, a conversa volta a aceitar texto.
+                </span>
+                {!templatesOpen && (
+                  <button
+                    type="button"
+                    onClick={openTemplates}
+                    disabled={composerLocked}
+                    className="shrink-0 font-bold px-3 py-1.5 rounded-md bg-surface border border-warning-text/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={composerLocked ? "Assuma a conversa pra mandar mensagem manual" : undefined}
+                  >
+                    Escolher template
+                  </button>
+                )}
+              </div>
+            )}
+            {templatesOpen && composerMode === "mensagem" && (
+              <TemplatePicker
+                loading={templatesLoading}
+                templates={templateList}
+                chosen={chosenTemplate}
+                sending={sendingTemplate}
+                onChoose={setChosenTemplate}
+                onSend={handleSendTemplate}
+                onClose={() => {
+                  setTemplatesOpen(false);
+                  setChosenTemplate(null);
+                }}
+              />
+            )}
             {managingReplies && composerMode === "mensagem" && (
               <QuickRepliesManager replies={quickReplies} onAdd={addQuickReply} onRemove={removeQuickReply} onClose={() => setManagingReplies(false)} />
             )}
@@ -1497,7 +1601,9 @@ export function ConversationsPanel({
                 placeholder={
                   composerMode === "nota"
                     ? "Nota interna — o lead não vê…"
-                    : !selected.agent || selected.contact.needs_attention
+                    : windowClosed && !composerLocked
+                      ? "Fora da janela de 24h — mande um template pra reabrir a conversa"
+                      : !selected.agent || selected.contact.needs_attention
                       ? "Escrever mensagem"
                       : "Assuma a conversa pra escrever manualmente"
                 }
@@ -1512,6 +1618,19 @@ export function ConversationsPanel({
                   className="shrink-0 text-xs font-bold px-3 py-2.5 rounded-full border border-primary-soft text-primary-strong bg-primary-faint cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {suggesting ? "Pensando…" : "✨ Sugerir"}
+                </button>
+              )}
+              {composerMode === "mensagem" && officialNumber && (
+                <button
+                  type="button"
+                  onClick={openTemplates}
+                  disabled={composerLocked}
+                  title="Disparar um template aprovado da Meta só para este contato (é o que reabre a conversa depois de 24h)"
+                  className={`shrink-0 text-xs font-bold px-3 py-2.5 rounded-full border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    templatesOpen || windowClosed ? "border-primary bg-primary-strong text-white" : "border-border text-text bg-surface"
+                  }`}
+                >
+                  Templates
                 </button>
               )}
               <button
@@ -1543,6 +1662,90 @@ export function ConversationsPanel({
       )}
 
       <CrmLeadDrawer contactId={drawerContactId} onClose={() => setDrawerContactId(null)} stageLabels={stageLabels} />
+    </div>
+  );
+}
+
+const TEMPLATE_CATEGORY_LABEL: Record<string, string> = { MARKETING: "Marketing", UTILITY: "Utilidade", AUTHENTICATION: "Autenticação" };
+
+// Seletor de template da conversa: escolhe um aprovado, vê o texto com os dados do contato e dispara
+// só pra ele.
+function TemplatePicker({
+  loading,
+  templates,
+  chosen,
+  sending,
+  onChoose,
+  onSend,
+  onClose,
+}: {
+  loading: boolean;
+  templates: ConversationTemplate[] | null;
+  chosen: ConversationTemplate | null;
+  sending: boolean;
+  onChoose: (t: ConversationTemplate | null) => void;
+  onSend: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="mx-4 mt-2 rounded-md border border-border bg-surface shadow-md">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+        <span className="text-xs font-bold">{chosen ? "Disparar para este contato" : "Templates aprovados"}</span>
+        <button type="button" onClick={onClose} className="text-xs text-text-muted hover:text-text cursor-pointer" aria-label="Fechar templates">
+          ✕
+        </button>
+      </div>
+      {chosen ? (
+        <div className="p-3 flex flex-col gap-2">
+          <div className="flex items-center gap-2 text-xs">
+            <b>{chosen.name}</b>
+            <span className="px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted text-[10px] font-bold">
+              {TEMPLATE_CATEGORY_LABEL[chosen.category] || chosen.category}
+            </span>
+          </div>
+          <p className="text-sm whitespace-pre-wrap bg-bg border border-border rounded-md px-3 py-2 max-h-48 overflow-y-auto">{chosen.preview}</p>
+          {chosen.category === "MARKETING" && <p className="text-[11px] text-text-muted">A Meta cobra esse envio como mensagem de marketing.</p>}
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => onChoose(null)} disabled={sending} className="text-xs font-bold px-3 py-2 rounded-md border border-border cursor-pointer">
+              Voltar
+            </button>
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={sending}
+              className="text-xs font-bold px-3 py-2 rounded-md bg-primary-strong text-white cursor-pointer disabled:opacity-60"
+            >
+              {sending ? "Enviando…" : "Disparar template"}
+            </button>
+          </div>
+        </div>
+      ) : loading || !templates ? (
+        <p className="px-3 py-3 text-xs text-text-muted">Buscando os templates na Meta…</p>
+      ) : templates.length === 0 ? (
+        <p className="px-3 py-3 text-xs text-text-muted">Nenhum template aprovado nesse número. Crie em Templates e espere a aprovação da Meta.</p>
+      ) : (
+        <div className="max-h-64 overflow-y-auto divide-y divide-border">
+          {templates.map((t) => (
+            <button
+              key={`${t.name}|${t.language}`}
+              type="button"
+              disabled={Boolean(t.blocked)}
+              onClick={() => onChoose(t)}
+              className="w-full text-left px-3 py-2 hover:bg-surface-2 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2 text-xs">
+                <b className="truncate">{t.name}</b>
+                <span className="px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted text-[10px] font-bold shrink-0">
+                  {TEMPLATE_CATEGORY_LABEL[t.category] || t.category}
+                </span>
+                <span className="text-[10px] text-text-muted shrink-0">{t.language}</span>
+              </div>
+              <p className="text-xs text-text-muted line-clamp-2 mt-0.5">{t.preview}</p>
+              {t.blocked && <p className="text-[11px] text-warning-text mt-0.5">{t.blocked}</p>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

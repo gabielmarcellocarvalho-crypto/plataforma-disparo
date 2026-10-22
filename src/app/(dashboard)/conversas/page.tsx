@@ -114,7 +114,7 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
   const [{ data: agents }, { data: instances }, recentMessages, { data: workspaceRow }, tickets, contacts, { data: originRows }, vendors, savedFilters] = await Promise.all([
     supabase
       .from("agents")
-      .select("id, name, photo_url, evolution_instance_name")
+      .select("id, name, photo_url, evolution_instance_name, whatsapp_instance_id")
       .eq("workspace_id", workspace.id),
     supabase
       .from("whatsapp_instances")
@@ -174,10 +174,16 @@ export default async function ConversasPage({ searchParams }: { searchParams: Pr
     if (name) originByContact.set(r.contact_id, name);
   }
 
-  const agentsById = new Map((agents || []).map((a) => [a.id, a]));
   const contactsById = new Map((contacts || []).map((c) => [c.id, c]));
   const instancesById = new Map(
     (instances || []).map((i) => [i.id, { id: i.id, name: DEPARTMENT_LABEL[i.department] || i.department, channel: i.channel as WhatsappChannel }])
+  );
+  // Agente que fala por número oficial da Meta: fora da janela de 24h a conversa só reabre com template.
+  const agentsById = new Map(
+    (agents || []).map(({ whatsapp_instance_id, ...a }) => [
+      a.id,
+      { ...a, official: !a.evolution_instance_name && Boolean(whatsapp_instance_id) && instancesById.get(whatsapp_instance_id as string)?.channel === "metacloud" },
+    ])
   );
 
   const conversationsByKey = new Map<string, Conversation>();
