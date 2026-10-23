@@ -108,21 +108,38 @@ export function AgentSellerTasksSection({
   );
 }
 
-// Seção "Fase do vendedor": a partir da fase escolhida a IA para de responder o lead. Só guarda
-// configuração — a trava fica em inSellerPhase (seller-phase.ts), checada em toda mensagem.
+// Etapa que aparece na lista da fase do vendedor. `id` null = workspace sem funil (vale o sinal).
+export type PhaseStageOption = { id: string | null; pipeline: string | null; name: string; signal: ContactStage };
+
+// Seção "Fase do vendedor": nas etapas marcadas a IA para de responder o lead. Só guarda configuração —
+// a trava fica em inSellerPhase (seller-phase.ts), checada em toda mensagem.
 export function AgentSellerPhaseSection({
   value,
   onChange,
-  triggerOptions,
+  stageOptions,
 }: {
   value: SellerPhaseConfig;
   onChange: (next: SellerPhaseConfig) => void;
-  triggerOptions?: TriggerOption[];
+  stageOptions: PhaseStageOption[];
 }) {
-  const base = triggerOptions && triggerOptions.length > 0 ? triggerOptions : HANDOFF_SIGNALS.map((s) => ({ signal: s, label: STAGE_LABELS[s] }));
-  const options = base.some((o) => o.signal === value.signal)
-    ? base
-    : [...base, { signal: value.signal as ContactStage, label: STAGE_LABELS[value.signal as ContactStage] ?? value.signal }];
+  const keyOf = (o: PhaseStageOption) => o.id ?? `sinal:${o.signal}`;
+  const isOn = (o: PhaseStageOption) => (o.id ? value.stageIds.includes(o.id) : value.signals.includes(o.signal));
+
+  // Com funil, o que manda são as etapas; os sinais delas vão junto pro lead que ainda não tem etapa.
+  function toggle(o: PhaseStageOption) {
+    if (!o.id) {
+      const signals = isOn(o) ? value.signals.filter((s) => s !== o.signal) : [...value.signals, o.signal];
+      onChange({ ...value, signals });
+      return;
+    }
+    const stageIds = isOn(o) ? value.stageIds.filter((id) => id !== o.id) : [...value.stageIds, o.id];
+    const signals = [...new Set(stageOptions.filter((x) => x.id && stageIds.includes(x.id)).map((x) => x.signal))];
+    onChange({ ...value, stageIds, signals });
+  }
+
+  const groups = new Map<string, PhaseStageOption[]>();
+  for (const o of stageOptions) groups.set(o.pipeline ?? "", [...(groups.get(o.pipeline ?? "") ?? []), o]);
+  const anyOn = stageOptions.some(isOn);
 
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-4">
@@ -135,27 +152,36 @@ export function AgentSellerPhaseSection({
         />
       </div>
       <p className="text-xs text-text-muted">
-        Quando o lead chegar na fase escolhida (ou depois dela, inclusive ganho), a IA não responde mais ele: a conversa vai pra
-        fila de <strong className="text-text">atenção</strong> em Conversas e o vendedor segue pelo painel ou pelo celular. Vale
-        também pro lead que você arrastar pra essa fase no CRM. Pra IA voltar, é só mover o lead pra uma fase anterior.
+        Nas etapas marcadas a IA não responde o lead: a conversa vai pra fila de <strong className="text-text">atenção</strong> em
+        Conversas e o vendedor segue pelo painel ou pelo celular. Vale também pro lead que você arrastar pra essas etapas no
+        CRM. Pra IA voltar, é só mover o lead pra uma etapa não marcada.
       </p>
 
       {value.enabled && (
         <div className="flex flex-col gap-3 mt-1">
-          <label className="flex flex-col gap-1.5 sm:max-w-xs">
-            <span className="text-xs font-bold text-text-muted">A IA para de responder a partir de</span>
-            <select
-              value={value.signal}
-              onChange={(e) => onChange({ ...value, signal: e.target.value })}
-              className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
-            >
-              {options.map((o) => (
-                <option key={o.signal} value={o.signal}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {[...groups.entries()].map(([pipeline, opts]) => (
+            <div key={pipeline || "-"} className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-text-muted">{pipeline ? `Funil ${pipeline}` : "Etapas em que a IA não responde"}</span>
+              <div className="flex flex-col gap-1.5">
+                {opts.map((o) => {
+                  const on = isOn(o);
+                  return (
+                    <label
+                      key={keyOf(o)}
+                      className={cn(
+                        "flex items-center gap-2.5 border rounded-md px-3 py-2 text-sm cursor-pointer transition-colors",
+                        on ? "border-primary-strong bg-primary-faint" : "border-border hover:bg-surface-2"
+                      )}
+                    >
+                      <input type="checkbox" checked={on} onChange={() => toggle(o)} className="cursor-pointer accent-[var(--color-primary-strong)]" />
+                      <span className="font-semibold truncate">{o.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {!anyOn && <p className="text-xs text-warning-text font-semibold">Marque ao menos uma etapa — sem isso a IA responde em todas.</p>}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-bold text-text-muted">Última mensagem da IA ao passar pro vendedor (opcional)</span>
             <textarea

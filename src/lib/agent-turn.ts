@@ -197,7 +197,7 @@ export async function runAgentTurn(
   resolved: ResolvedIncoming
 ) {
   const CONTACT_COLUMNS =
-    "id, name, email, custom_fields, opt_out_whatsapp, needs_attention, flagged_reason, stage, missed_offhours, photo_url, team_member_id, pipeline_id, active_agent_id";
+    "id, name, email, custom_fields, opt_out_whatsapp, needs_attention, flagged_reason, stage, missed_offhours, photo_url, team_member_id, pipeline_id, pipeline_stage_id, active_agent_id";
 
   // Contato pode ser um lead novo chegando pelo agente — cria se não existir. Antes de criar, tenta
   // também a variante do "9º dígito" do celular brasileiro (a Meta às vezes reporta o número de quem
@@ -380,7 +380,7 @@ export async function runAgentTurn(
 
   // Fase do vendedor: o lead está com a equipe (inclusive se o card foi arrastado no CRM). A mensagem
   // já foi gravada, então o vendedor vê; a IA fica quieta e a conversa vai pra fila de atenção.
-  if (inSellerPhase(contact.stage, agentConfig.sellerPhase)) {
+  if (inSellerPhase(contact, agentConfig.sellerPhase)) {
     await supabase.from("contacts").update({ needs_attention: true, attention_reason: SELLER_PHASE_REASON }).eq("id", contact.id);
     return;
   }
@@ -663,7 +663,6 @@ export async function runAgentTurn(
   // (evita flicker por ruído do modelo), exceto pros estados terminais (concluído/descartado).
   let entrouFaseVendedor = false;
   if (stage && canAdvanceStage(contact.stage, stage)) {
-    entrouFaseVendedor = inSellerPhase(stage, agentConfig.sellerPhase) && !inSellerPhase(contact.stage, agentConfig.sellerPhase);
     const patch: Record<string, unknown> = { stage, stage_changed_at: new Date().toISOString() };
 
     // Se o lead está num funil personalizado, o card também precisa andar LÁ. O agente continua
@@ -690,6 +689,9 @@ export async function runAgentTurn(
     }
 
     await supabase.from("contacts").update(patch).eq("id", contact.id);
+    entrouFaseVendedor =
+      inSellerPhase({ stage, pipeline_stage_id: (patch.pipeline_stage_id as string | undefined) ?? contact.pipeline_stage_id }, agentConfig.sellerPhase) &&
+      !inSellerPhase(contact, agentConfig.sellerPhase);
 
     // Passagem de bastão: o lead alcançou o ponto configurado e este agente tem um sucessor. Roda
     // DEPOIS de gravar o estágio, pra que a entrega já aconteça com o funil no estado certo.

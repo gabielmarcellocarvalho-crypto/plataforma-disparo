@@ -14,7 +14,8 @@ import { listConnections } from "@/lib/calendar/connections";
 import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import { HANDOFF_SIGNALS } from "@/lib/agent-handoff";
 import { funnelTriggerOptions, type PipelineStage } from "@/lib/pipelines";
-import { isContactStage } from "@/lib/crm-stages";
+import { getVisibleStages, isContactStage, resolveHiddenStages, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
+import type { PhaseStageOption } from "@/components/agent-seller-tasks-section";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
@@ -99,6 +100,24 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
     .map((e) => ({ id: e.id, pipeline_id: e.pipeline_id, name: e.name, signal: e.signal, position: e.position }));
   const taskTriggerOptions = funnelTriggerOptions(HANDOFF_SIGNALS, defaultStages, wsRow?.crm_stage_labels, wsRow?.crm_hidden_stages);
 
+  // Etapas de TODOS os funis do workspace pra "Fase do vendedor" (o lead pode estar em qualquer um),
+  // com o nome que o cliente deu. Sem funil, as fases fixas com os rótulos do workspace.
+  const { data: allFunnels } = await supabase
+    .from("pipelines")
+    .select("name, is_default, position, pipeline_stages(id, name, signal, position)")
+    .eq("workspace_id", agent.workspace_id)
+    .order("position");
+  const funnels = [...(allFunnels ?? [])].sort((a, b) => Number(b.is_default) - Number(a.is_default));
+  const phaseStageOptions: PhaseStageOption[] =
+    funnels.length > 0
+      ? funnels.flatMap((f) =>
+          [...((f.pipeline_stages as { id: string; name: string; signal: string; position: number }[] | null) ?? [])]
+            .filter((e) => isContactStage(e.signal))
+            .sort((a, b) => a.position - b.position)
+            .map((e) => ({ id: e.id, pipeline: funnels.length > 1 ? f.name : null, name: e.name, signal: e.signal as ContactStage }))
+        )
+      : getVisibleStages(resolveHiddenStages(wsRow?.crm_hidden_stages)).map((s) => ({ id: null, pipeline: null, name: resolveStageLabels(wsRow?.crm_stage_labels)[s], signal: s }));
+
   // Integrações conectadas no workspace e, dentro de cada uma, só as permissões que o workspace liberou.
   // Lido pelo servidor: a tabela guarda o token e não é legível pelo usuário.
   const integrations = await listIntegrations(createAdminClient(), agent.workspace_id).catch(() => []);
@@ -176,6 +195,7 @@ export default async function AgentEditPage({ params }: { params: Promise<{ id: 
         fieldDefs={fieldDefs}
         schedulingClosers={schedulingClosers}
         taskTriggerOptions={taskTriggerOptions}
+        phaseStageOptions={phaseStageOptions}
         integrationOptions={integrationOptions}
         availableInstances={availableInstances}
         handoffOptions={handoffOptions}

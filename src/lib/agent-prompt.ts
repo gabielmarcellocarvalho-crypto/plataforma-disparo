@@ -79,7 +79,7 @@ export type AgentConfig = {
   // Tarefa na Agenda do vendedor quando o lead chega numa fase. Alternativa (ou complemento) ao Google
   // Agenda, pra quem vende só pelo WhatsApp. Desligado por padrão.
   sellerTasks: SellerTasksConfig;
-  // Fase do vendedor: a partir dela a IA para de responder o lead (ver seller-phase.ts). Desligado por padrão.
+  // Fase do vendedor: nas etapas marcadas a IA para de responder o lead (ver seller-phase.ts). Desligado por padrão.
   sellerPhase: SellerPhaseConfig;
   // Permissões de integrações externas que ESTE agente usa, por provedor (ex.: { nuvemshop: ["nuvemshop.pedidos.consultar"] }).
   // Só vale o que o workspace também liberou em Integrações. Não entra no texto do prompt: as ferramentas
@@ -102,13 +102,15 @@ export const SELLER_TASKS_DEFAULTS: SellerTasksConfig = { enabled: false, signal
 
 export type SellerPhaseConfig = {
   enabled: boolean;
-  // Um dos sinais fixos de contacts.stage; trava quando o lead alcançou ou passou dele.
-  signal: string;
+  // Etapas do funil do cliente (pipeline_stages.id) em que a IA não responde.
+  stageIds: string[];
+  // Sinais de contacts.stage equivalentes: valem pro lead sem etapa de funil e pro workspace sem funil.
+  signals: string[];
   // Última mensagem da IA ao entrar na fase (vazio = não manda nada).
   farewell: string;
 };
 
-export const SELLER_PHASE_DEFAULTS: SellerPhaseConfig = { enabled: false, signal: "fechando_proposta", farewell: "" };
+export const SELLER_PHASE_DEFAULTS: SellerPhaseConfig = { enabled: false, stageIds: [], signals: [], farewell: "" };
 
 export type SchedulingConfig = {
   enabled: boolean;
@@ -301,11 +303,14 @@ export function normalizeSellerTasks(raw: unknown): SellerTasksConfig {
   };
 }
 
+const strList = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => String(x ?? "")).filter(Boolean))] : []);
+
 export function normalizeSellerPhase(raw: unknown): SellerPhaseConfig {
   const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   return {
     enabled: Boolean(f.enabled),
-    signal: typeof f.signal === "string" && f.signal ? f.signal : SELLER_PHASE_DEFAULTS.signal,
+    stageIds: strList(f.stageIds),
+    signals: strList(f.signals),
     farewell: typeof f.farewell === "string" ? f.farewell.trim().slice(0, 500) : "",
   };
 }

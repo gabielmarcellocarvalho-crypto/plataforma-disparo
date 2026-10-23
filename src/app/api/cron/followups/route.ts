@@ -82,7 +82,7 @@ export async function GET(req: Request) {
 
     const { data: contacts } = await supabase
       .from("contacts")
-      .select("id, name, email, custom_fields, needs_attention, opt_out_whatsapp, stage, phone, companies(name)")
+      .select("id, name, email, custom_fields, needs_attention, opt_out_whatsapp, stage, pipeline_stage_id, phone, companies(name)")
       .in("id", [...byContact.keys()]);
     const contactById = new Map((contacts || []).map((c) => [c.id, c]));
 
@@ -97,7 +97,7 @@ export async function GET(req: Request) {
       if (contact.needs_attention || contact.opt_out_whatsapp) continue;
       if (contact.stage === "concluido" || contact.stage === "descartado") continue;
       // Lead na fase do vendedor é da equipe: a IA não cobra resposta (nem marca como perdido).
-      if (inSellerPhase(contact.stage, agentConfig.sellerPhase)) continue;
+      if (inSellerPhase(contact, agentConfig.sellerPhase)) continue;
 
       // REGRA: follow-up só em conversa ABERTA — o lead precisa ter respondido ao menos uma vez. Hoje
       // isso já acontece na prática (o agente só fala com quem escreveu primeiro), mas mensagem que o

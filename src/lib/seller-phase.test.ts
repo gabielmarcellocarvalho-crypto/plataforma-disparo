@@ -1,21 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { inSellerPhase } from "./seller-phase";
 
-const on = { enabled: true, signal: "fechando_proposta", farewell: "" };
+// Funil tipo TB Rio: duas etapas com o mesmo sinal, só a segunda marcada.
+const on = { enabled: true, stageIds: ["visita-realizada", "proposta"], signals: ["encaminhamento", "fechando_proposta"], farewell: "" };
 
 describe("inSellerPhase", () => {
   it("desligado nunca trava", () => {
-    expect(inSellerPhase("concluido", { ...on, enabled: false })).toBe(false);
+    expect(inSellerPhase({ stage: "fechando_proposta", pipeline_stage_id: "proposta" }, { ...on, enabled: false })).toBe(false);
   });
 
-  it("trava a partir da fase escolhida, inclusive no ganho", () => {
-    expect(inSellerPhase("encaminhamento", on)).toBe(false);
-    expect(inSellerPhase("fechando_proposta", on)).toBe(true);
-    expect(inSellerPhase("concluido", on)).toBe(true);
+  it("lead no funil: vale a etapa exata, não o sinal", () => {
+    expect(inSellerPhase({ stage: "encaminhamento", pipeline_stage_id: "visita-realizada" }, on)).toBe(true);
+    expect(inSellerPhase({ stage: "encaminhamento", pipeline_stage_id: "visita-agendada" }, on)).toBe(false);
   });
 
-  it("lead perdido ou sem estágio volta pra IA", () => {
-    expect(inSellerPhase("descartado", on)).toBe(false);
-    expect(inSellerPhase(null, on)).toBe(false);
+  it("lead sem etapa de funil cai no sinal", () => {
+    expect(inSellerPhase({ stage: "fechando_proposta", pipeline_stage_id: null }, on)).toBe(true);
+    expect(inSellerPhase({ stage: "interessado" }, on)).toBe(false);
+    expect(inSellerPhase({ stage: null }, on)).toBe(false);
+  });
+
+  it("workspace sem funil: só sinais marcados", () => {
+    const semFunil = { ...on, stageIds: [], signals: ["concluido"] };
+    expect(inSellerPhase({ stage: "concluido", pipeline_stage_id: "qualquer" }, semFunil)).toBe(true);
+    expect(inSellerPhase({ stage: "fechando_proposta" }, semFunil)).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { connectAgent, linkAgentInstance, unlinkAgentInstance, refreshAgentStatu
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentConfigForm } from "@/components/agent-config-form";
 import type { SchedulingCloserOption } from "@/components/agent-scheduling-section";
-import type { TriggerOption } from "@/components/agent-seller-tasks-section";
+import type { PhaseStageOption, TriggerOption } from "@/components/agent-seller-tasks-section";
 import type { IntegrationOption } from "@/components/agent-integrations-section";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import { AgentHandoffForm, type HandoffAgentOption } from "@/components/agent-handoff-form";
@@ -83,6 +83,7 @@ export function AgentEditView({
   availableInstances = [],
   schedulingClosers = [],
   taskTriggerOptions,
+  phaseStageOptions = [],
   integrationOptions = [],
 }: {
   agent: Agent;
@@ -96,6 +97,7 @@ export function AgentEditView({
   availableInstances?: AvailableInstance[];
   schedulingClosers?: SchedulingCloserOption[];
   taskTriggerOptions?: TriggerOption[];
+  phaseStageOptions?: PhaseStageOption[];
   integrationOptions?: IntegrationOption[];
 }) {
   const router = useRouter();
@@ -478,6 +480,7 @@ export function AgentEditView({
             fieldDefs={fieldDefs}
             closers={schedulingClosers}
             taskTriggerOptions={taskTriggerOptions}
+            phaseStageOptions={phaseStageOptions}
             integrationOptions={integrationOptions}
             materialSlot={
               <>

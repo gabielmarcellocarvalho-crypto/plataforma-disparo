@@ -55,7 +55,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
 
     const { data: contactRows } = await supabase
       .from("contacts")
-      .select("id, name, custom_fields, stage, phone")
+      .select("id, name, custom_fields, stage, pipeline_stage_id, phone")
       .eq("workspace_id", agent.workspace_id)
       .eq("missed_offhours", true)
       .eq("needs_attention", false)
@@ -63,7 +63,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
     // Filtro de estágio terminal em JS (mesmo padrão do worker de follow-up) em vez de operador SQL
     // "not in", pra não depender de sintaxe Postgrest menos comum no resto do código.
     const contacts = (contactRows || []).filter(
-      (c) => c.stage !== "concluido" && c.stage !== "descartado" && !inSellerPhase(c.stage, agentConfig.sellerPhase)
+      (c) => c.stage !== "concluido" && c.stage !== "descartado" && !inSellerPhase(c, agentConfig.sellerPhase)
     );
     if (contacts.length === 0) continue;
 
