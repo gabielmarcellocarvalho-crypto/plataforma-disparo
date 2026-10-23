@@ -360,17 +360,45 @@ async function isWithinReentryCooldown(supabase: AdminClient, workflowId: string
   return new Date(data.started_at).getTime() > Date.now() - cooldownHours * 3_600_000;
 }
 
-async function enrollCandidates(supabase: AdminClient, workflow: WorkflowRow, steps: WorkflowStepRow[]) {
+// Execuções que já existem nesse workflow, numa leitura só: quem não pode entrar de novo e quando cada
+// lead entrou pela última vez. Antes eram 1–2 consultas por candidato — num público de mil leads isso
+// sozinho passava dos 60s do cron, e os workflows depois dele na fila nunca rodavam.
+type RunStamp = { contact_id: string; status: string; started_at: string };
+async function existingRuns(supabase: AdminClient, workflow: WorkflowRow) {
+  const runs = await fetchAllPages<RunStamp>((from, to) =>
+    supabase
+      .from("workflow_runs")
+      .select("contact_id, status, started_at")
+      .eq("workflow_id", workflow.id)
+      .order("id")
+      .range(from, to) as unknown as PageResult<RunStamp>
+  );
+  const blocking = workflow.allow_reentry ? ["running", "waiting"] : ["running", "waiting", "completed"];
+  const blocked = new Set<string>();
+  const lastStart = new Map<string, number>();
+  for (const r of runs) {
+    if (blocking.includes(r.status)) blocked.add(r.contact_id);
+    const t = new Date(r.started_at).getTime();
+    if (t > (lastStart.get(r.contact_id) ?? 0)) lastStart.set(r.contact_id, t);
+  }
+  return { blocked, lastStart };
+}
+
+async function enrollCandidates(supabase: AdminClient, workflow: WorkflowRow, steps: WorkflowStepRow[], deadline: number) {
   let candidates = await findTriggerCandidates(supabase, workflow);
   if (workflow.trigger_type === "no_reply") {
     candidates = await filterNoReplyCandidates(supabase, workflow, candidates);
   }
+  if (candidates.length === 0) return 0;
   const start = firstStep(steps);
+  const { blocked, lastStart } = await existingRuns(supabase, workflow);
+  const cooldownMs = (workflow.reentry_cooldown_hours ?? 0) * 3_600_000;
 
   let enrolled = 0;
   for (const contact of candidates) {
-    if (await hasActiveOrCompletedRun(supabase, workflow.id, contact.id, workflow.allow_reentry)) continue;
-    if (await isWithinReentryCooldown(supabase, workflow.id, contact.id, workflow.reentry_cooldown_hours)) continue;
+    if (blocked.has(contact.id)) continue;
+    if (cooldownMs && (lastStart.get(contact.id) ?? 0) > Date.now() - cooldownMs) continue;
+    if (Date.now() > deadline) break; // o resto entra no próximo tick
 
     const { data: run, error } = await supabase
       .from("workflow_runs")
@@ -564,7 +592,11 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
   return { ok: false, detail: { error: "tipo de ação desconhecido" } };
 }
 
-async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, steps: WorkflowStepRow[]) {
+// Teto de execuções avançadas por workflow a cada tick: um workflow com centenas de envios pendentes
+// anda aos poucos (os mais antigos primeiro) sem tomar o tempo inteiro do cron dos outros.
+const RUNS_PER_TICK = 40;
+
+async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, steps: WorkflowStepRow[], deadline: number) {
   const stepsById = new Map(steps.map((s) => [s.id, s]));
 
   const { data: runs } = await supabase
@@ -572,10 +604,13 @@ async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, step
     .select("id, contact_id, current_step_id, started_at")
     .eq("workflow_id", workflow.id)
     .in("status", ["running", "waiting"])
-    .lte("next_run_at", new Date().toISOString());
+    .lte("next_run_at", new Date().toISOString())
+    .order("next_run_at")
+    .limit(RUNS_PER_TICK);
 
   let processed = 0;
   for (const run of runs || []) {
+    if (Date.now() > deadline) break;
     const { data: contact } = await supabase.from("contacts").select(CONTACT_SELECT).eq("id", run.contact_id).maybeSingle();
     if (!contact) {
       await supabase.from("workflow_runs").update({ status: "error", stop_reason: "contato não encontrado" }).eq("id", run.id);
@@ -698,27 +733,45 @@ export async function enrollWebhookContact(workflowId: string, contactId: string
   return { ok: true };
 }
 
+// O cron tem 60s. Para de começar trabalho novo antes disso: o que sobrar fica pro próximo minuto, em
+// vez de a função ser derrubada no meio (e os workflows do fim da fila nunca rodarem).
+const TICK_BUDGET_MS = 45_000;
+
 export async function runWorkflowsTick(): Promise<{ enrolled: number; processed: number }> {
   stageCache.clear();
   const supabase = createAdminClient();
+  const deadline = Date.now() + TICK_BUDGET_MS;
   const { data: workflows } = await supabase.from("workflows").select("*").eq("enabled", true);
 
-  let enrolled = 0;
-  let processed = 0;
+  // Duas passadas: primeiro todo mundo matricula (rápido), depois todo mundo avança. Assim um workflow
+  // com muito envio pendente não impede outro de pegar o lead que acabou de entrar na etapa.
+  const loaded: { workflow: WorkflowRow; steps: WorkflowStepRow[] }[] = [];
   for (const workflow of (workflows || []) as WorkflowRow[]) {
     const { data: steps } = await supabase
       .from("workflow_steps")
       .select("id, workflow_id, parent_step_id, branch, position, step_type, config")
       .eq("workflow_id", workflow.id)
       .order("position", { ascending: true });
-    const stepRows = (steps || []) as WorkflowStepRow[];
+    loaded.push({ workflow, steps: (steps || []) as WorkflowStepRow[] });
+  }
 
-    // Um workflow com problema não pode travar os outros do mesmo tick.
+  let enrolled = 0;
+  let processed = 0;
+  // Um workflow com problema não pode travar os outros do mesmo tick.
+  for (const { workflow, steps } of loaded) {
+    if (Date.now() > deadline) break;
     try {
-      enrolled += await enrollCandidates(supabase, workflow, stepRows);
-      processed += await processDueRuns(supabase, workflow, stepRows);
+      enrolled += await enrollCandidates(supabase, workflow, steps, deadline);
     } catch (err) {
-      console.error(`Workflow ${workflow.id} falhou neste tick:`, err instanceof Error ? err.message : err);
+      console.error(`Workflow ${workflow.id} falhou ao matricular:`, err instanceof Error ? err.message : err);
+    }
+  }
+  for (const { workflow, steps } of loaded) {
+    if (Date.now() > deadline) break;
+    try {
+      processed += await processDueRuns(supabase, workflow, steps, deadline);
+    } catch (err) {
+      console.error(`Workflow ${workflow.id} falhou ao avançar:`, err instanceof Error ? err.message : err);
     }
   }
   return { enrolled, processed };
