@@ -79,6 +79,8 @@ export type AgentConfig = {
   // Tarefa na Agenda do vendedor quando o lead chega numa fase. Alternativa (ou complemento) ao Google
   // Agenda, pra quem vende só pelo WhatsApp. Desligado por padrão.
   sellerTasks: SellerTasksConfig;
+  // Fase do vendedor: a partir dela a IA para de responder o lead (ver seller-phase.ts). Desligado por padrão.
+  sellerPhase: SellerPhaseConfig;
   // Permissões de integrações externas que ESTE agente usa, por provedor (ex.: { nuvemshop: ["nuvemshop.pedidos.consultar"] }).
   // Só vale o que o workspace também liberou em Integrações. Não entra no texto do prompt: as ferramentas
   // e a instrução são montadas em tempo de execução. Desligado por padrão.
@@ -97,6 +99,16 @@ export type SellerTasksConfig = {
 };
 
 export const SELLER_TASKS_DEFAULTS: SellerTasksConfig = { enabled: false, signal: "encaminhamento", memberIds: [] };
+
+export type SellerPhaseConfig = {
+  enabled: boolean;
+  // Um dos sinais fixos de contacts.stage; trava quando o lead alcançou ou passou dele.
+  signal: string;
+  // Última mensagem da IA ao entrar na fase (vazio = não manda nada).
+  farewell: string;
+};
+
+export const SELLER_PHASE_DEFAULTS: SellerPhaseConfig = { enabled: false, signal: "fechando_proposta", farewell: "" };
 
 export type SchedulingConfig = {
   enabled: boolean;
@@ -204,6 +216,7 @@ export const EMPTY_AGENT_CONFIG: AgentConfig = {
   followUp: { enabled: false, intervalDays: FOLLOWUP_INTERVAL_DEFAULT, maxCount: FOLLOWUP_MAX_COUNT_DEFAULT, template: null },
   scheduling: { ...SCHEDULING_DEFAULTS },
   sellerTasks: { ...SELLER_TASKS_DEFAULTS },
+  sellerPhase: { ...SELLER_PHASE_DEFAULTS },
   integrations: {},
   teamQuestions: false,
 };
@@ -262,6 +275,7 @@ export function normalizeAgentConfig(raw: unknown): AgentConfig {
     followUp: normalizeFollowUp(r.followUp),
     scheduling: normalizeScheduling(r.scheduling),
     sellerTasks: normalizeSellerTasks(r.sellerTasks),
+    sellerPhase: normalizeSellerPhase(r.sellerPhase),
     integrations: normalizeIntegrations(r.integrations),
     teamQuestions: r.teamQuestions === true,
   };
@@ -284,6 +298,15 @@ export function normalizeSellerTasks(raw: unknown): SellerTasksConfig {
     enabled: Boolean(f.enabled),
     signal: typeof f.signal === "string" && f.signal ? f.signal : SELLER_TASKS_DEFAULTS.signal,
     memberIds: Array.isArray(f.memberIds) ? [...new Set((f.memberIds as unknown[]).map((v) => String(v ?? "")).filter(Boolean))] : [],
+  };
+}
+
+export function normalizeSellerPhase(raw: unknown): SellerPhaseConfig {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    enabled: Boolean(f.enabled),
+    signal: typeof f.signal === "string" && f.signal ? f.signal : SELLER_PHASE_DEFAULTS.signal,
+    farewell: typeof f.farewell === "string" ? f.farewell.trim().slice(0, 500) : "",
   };
 }
 

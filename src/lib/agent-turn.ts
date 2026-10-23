@@ -16,6 +16,7 @@ import { agentSendText, agentSendMedia, agentSendReaction, type AgentChannel } f
 import { HUMANIZADO_CONVERSATION_BLOCK, isLongStalledChat, LONG_CHAT_BLOCK, PHONE_KNOWN_BLOCK, shouldReactInsteadOfReply } from "@/lib/conversation-closing";
 import { atingiuGatilho, aplicarHandoff, textoDoAviso, type HandoffAgent } from "@/lib/agent-handoff";
 import { createSellerTaskIfNeeded } from "@/lib/seller-tasks";
+import { inSellerPhase, SELLER_PHASE_REASON } from "@/lib/seller-phase";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { uploadConversationMedia } from "@/lib/conversation-media";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
@@ -376,6 +377,13 @@ export async function runAgentTurn(
   if (agent.status !== "ativo" || cerebro.status !== "ativo") return;
 
   const agentConfig = normalizeAgentConfig(cerebro.config);
+
+  // Fase do vendedor: o lead está com a equipe (inclusive se o card foi arrastado no CRM). A mensagem
+  // já foi gravada, então o vendedor vê; a IA fica quieta e a conversa vai pra fila de atenção.
+  if (inSellerPhase(contact.stage, agentConfig.sellerPhase)) {
+    await supabase.from("contacts").update({ needs_attention: true, attention_reason: SELLER_PHASE_REASON }).eq("id", contact.id);
+    return;
+  }
   // Checagem REAL de horário — não é só o texto do prompt (o modelo pode ignorar). Fora do horário
   // configurado, não responde nada mesmo (sem marcar atenção — não é erro, é esperado). Marca
   // missed_offhours pra, quando o cliente mandar mensagem de novo dentro do horário, o agente abrir
@@ -653,7 +661,9 @@ export async function runAgentTurn(
 
   // O agente classifica o estágio do funil a cada resposta — só avança o card no Kanban, nunca regride
   // (evita flicker por ruído do modelo), exceto pros estados terminais (concluído/descartado).
+  let entrouFaseVendedor = false;
   if (stage && canAdvanceStage(contact.stage, stage)) {
+    entrouFaseVendedor = inSellerPhase(stage, agentConfig.sellerPhase) && !inSellerPhase(contact.stage, agentConfig.sellerPhase);
     const patch: Record<string, unknown> = { stage, stage_changed_at: new Date().toISOString() };
 
     // Se o lead está num funil personalizado, o card também precisa andar LÁ. O agente continua
@@ -765,5 +775,17 @@ export async function runAgentTurn(
       .from("contacts")
       .update({ needs_attention: true, attention_reason: "O agente não conseguiu responder automaticamente essa mensagem." })
       .eq("id", contact.id);
+  }
+
+  // O lead acabou de entrar na fase do vendedor: a resposta deste turno já saiu; agora a despedida
+  // configurada (se houver) e a conversa passa pra equipe. Daqui em diante a trava lá em cima segura a IA.
+  if (entrouFaseVendedor) {
+    const farewell = agentConfig.sellerPhase.farewell;
+    if (farewell) {
+      await sleep(BUBBLE_GAP_MS);
+      await supabase.from("messages").insert({ workspace_id: agent.workspace_id, contact_id: contact.id, agent_id: agent.id, role: "assistant", content: farewell });
+      await agentSendText(channel, phone, farewell).catch((err) => console.error("Erro ao enviar a despedida da fase do vendedor:", err));
+    }
+    await supabase.from("contacts").update({ needs_attention: true, attention_reason: SELLER_PHASE_REASON }).eq("id", contact.id);
   }
 }

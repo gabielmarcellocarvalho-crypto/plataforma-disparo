@@ -8,6 +8,7 @@ import { generateReply, capBubbles, type ConversationMessage } from "@/lib/agent
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
+import { inSellerPhase } from "@/lib/seller-phase";
 import { secureEqual } from "@/lib/secure-compare";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
 import { PHONE_KNOWN_BLOCK } from "@/lib/conversation-closing";
@@ -95,6 +96,8 @@ export async function GET(req: Request) {
       if (!contact) continue;
       if (contact.needs_attention || contact.opt_out_whatsapp) continue;
       if (contact.stage === "concluido" || contact.stage === "descartado") continue;
+      // Lead na fase do vendedor é da equipe: a IA não cobra resposta (nem marca como perdido).
+      if (inSellerPhase(contact.stage, agentConfig.sellerPhase)) continue;
 
       // REGRA: follow-up só em conversa ABERTA — o lead precisa ter respondido ao menos uma vez. Hoje
       // isso já acontece na prática (o agente só fala com quem escreveu primeiro), mas mensagem que o

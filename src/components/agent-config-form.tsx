@@ -5,7 +5,7 @@ import { updateAgentConfig, type LlmProvider } from "@/app/actions/agents";
 import { ToggleSwitch, ToggleGooeyFilter } from "@/components/toggle-switch";
 import { AgentSchedulingSection, type SchedulingCloserOption } from "@/components/agent-scheduling-section";
 import { AgentIntegrationsSection, type IntegrationOption } from "@/components/agent-integrations-section";
-import { AgentSellerTasksSection, type TriggerOption } from "@/components/agent-seller-tasks-section";
+import { AgentSellerPhaseSection, AgentSellerTasksSection, type TriggerOption } from "@/components/agent-seller-tasks-section";
 import { WorkflowSendConfig } from "@/components/workflow-send-config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import {
@@ -642,6 +642,7 @@ export function AgentConfigForm({
       </div>
       <AgentSchedulingSection value={config.scheduling} onChange={(v) => set("scheduling", v)} closers={closers} />
       <AgentSellerTasksSection value={config.sellerTasks} onChange={(v) => set("sellerTasks", v)} sellers={closers} triggerOptions={taskTriggerOptions} />
+      <AgentSellerPhaseSection value={config.sellerPhase} onChange={(v) => set("sellerPhase", v)} triggerOptions={taskTriggerOptions} />
         </div>
       )}
       {tab === "integracoes" && (

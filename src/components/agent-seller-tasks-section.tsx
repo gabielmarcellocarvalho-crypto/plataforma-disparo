@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ToggleSwitch } from "@/components/toggle-switch";
-import type { SellerTasksConfig } from "@/lib/agent-prompt";
+import type { SellerPhaseConfig, SellerTasksConfig } from "@/lib/agent-prompt";
 import { HANDOFF_SIGNALS } from "@/lib/agent-handoff";
 import { STAGE_LABELS, type ContactStage } from "@/lib/crm-stages";
 import { cn } from "@/lib/utils";
@@ -102,6 +102,71 @@ export function AgentSellerTasksSection({
               <p className="text-xs text-warning-text font-semibold">Marque ao menos um vendedor — sem isso nenhuma tarefa é criada.</p>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Seção "Fase do vendedor": a partir da fase escolhida a IA para de responder o lead. Só guarda
+// configuração — a trava fica em inSellerPhase (seller-phase.ts), checada em toda mensagem.
+export function AgentSellerPhaseSection({
+  value,
+  onChange,
+  triggerOptions,
+}: {
+  value: SellerPhaseConfig;
+  onChange: (next: SellerPhaseConfig) => void;
+  triggerOptions?: TriggerOption[];
+}) {
+  const base = triggerOptions && triggerOptions.length > 0 ? triggerOptions : HANDOFF_SIGNALS.map((s) => ({ signal: s, label: STAGE_LABELS[s] }));
+  const options = base.some((o) => o.signal === value.signal)
+    ? base
+    : [...base, { signal: value.signal as ContactStage, label: STAGE_LABELS[value.signal as ContactStage] ?? value.signal }];
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-bold">Fase do vendedor (IA para de responder)</span>
+        <ToggleSwitch
+          checked={value.enabled}
+          onCheckedChange={(v) => onChange({ ...value, enabled: v })}
+          ariaLabel={value.enabled ? "Desativar fase do vendedor" : "Ativar fase do vendedor"}
+        />
+      </div>
+      <p className="text-xs text-text-muted">
+        Quando o lead chegar na fase escolhida (ou depois dela, inclusive ganho), a IA não responde mais ele: a conversa vai pra
+        fila de <strong className="text-text">atenção</strong> em Conversas e o vendedor segue pelo painel ou pelo celular. Vale
+        também pro lead que você arrastar pra essa fase no CRM. Pra IA voltar, é só mover o lead pra uma fase anterior.
+      </p>
+
+      {value.enabled && (
+        <div className="flex flex-col gap-3 mt-1">
+          <label className="flex flex-col gap-1.5 sm:max-w-xs">
+            <span className="text-xs font-bold text-text-muted">A IA para de responder a partir de</span>
+            <select
+              value={value.signal}
+              onChange={(e) => onChange({ ...value, signal: e.target.value })}
+              className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary cursor-pointer bg-surface"
+            >
+              {options.map((o) => (
+                <option key={o.signal} value={o.signal}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-bold text-text-muted">Última mensagem da IA ao passar pro vendedor (opcional)</span>
+            <textarea
+              value={value.farewell}
+              onChange={(e) => onChange({ ...value, farewell: e.target.value })}
+              rows={2}
+              maxLength={500}
+              placeholder="Ex: Perfeito! Vou te passar pro nosso consultor, ele já te chama por aqui."
+              className="border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-primary resize-y"
+            />
+          </label>
         </div>
       )}
     </div>

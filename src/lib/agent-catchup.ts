@@ -17,6 +17,7 @@ import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
 import { PHONE_KNOWN_BLOCK } from "@/lib/conversation-closing";
+import { inSellerPhase } from "@/lib/seller-phase";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -61,7 +62,9 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
       .eq("opt_out_whatsapp", false);
     // Filtro de estágio terminal em JS (mesmo padrão do worker de follow-up) em vez de operador SQL
     // "not in", pra não depender de sintaxe Postgrest menos comum no resto do código.
-    const contacts = (contactRows || []).filter((c) => c.stage !== "concluido" && c.stage !== "descartado");
+    const contacts = (contactRows || []).filter(
+      (c) => c.stage !== "concluido" && c.stage !== "descartado" && !inSellerPhase(c.stage, agentConfig.sellerPhase)
+    );
     if (contacts.length === 0) continue;
 
     const { data: knowledgeRows } = await supabase.from("agent_knowledge").select("file_name, content").eq("agent_id", agent.id);
