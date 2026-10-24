@@ -35,8 +35,28 @@ export async function listEmailDomains(): Promise<EmailDomainSummary[]> {
     .select("id, domain_name, status, dns_records, last_checked_at")
     .eq("workspace_id", workspace.id)
     .order("created_at", { ascending: false });
+  const rows = (data ?? []) as EmailDomainSummary[];
 
-  return (data ?? []) as EmailDomainSummary[];
+  // Domínio ainda não verificado: relê no Resend ao abrir a tela (no máximo 1x por minuto por domínio).
+  // Sem isso o espelho ficava em "aguardando DNS" pra sempre depois que o DNS propagava, até alguém
+  // lembrar de clicar em Atualizar — e o Resend já mostrava aprovado.
+  const stale = rows.filter((d) => d.status !== "verified" && (!d.last_checked_at || Date.now() - new Date(d.last_checked_at).getTime() > 60_000));
+  if (stale.length === 0) return rows;
+  const { data: ids } = await supabase.from("email_domains").select("id, resend_domain_id").in("id", stale.map((d) => d.id));
+  await Promise.all(
+    (ids ?? []).map(async (r) => {
+      try {
+        const domain = await getDomain(r.resend_domain_id);
+        const patch = syncPayload(domain.status, domain.records);
+        await supabase.from("email_domains").update(patch).eq("id", r.id);
+        const row = rows.find((d) => d.id === r.id);
+        if (row) Object.assign(row, patch);
+      } catch {
+        // Resend fora do ar: mostra o último status conhecido.
+      }
+    })
+  );
+  return rows;
 }
 
 export async function addEmailDomain(domainName: string): Promise<EmailDomainResult> {
