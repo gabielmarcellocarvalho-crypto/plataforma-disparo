@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { normalizePhone } from "@/lib/import-contacts";
+import { brPhoneVariant, normalizePhone } from "@/lib/import-contacts";
 import { mergeTags, normalizeTags, reuseExistingTags } from "@/lib/contact-tags";
 import { authenticateApiKey, readRateLimit } from "@/lib/api-auth";
 import { resolveQualification } from "@/lib/lead-qualification";
@@ -148,20 +148,25 @@ export async function POST(req: Request) {
   // segundo formulário). O upsert cru SUBSTITUÍA a linha: os campos que o agente de IA coletou na
   // conversa sumiam, e uma chamada sem `name` apagava o nome. Agora a chamada só acrescenta:
   // o que ela manda vence, o que ela não manda fica como estava.
-  const { data: existente } = phone
+  // O formulário do site costuma mandar o celular COM o 9 e o WhatsApp às vezes salva SEM (ou o
+  // contrário): sem a 2ª grafia, o lead que já tinha escrito no WhatsApp virava um contato duplicado
+  // e a tag/origem do formulário ia pro contato errado. Prefere a grafia exata.
+  const { data: candidatos } = phone
     ? await supabase
         .from("contacts")
-        .select("id, name, email, custom_fields, tags")
+        .select("id, phone, name, email, custom_fields, tags")
         .eq("workspace_id", key.workspace_id)
-        .eq("phone", phone)
-        .maybeSingle()
+        .in("phone", [phone, brPhoneVariant(phone) ?? phone])
+        .limit(2)
     : { data: null };
+  const existente = candidatos?.find((c) => c.phone === phone) ?? candidatos?.[0] ?? null;
 
   const camposFinais = { ...((existente?.custom_fields as Record<string, string> | null) ?? {}), ...customFields };
   const payload = {
     workspace_id: key.workspace_id,
     name: name || existente?.name || null,
-    phone,
+    // Achou pela outra grafia: mantém o telefone salvo, que é o que o WhatsApp usa pra achar a conversa.
+    phone: existente?.phone ?? phone,
     email: email || existente?.email || null,
     custom_fields: camposFinais,
     // Sem `tags` na chamada, não mexe nas do lead (e lead novo nasce sem tag).
