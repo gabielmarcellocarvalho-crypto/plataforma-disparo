@@ -1,11 +1,15 @@
-import { listWorkspaceTemplates } from "@/app/actions/templates";
+import { listDialog360WorkspaceTemplates, listWorkspaceTemplates } from "@/app/actions/templates";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TemplatesManager, type CategoryAlert } from "@/components/templates-manager";
 
 // Templates aprovados e em análise da conta oficial. Lê direto da Meta (status e categoria sempre atuais).
 export default async function TemplatesPage() {
-  const r = await listWorkspaceTemplates();
+  const meta = await listWorkspaceTemplates();
+  // Sem número direto pela Meta, cai nos templates aprovados do 360dialog (só leitura).
+  const d360 = meta.error !== null ? await listDialog360WorkspaceTemplates() : null;
+  const viaDialog360 = d360 !== null && d360.error === null;
+  const r = viaDialog360 ? { error: null, templates: d360.templates, mappings: {}, fields: [] } : meta;
   const { workspace } = await getCurrentWorkspace();
   const alerts: CategoryAlert[] = [];
   // Em quantas automações cada template é usado (nome do template → nº de automações).
@@ -55,6 +59,7 @@ export default async function TemplatesPage() {
         error={r.error}
         alerts={alerts}
         usage={usage}
+        readOnly={viaDialog360}
       />
     </div>
   );

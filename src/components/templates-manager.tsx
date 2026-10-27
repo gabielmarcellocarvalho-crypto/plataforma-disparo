@@ -67,6 +67,7 @@ export function TemplatesManager({
   error,
   alerts,
   usage = {},
+  readOnly = false,
 }: {
   templates: MetaTemplateRow[];
   mappings: TemplateMappings;
@@ -74,6 +75,7 @@ export function TemplatesManager({
   error: string | null;
   alerts: CategoryAlert[];
   usage?: Record<string, number>;
+  readOnly?: boolean; // 360dialog: lista só os aprovados; criar template é no painel do 360dialog
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -181,6 +183,9 @@ export function TemplatesManager({
         )}
       </section>
 
+      {readOnly ? (
+        <p className="text-sm text-text-muted">Número conectado pelo 360dialog: aqui você vê os templates aprovados. Para criar um novo, use o painel do 360dialog.</p>
+      ) : (
       <section className="bg-surface border border-border rounded-xl shadow-sm p-5 grid gap-6 lg:grid-cols-[1fr_340px] items-start">
         <div className="flex flex-col gap-4 min-w-0">
         <h2 className="text-base font-bold">Criar template</h2>
@@ -277,6 +282,7 @@ export function TemplatesManager({
 
         <WhatsappBubblePreview text={bodyText ? previewText(bodyText, chosen, fields) : ""} />
       </section>
+      )}
     </div>
   );
 }

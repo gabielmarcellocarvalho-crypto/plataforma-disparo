@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { listAllMetaCloudTemplates, createMetaCloudTemplate, type MetaTemplateRow, type MetaTemplateCategory } from "@/lib/metacloud-templates";
+import { listDialog360Templates } from "@/lib/dialog360";
 import { fieldOptionsFor, variableCount, validateMapping, type TemplateField } from "@/lib/template-variables";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 
@@ -53,6 +54,38 @@ export async function listWorkspaceTemplates(): Promise<Result<{ templates: Meta
     return { error: null, templates, mappings, fields };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Não foi possível ler os templates da Meta." };
+  }
+}
+
+// Workspace só com 360dialog: a página Templates mostra os aprovados que o 360dialog devolve, só pra ver
+// (criar e acompanhar análise continua no painel do 360dialog; a listagem de lá traz só os aprovados).
+export async function listDialog360WorkspaceTemplates(): Promise<Result<{ templates: MetaTemplateRow[] }>> {
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return { error: "Nenhum número 360dialog neste workspace." };
+  const { data } = await createAdminClient()
+    .from("whatsapp_instances")
+    .select("dialog360_api_key")
+    .eq("workspace_id", workspace.id)
+    .eq("channel", "360dialog")
+    .not("dialog360_api_key", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (!data?.dialog360_api_key) return { error: "Nenhum número 360dialog neste workspace." };
+  try {
+    const list = await listDialog360Templates(data.dialog360_api_key as string);
+    const templates = list.map((t) => ({
+      id: `${t.name}|${t.language}`,
+      name: t.name,
+      language: t.language,
+      category: t.category.toUpperCase(),
+      correctCategory: null,
+      status: "APPROVED",
+      rejectedReason: null,
+      bodyText: t.bodyText,
+    }));
+    return { error: null, templates };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Não foi possível ler os templates do 360dialog." };
   }
 }
 
