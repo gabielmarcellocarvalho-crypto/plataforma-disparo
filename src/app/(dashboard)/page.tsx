@@ -227,13 +227,6 @@ export default async function OverviewPage({
 
   return (
     <div className="relative flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-end gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
-          <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} align="end" />
-        </div>
-      </div>
-
       {costAlert && (
         <a
           href="/metricas"
@@ -251,14 +244,20 @@ export default async function OverviewPage({
         </a>
       )}
 
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
       {myDay && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <TodayTile href="/agenda" icon={<CalendarCheck size={18} />} value={myDay.tasksPending} label="tarefas pendentes" tone="info" />
-          <TodayTile href="/conversas" icon={<AlertTriangle size={18} />} value={myDay.attention} label="precisam de você" tone="danger" />
-          <TodayTile href="/crm" icon={<UserPlus size={18} />} value={volume.leadsRecebidos.toLocaleString("pt-BR")} label={`leads recebidos · ${period.label}`} tone="primary" />
-          <TodayTile href="/conversas" icon={<MessageSquare size={18} />} value={volume.conversasEmAndamento.toLocaleString("pt-BR")} label="conversas em andamento" tone="success" />
-        </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 flex-1 min-w-0 w-full">
+            <TodayTile href="/agenda" icon={<CalendarCheck size={18} />} value={myDay.tasksPending} label="tarefas pendentes" tone="info" />
+            <TodayTile href="/conversas" icon={<AlertTriangle size={18} />} value={myDay.attention} label="precisam de você" tone="danger" />
+            <TodayTile href="/crm" icon={<UserPlus size={18} />} value={volume.leadsRecebidos.toLocaleString("pt-BR")} label={`leads recebidos · ${period.label}`} tone="primary" />
+            <TodayTile href="/conversas" icon={<MessageSquare size={18} />} value={volume.conversasEmAndamento.toLocaleString("pt-BR")} label="conversas em andamento" tone="success" />
+          </div>
       )}
+        <div className="flex items-center gap-2 flex-wrap xl:shrink-0 self-end xl:self-center">
+          {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
+          <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} align="end" />
+        </div>
+      </div>
 
       <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
         <OverviewInsightsBox
