@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
-import { Sidebar, SectionTabs, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED } from "@/components/sidebar";
+import { Sidebar, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED } from "@/components/sidebar";
 import type { AccessType } from "@/lib/access-types";
 
 const CHAVE_RECOLHIDO = "sidebar:collapsed";
@@ -180,8 +180,6 @@ export function DashboardShell({
             </>
           )}
         </div>
-
-        <SectionTabs isStaff={isStaff} accessType={accessType} hiddenPages={hiddenPages} />
 
         <main id="conteudo" className="flex-1 min-h-0 min-w-0 overflow-y-auto p-4 lg:p-5">
           {children}
