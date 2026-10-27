@@ -544,6 +544,9 @@ export function ConversationsPanel({
     return () => clearInterval(t);
   }, []);
   const windowClosed = officialNumber && (!lastContactMsgAt || nowTick - new Date(lastContactMsgAt).getTime() >= SERVICE_WINDOW_MS);
+  // Template manual: sem agente, sempre à mão; com agente, só depois de assumir e com a janela de 24h
+  // fechada (com a janela aberta quem fala é o agente ou o texto livre, e o template só atrapalha).
+  const templateAvailable = officialNumber && (selected?.agent ? !composerLocked && windowClosed : true);
 
   const attachLocked = composerLocked || pending || windowClosed;
   // Nota interna pode ser escrita mesmo com o agente conduzindo — ela não vai pro WhatsApp.
@@ -1480,7 +1483,7 @@ export function ConversationsPanel({
                 </button>
               )}
             </div>
-            {windowClosed && composerMode === "mensagem" && (
+            {windowClosed && templateAvailable && composerMode === "mensagem" && (
               <div className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-md bg-warning-soft text-warning-text text-xs px-3 py-2">
                 <span className="flex-1 min-w-[200px]">
                   <b>Janela de 24h fechada.</b> {lastContactMsgAt ? "O contato não fala há mais de um dia" : "O contato ainda não mandou mensagem"} — pelo
@@ -1499,7 +1502,7 @@ export function ConversationsPanel({
                 )}
               </div>
             )}
-            {templatesOpen && composerMode === "mensagem" && (
+            {templatesOpen && templateAvailable && composerMode === "mensagem" && (
               <TemplatePicker
                 loading={templatesLoading}
                 templates={templateList}
@@ -1620,7 +1623,7 @@ export function ConversationsPanel({
                   {suggesting ? "Pensando…" : "✨ Sugerir"}
                 </button>
               )}
-              {composerMode === "mensagem" && officialNumber && (
+              {composerMode === "mensagem" && templateAvailable && (
                 <button
                   type="button"
                   onClick={openTemplates}
