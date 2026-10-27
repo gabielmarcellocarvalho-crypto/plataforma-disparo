@@ -227,14 +227,7 @@ export default async function OverviewPage({
 
   return (
     <div className="relative flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">
-            {myDay?.greeting ?? "Olá"}
-            {myDay?.firstName ? `, ${myDay.firstName}` : ""} 👋
-          </h1>
-          <p className="mt-1 text-sm text-text-muted">Aqui está o que precisa de você hoje em {workspace?.name}.</p>
-        </div>
+      <div className="flex flex-wrap items-end justify-end gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
           <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} align="end" />
