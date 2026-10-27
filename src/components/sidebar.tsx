@@ -61,18 +61,6 @@ const NAV_ITEMS = [
     ),
   },
   {
-    href: "/integracoes",
-    label: "Integrações",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 2v6" />
-        <path d="M15 2v6" />
-        <path d="M6 8h12v4a6 6 0 0 1-12 0V8Z" />
-        <path d="M12 18v4" />
-      </svg>
-    ),
-  },
-  {
     href: "/agentes",
     label: "Agentes de IA",
     icon: (
@@ -94,52 +82,6 @@ const NAV_ITEMS = [
         <circle cx="9" cy="7" r="4" />
         <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-  },
-  {
-    href: "/contatos?view=empresas",
-    label: "Empresas",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="4" y="2" width="16" height="20" rx="2" />
-        <path d="M9 22v-4h6v4" />
-        <line x1="8" y1="6" x2="8" y2="6" />
-        <line x1="12" y1="6" x2="12" y2="6" />
-        <line x1="16" y1="6" x2="16" y2="6" />
-        <line x1="8" y1="10" x2="8" y2="10" />
-        <line x1="12" y1="10" x2="12" y2="10" />
-        <line x1="16" y1="10" x2="16" y2="10" />
-        <line x1="8" y1="14" x2="8" y2="14" />
-        <line x1="12" y1="14" x2="12" y2="14" />
-        <line x1="16" y1="14" x2="16" y2="14" />
-      </svg>
-    ),
-  },
-  {
-    href: "/equipe",
-    label: "Equipe",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 21V8l6-4 6 4v13" />
-        <path d="M15 21V11l6 4v6" />
-        <line x1="3" y1="21" x2="21" y2="21" />
-        <line x1="7" y1="10" x2="7" y2="10" />
-        <line x1="11" y1="10" x2="11" y2="10" />
-        <line x1="7" y1="14" x2="7" y2="14" />
-        <line x1="11" y1="14" x2="11" y2="14" />
-      </svg>
-    ),
-  },
-  {
-    href: "/templates",
-    label: "Templates",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="8" y1="13" x2="16" y2="13" />
-        <line x1="8" y1="17" x2="13" y2="17" />
       </svg>
     ),
   },
@@ -207,17 +149,34 @@ const COLABORADOR_NAV_ITEMS = [
   },
 ];
 
-// Agrupamento do menu por fluxo de trabalho: o dia a dia (conversas e tarefas) em cima, depois CRM,
-// automação e análise. Contatos e Empresas são itens próprios (antes ficavam escondidos numa setinha do
-// Pipeline). Os itens de configuração ficam num grupo "Workspace" recolhível no fim.
-// Grupo com label vazio não desenha cabeçalho.
+// Agrupamento do menu por fluxo de trabalho: o dia a dia (conversas, tarefas, métricas) em cima, depois
+// CRM e automação. Grupo com label vazio não desenha cabeçalho.
 const NAV_GROUPS: { id: string; label: string; hrefs: string[]; collapsible?: boolean }[] = [
-  { id: "main", label: "", hrefs: ["/", "/conversas", "/agenda"] },
-  { id: "crm", label: "CRM", hrefs: ["/crm", "/contatos", "/contatos?view=empresas"] },
-  { id: "auto", label: "Automação & IA", hrefs: ["/agentes", "/automacoes", "/campanhas", "/templates"] },
-  { id: "analise", label: "Análise", hrefs: ["/metricas"] },
-  { id: "workspace", label: "Workspace", hrefs: ["/equipe", "/integracoes", "/configuracoes"], collapsible: true },
+  { id: "main", label: "", hrefs: ["/", "/conversas", "/agenda", "/metricas"] },
+  { id: "crm", label: "CRM", hrefs: ["/crm", "/contatos"] },
+  { id: "auto", label: "Automação & IA", hrefs: ["/agentes", "/automacoes", "/campanhas"] },
+  { id: "workspace", label: "", hrefs: ["/configuracoes"] },
 ];
+
+// Telas irmãs viram abas dentro de um item só do menu (SectionTabs, no topo da página) — com uma linha
+// por tela o menu passava da altura de um notebook e rolava. As rotas continuam as mesmas; o item do
+// menu aponta pra primeira aba que a pessoa pode ver e fica ativo em qualquer uma delas.
+type SubTab = { href: string; label: string };
+const NAV_SUBS: Record<string, SubTab[]> = {
+  "/contatos": [
+    { href: "/contatos", label: "Pessoas" },
+    { href: "/contatos?view=empresas", label: "Empresas" },
+  ],
+  "/campanhas": [
+    { href: "/campanhas", label: "Campanhas" },
+    { href: "/templates", label: "Templates" },
+  ],
+  "/configuracoes": [
+    { href: "/configuracoes", label: "Geral" },
+    { href: "/equipe", label: "Equipe" },
+    { href: "/integracoes", label: "Integrações" },
+  ],
+};
 
 // Agentes nunca aparece pra cliente, em nenhum tipo de acesso — só staff (colaborador+developer)
 // mexe nisso. Configurações É liberada pro cliente (só a parte de conectar número — a própria página
@@ -229,6 +188,54 @@ export const SIDEBAR_WIDTH = 211;
 export const SIDEBAR_WIDTH_COLLAPSED = 80;
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
+
+type NavAccess = { isStaff: boolean; accessType: AccessType | null; hiddenPages: string[] };
+
+// Ativo/permitido ficam num hook só porque o menu e as abas precisam dar exatamente a mesma resposta.
+function useNavAccess({ isStaff, accessType, hiddenPages }: NavAccess) {
+  const pathname = usePathname();
+  const emEmpresas = useSearchParams().get("view") === "empresas";
+  // Empresas é uma visão dentro de /contatos, então o "ativo" olha também o ?view.
+  const ativo = (href: string) => {
+    if (href === "/contatos?view=empresas") return pathname === "/contatos" && emEmpresas;
+    if (href === "/contatos") return pathname === "/contatos" && !emEmpresas;
+    return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
+  };
+  const caminho = (href: string) => (href.startsWith("/contatos?") ? "/empresas" : href);
+  const podeVer = (href: string) => {
+    const h = caminho(href);
+    return !hiddenPages.includes(h) && (isStaff || (!STAFF_ONLY_PATHS.has(h) && canAccessPage(accessType, h, hiddenPages)));
+  };
+  const abasVisiveis = (href: string) => (NAV_SUBS[href] ?? [{ href, label: "" }]).filter((t) => podeVer(t.href));
+  return { ativo, podeVer, abasVisiveis };
+}
+
+// Barra de abas da seção atual (ex.: Configurações › Geral | Equipe | Integrações). Some quando a
+// tela não é de uma seção com abas ou quando a pessoa só pode ver uma delas.
+export function SectionTabs(props: NavAccess) {
+  const { ativo, abasVisiveis } = useNavAccess(props);
+  const secao = Object.keys(NAV_SUBS).find((h) => NAV_SUBS[h].some((t) => ativo(t.href)));
+  const abas = secao ? abasVisiveis(secao) : [];
+  if (abas.length < 2) return null;
+  return (
+    <nav aria-label="Abas da seção" className="flex items-center gap-1 px-4 lg:px-5 border-b border-border bg-surface overflow-x-auto shrink-0">
+      {abas.map((t) => {
+        const on = ativo(t.href);
+        return (
+          <Link
+            key={t.href}
+            href={t.href}
+            aria-current={on ? "page" : undefined}
+            className={`px-3 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 -mb-px transition-colors
+              ${on ? "border-primary text-text" : "border-transparent text-text-muted hover:text-text"}`}
+          >
+            {t.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 function NavLink({
   href,
@@ -250,7 +257,7 @@ function NavLink({
       title={collapsed ? label : undefined}
       className={`group relative flex items-center rounded-lg text-sm font-semibold transition-colors outline-none
         focus-visible:ring-2 focus-visible:ring-white/70
-        ${collapsed ? "justify-center px-0 py-2.5" : "gap-2.5 px-2.5 py-2"}
+        ${collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-1.5"}
         ${active ? "bg-sidebar-active-bg text-white" : "text-sidebar-text hover:bg-white/[0.06] hover:text-white"}`}
     >
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full bg-primary" aria-hidden />}
@@ -341,8 +348,7 @@ export function Sidebar({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
-  const pathname = usePathname();
-  const emEmpresas = useSearchParams().get("view") === "empresas";
+  const { ativo: ativoHref, abasVisiveis } = useNavAccess({ isStaff, accessType, hiddenPages });
   const [fechados, setFechados] = useState<string[]>([]);
   useEffect(() => setFechados(lerGruposFechados()), []);
   const alternarGrupo = (id: string) => {
@@ -355,17 +361,8 @@ export function Sidebar({
     }
   };
 
-  // Empresas é uma visão dentro de /contatos, então o "ativo" olha também o ?view.
-  const ativo = (href: string) => {
-    if (href === "/contatos?view=empresas") return pathname === "/contatos" && emEmpresas;
-    if (href === "/contatos") return pathname === "/contatos" && !emEmpresas;
-    return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
-  };
-  const caminho = (href: string) => (href.startsWith("/contatos?") ? "/empresas" : href);
-  const podeVer = (href: string) => {
-    const h = caminho(href);
-    return !hiddenPages.includes(h) && (isStaff || (!STAFF_ONLY_PATHS.has(h) && canAccessPage(accessType, h, hiddenPages)));
-  };
+  // Item com abas: ativo em qualquer aba, e o link leva à primeira aba permitida.
+  const ativo = (href: string) => (NAV_SUBS[href] ?? [{ href }]).some((t) => ativoHref(t.href));
   const itemPorHref = new Map(NAV_ITEMS.map((i) => [i.href, i as NavItem]));
   const badgeDe = (href: string) => (href === "/conversas" ? attentionCount : href === "/agenda" ? tasksCount : undefined);
 
@@ -377,14 +374,15 @@ export function Sidebar({
       ...g,
       itens: g.hrefs
         .map((h) => itemPorHref.get(h) ?? (COLABORADOR_NAV_ITEMS.find((i) => i.href === h) as NavItem | undefined))
-        .filter((i): i is NavItem => i !== undefined && (g.id === "agencia" || podeVer(i.href))),
+        .filter((i): i is NavItem => i !== undefined && (g.id === "agencia" || abasVisiveis(i.href).length > 0))
+        .map((i) => (g.id === "agencia" ? i : { ...i, href: abasVisiveis(i.href)[0].href })),
     }))
     .filter((g) => g.itens.length > 0);
 
   return (
     <aside
       aria-label="Menu principal"
-      className={`flex flex-col fixed inset-y-0 left-0 z-40 py-3 text-sidebar-text overflow-y-auto overflow-x-hidden
+      className={`flex flex-col fixed inset-y-0 left-0 z-40 py-3 text-sidebar-text overflow-hidden
         transition-[transform,width] duration-200 ease-out motion-reduce:transition-none lg:translate-x-0
         ${collapsed ? "px-2" : "px-3"} ${open ? "translate-x-0" : "-translate-x-full"}`}
       style={{
@@ -394,7 +392,7 @@ export function Sidebar({
     >
       {/* Marca: recolhida fica só o símbolo, centralizado. O nome some junto com os
           rótulos do menu — manter texto num trilho de 68px só geraria corte no meio da palavra. */}
-      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-2 mb-5" : "justify-center gap-1.5 px-5 py-2.5 mb-6 -translate-x-[3.8px]"}`}>
+      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-2 mb-3" : "justify-center gap-1.5 px-5 py-2 mb-3 -translate-x-[3.8px]"}`}>
         <Image src="/logo-automax.png" alt="AutomaX" width={45} height={30} className="shrink-0" priority />
         {!collapsed && (
           <div className="leading-tight min-w-0">
@@ -404,11 +402,12 @@ export function Sidebar({
       </div>
 
 
-      <nav className="flex flex-col" aria-label="Seções">
+      {/* Só a lista rola, e só em tela baixa demais: marca, workspace e usuário ficam sempre à vista. */}
+      <nav className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-1 px-1" aria-label="Seções">
         {grupos.map((grupo) => {
           const fechado = grupo.collapsible && !collapsed && fechados.includes(grupo.id);
           return (
-            <div key={grupo.id} className="flex flex-col gap-1">
+            <div key={grupo.id} className={`flex flex-col gap-0.5 ${!grupo.label && grupo.id !== "main" ? "mt-2 pt-2 border-t border-sidebar-border" : ""}`}>
               {grupo.label &&
                 (collapsed ? (
                   // Sem espaço pro rótulo da seção: um filete separa os grupos e preserva o
@@ -422,8 +421,8 @@ export function Sidebar({
               {!fechado &&
                 grupo.itens.map((item) => (
                   <NavLink
-                    key={item.href}
                     {...item}
+                    key={item.href}
                     active={ativo(item.href)}
                     collapsed={collapsed}
                     badge={badgeDe(item.href)}
@@ -435,7 +434,7 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="mt-auto flex flex-col gap-2 pt-3">
+      <div className="shrink-0 flex flex-col gap-2 pt-3">
         {onToggleCollapse && (
           <button
             type="button"
@@ -445,7 +444,7 @@ export function Sidebar({
             title={collapsed ? "Expandir menu" : "Recolher menu"}
             className={`hidden lg:flex items-center rounded-lg text-xs font-semibold text-sidebar-muted
               hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer outline-none
-              focus-visible:ring-2 focus-visible:ring-white/70 min-h-[44px]
+              focus-visible:ring-2 focus-visible:ring-white/70 min-h-[36px]
               ${collapsed ? "justify-center px-0" : "gap-2 px-2.5"}`}
           >
             <svg
