@@ -998,6 +998,12 @@ function ActionStepFields({ config, onChange }: { config: ActionConfig; onChange
             />
           </div>
           <WebhookHeadersFields headers={config.headers ?? []} onChange={(headers) => onChange({ ...config, headers })} />
+          <input
+            value={config.saveResponseAs ?? ""}
+            onChange={(e) => onChange({ ...config, saveResponseAs: e.target.value })}
+            placeholder="Guardar o número devolvido no campo (opcional, ex: exact_lead_id)"
+            className="border border-border rounded-md px-2.5 py-1.5 text-sm outline-none focus:border-primary bg-surface"
+          />
           {config.method !== "GET" && (
             <>
               <textarea

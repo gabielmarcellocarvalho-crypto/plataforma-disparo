@@ -75,7 +75,8 @@ export type ActionConfig =
   | { action_type: "create_task"; title: string }
   | { action_type: "change_stage"; stage: ContactStage; pipelineStageId?: string | null }
   | { action_type: "add_note"; text: string }
-  | { action_type: "http_request"; method: HttpMethod; url: string; body: string; headers?: WebhookHeader[] };
+  // saveResponseAs: chave do campo do contato onde guardar o número devolvido (ex.: id do lead na Exact).
+  | { action_type: "http_request"; method: HttpMethod; url: string; body: string; headers?: WebhookHeader[]; saveResponseAs?: string };
 
 export type WaitUnit = "minutes" | "hours" | "days";
 

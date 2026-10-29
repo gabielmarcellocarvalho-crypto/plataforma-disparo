@@ -443,6 +443,20 @@ async function evaluateCondition(supabase: AdminClient, contact: Contact, run: {
   return false;
 }
 
+// Resposta que é só um número (ex.: 123) ou um JSON com o número em `value` ({"value":123}, formato OData da Exact).
+function extractResponseId(text: string): string | null {
+  const t = text.trim();
+  if (/^\d{1,18}$/.test(t)) return t;
+  try {
+    const v = (JSON.parse(t) as { value?: unknown })?.value;
+    if (typeof v === "number" && Number.isInteger(v)) return String(v);
+    if (typeof v === "string" && /^\d{1,18}$/.test(v)) return v;
+  } catch {
+    // não é JSON: sem número pra guardar
+  }
+  return null;
+}
+
 async function executeAction(supabase: AdminClient, contact: Contact, action: ActionConfig, opts?: { advanceStage?: boolean }): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
   const vars = await resolveVariableContext(supabase, contact);
 
@@ -581,7 +595,21 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
       });
       // Começo da resposta no histórico da execução: é onde aparece o id criado do outro lado (ex.: lead
       // na Exact) ou o motivo da recusa.
-      const resposta = (await res.text().catch(() => "")).slice(0, 500);
+      const full = await res.text().catch(() => "");
+      const resposta = full.slice(0, 500);
+      // Guarda o número que o outro lado devolveu (ex.: id do lead na Exact) num campo do contato, pra
+      // chamadas seguintes usarem com {{campo:chave}}.
+      const saveKey = action.saveResponseAs?.trim();
+      if (res.ok && saveKey && /^[a-zA-Z0-9_-]+$/.test(saveKey)) {
+        const saved = extractResponseId(full);
+        if (saved) {
+          const { error } = await supabase
+            .from("contacts")
+            .update({ custom_fields: { ...(contact.custom_fields ?? {}), [saveKey]: saved } })
+            .eq("id", contact.id);
+          if (error) console.error("Workflow: resposta do webhook não gravada no contato:", error.code, error.message);
+        }
+      }
       return { ok: res.ok, detail: { url, method: action.method, status: res.status, resposta } };
     } catch (err) {
       if (err instanceof UnsafeUrlError) return { ok: false, detail: { error: `endereço não permitido: ${err.message}`, url } };
