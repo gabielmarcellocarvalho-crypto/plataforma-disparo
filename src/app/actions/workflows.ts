@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, requireStaff } from "@/lib/workspace";
-import type { AudienceConfig, LeafStepInput, TriggerType, WorkflowStepInput } from "@/lib/workflow-types";
+import { formatWaitUntil, isValidWaitUntil, type AudienceConfig, type LeafStepInput, type TriggerType, type WorkflowStepInput } from "@/lib/workflow-types";
 
 export type ActionResult = { error: string | null; ok?: boolean; id?: string };
 
@@ -54,6 +54,7 @@ export type StepPreview = { kind: "wait" | "action" | "condition"; label: string
 function stepPreview(step_type: string, config: Record<string, unknown> | null): StepPreview {
   const c = config || {};
   if (step_type === "wait") {
+    if (isValidWaitUntil(c.until as string | null | undefined)) return { kind: "wait", label: `Até ${formatWaitUntil(c.until as string)}` };
     const amount = Number(c.amount) || 0;
     const unit = c.unit === "minutes" ? "min" : c.unit === "hours" ? "h" : "d";
     return { kind: "wait", label: `Esperar ${amount}${unit}` };
@@ -438,6 +439,11 @@ export async function getWorkflowRuns(workflowId: string): Promise<WorkflowRunRo
 function stepsHeaderError(steps: WorkflowStepInput[]): string | null {
   const leaves = steps.flatMap((st) => (st.step_type === "condition" ? [...st.yesSteps, ...st.noSteps] : [st]));
   for (const st of leaves) {
+    if (st.step_type === "wait") {
+      const until = (st.config as { until?: string | null }).until;
+      if (until != null && !isValidWaitUntil(until)) return "Escolha a data e a hora do passo Esperar.";
+      continue;
+    }
     const c = st.config as { action_type?: string; headers?: WebhookHeader[] } | null;
     if (c?.action_type !== "http_request") continue;
     const err = validateHeaders(c.headers);

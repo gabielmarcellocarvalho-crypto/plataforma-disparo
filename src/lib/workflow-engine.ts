@@ -12,6 +12,7 @@ import { openHeaders } from "@/lib/webhook-headers";
 import {
   interpolateVariables,
   jsonStringEscape,
+  waitDueAt,
   type ActionConfig,
   type AudienceConfig,
   type ConditionConfig,
@@ -144,13 +145,6 @@ function canSendNow(workflow: { schedule?: unknown; respect_business_hours: bool
   const schedule = normalizeSchedule(workflow.schedule);
   if (schedule) return isWithinSchedule(schedule);
   return !workflow.respect_business_hours || isBusinessHoursNow();
-}
-
-function waitMs(cfg: WaitConfig): number {
-  const amount = Math.max(1, Number(cfg.amount) || 1);
-  if (cfg.unit === "minutes") return amount * 60_000;
-  if (cfg.unit === "hours") return amount * 3_600_000;
-  return amount * 86_400_000;
 }
 
 // ── Navegação no grafo de passos (Fase 2: 1 nível de ramificação) ──────────────────────────────
@@ -672,7 +666,7 @@ async function processDueRuns(supabase: AdminClient, workflow: WorkflowRow, step
     }
 
     if (step.step_type === "wait") {
-      const nextAt = new Date(Date.now() + waitMs(step.config as WaitConfig)).toISOString();
+      const nextAt = new Date(waitDueAt(step.config as WaitConfig)).toISOString();
       const next = nextSibling(steps, step);
       await supabase.from("workflow_runs").update({ status: "waiting", current_step_id: next?.id ?? null, next_run_at: nextAt }).eq("id", run.id);
       await supabase.from("workflow_run_events").insert({ run_id: run.id, workspace_id: workflow.workspace_id, step_id: step.id, event_type: "waited", detail: { until: nextAt } });

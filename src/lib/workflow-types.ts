@@ -86,7 +86,31 @@ export const WAIT_UNIT_LABELS: Record<WaitUnit, string> = {
   days: "dia(s)",
 };
 
-export type WaitConfig = { amount: number; unit: WaitUnit };
+// `until`: data e hora fixas ("2026-11-05T09:00", horário de Brasília). Com ela, o passo espera até esse
+// momento e `amount`/`unit` ficam de lado; data que já passou segue na hora.
+export type WaitConfig = { amount: number; unit: WaitUnit; until?: string | null };
+
+const UNTIL_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+export function isValidWaitUntil(until: string | null | undefined): until is string {
+  return typeof until === "string" && UNTIL_RE.test(until) && !Number.isNaN(Date.parse(`${until}:00-03:00`));
+}
+
+// "2026-11-05T09:00" -> "05/11 09:00"
+export function formatWaitUntil(until: string): string {
+  const [date, time] = until.split("T");
+  const [, month, day] = date.split("-");
+  return `${day}/${month} ${time}`;
+}
+
+// Momento (ms) em que o passo "Esperar" libera o próximo. Brasília não tem horário de verão desde 2019: fixo em -03:00.
+export function waitDueAt(cfg: WaitConfig, now: number = Date.now()): number {
+  if (isValidWaitUntil(cfg.until)) return Math.max(now, Date.parse(`${cfg.until}:00-03:00`));
+  const amount = Math.max(1, Number(cfg.amount) || 1);
+  if (cfg.unit === "minutes") return now + amount * 60_000;
+  if (cfg.unit === "hours") return now + amount * 3_600_000;
+  return now + amount * 86_400_000;
+}
 
 // Condição (Fase 2) — só 1 nível de ramificação: um passo 'condition' tem dois ramos (yes/no), cada
 // um com sua própria lista linear de passos wait/action. Ramo vazio = "Parar" nesse desfecho.

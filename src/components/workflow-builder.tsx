@@ -23,6 +23,8 @@ import {
   TRIGGER_DESCRIPTIONS,
   TRIGGER_LABELS,
   WAIT_UNIT_LABELS,
+  formatWaitUntil,
+  isValidWaitUntil,
   type ActionConfig,
   type ActionType,
   type ConditionConfig,
@@ -211,7 +213,8 @@ function emptyConditionConfig(type: ConditionType): ConditionConfig {
 // edição, só condensado pra caber no card.
 function stepChipInfo(step: WorkflowStepInput, opts: StageOptions): { icon: LucideIcon; label: string; sublabel: string; kind: NodeKind } {
   if (step.step_type === "wait") {
-    return { icon: Clock, label: "Esperar", sublabel: `${step.config.amount} ${WAIT_UNIT_LABELS[step.config.unit]}`, kind: "wait" };
+    const until = step.config.until;
+    return { icon: Clock, label: "Esperar", sublabel: isValidWaitUntil(until) ? `até ${formatWaitUntil(until)}` : `${step.config.amount} ${WAIT_UNIT_LABELS[step.config.unit]}`, kind: "wait" };
   }
   if (step.step_type === "condition") {
     const c = step.config;
@@ -806,26 +809,48 @@ function StepCard({
 
 function LeafStepFields({ step, onChange }: { step: LeafStepInput; onChange: (step: LeafStepInput) => void }) {
   if (step.step_type === "wait") {
+    const fixedDate = step.config.until != null;
     return (
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Clock size={14} className="text-text-muted" />
-        <span className="text-text-muted">Esperar</span>
-        <input
-          type="number"
-          min={1}
-          value={step.config.amount}
-          onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, amount: Number(e.target.value) || 1 } })}
-          className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary bg-surface"
-        />
         <select
-          value={step.config.unit}
-          onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, unit: e.target.value as WaitUnit } })}
+          value={fixedDate ? "date" : "time"}
+          onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, until: e.target.value === "date" ? "" : null } })}
           className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary"
         >
-          {WAIT_UNITS.map((u) => (
-            <option key={u} value={u}>{WAIT_UNIT_LABELS[u]}</option>
-          ))}
+          <option value="time">Esperar um tempo</option>
+          <option value="date">Esperar até uma data e hora</option>
         </select>
+        {fixedDate ? (
+          <>
+            <input
+              type="datetime-local"
+              value={step.config.until ?? ""}
+              onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, until: e.target.value } })}
+              className="border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary bg-surface"
+            />
+            <span className="text-xs text-text-muted">Horário de Brasília. Se a data já passou, segue na hora.</span>
+          </>
+        ) : (
+          <>
+            <input
+              type="number"
+              min={1}
+              value={step.config.amount}
+              onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, amount: Number(e.target.value) || 1 } })}
+              className="w-16 border border-border rounded-md px-2 py-1.5 text-sm outline-none focus:border-primary bg-surface"
+            />
+            <select
+              value={step.config.unit}
+              onChange={(e) => onChange({ step_type: "wait", config: { ...step.config, unit: e.target.value as WaitUnit } })}
+              className="border border-border rounded-md px-2 py-1.5 text-sm bg-surface outline-none focus:border-primary"
+            >
+              {WAIT_UNITS.map((u) => (
+                <option key={u} value={u}>{WAIT_UNIT_LABELS[u]}</option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
     );
   }
