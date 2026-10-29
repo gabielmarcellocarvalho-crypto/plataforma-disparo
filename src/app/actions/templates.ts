@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { listAllMetaCloudTemplates, createMetaCloudTemplate, type MetaTemplateRow, type MetaTemplateCategory } from "@/lib/metacloud-templates";
+import { listAllMetaCloudTemplates, createMetaCloudTemplate, uploadTemplateExampleMedia, type MetaTemplateRow, type MetaTemplateCategory } from "@/lib/metacloud-templates";
+import { isOwnHeaderPath, validateHeaderFile } from "@/lib/template-header";
 import { listDialog360Templates } from "@/lib/dialog360";
 import { fieldOptionsFor, variableCount, validateMapping, type TemplateField } from "@/lib/template-variables";
 import type { CustomFieldDef } from "@/lib/custom-fields";
@@ -98,6 +99,10 @@ export async function createWorkspaceTemplate(input: {
   language: string;
   bodyText: string;
   variableFields: string[]; // um valor de campo por variável, na ordem {{1}}, {{2}}…
+  // Cabeçalho de mídia (opcional): arquivo já enviado ao bucket por prepareCampaignHeaderUpload.
+  headerFormat?: "IMAGE" | "DOCUMENT" | null;
+  headerMediaPath?: string | null;
+  headerMediaName?: string | null;
 }): Promise<Result<{ status: string }>> {
   const waba = await wabaOfWorkspace();
   if (!waba) return { error: "Nenhum número conectado direto pela Meta neste workspace." };
@@ -122,6 +127,30 @@ export async function createWorkspaceTemplate(input: {
   const samples = mapping.map((value) => options.find((o) => o.value === value)!.example);
 
   const language = input.language || "pt_BR";
+  const admin = createAdminClient();
+
+  // Cabeçalho de mídia: confere o caminho (só arquivo deste workspace), lê o arquivo do bucket e manda
+  // como exemplo pra Meta analisar junto com o template.
+  let header: { format: "IMAGE" | "DOCUMENT"; handle: string } | null = null;
+  let headerPath: string | null = null;
+  if (input.headerFormat) {
+    if (input.headerFormat !== "IMAGE" && input.headerFormat !== "DOCUMENT") return { error: "Formato de cabeçalho não suportado." };
+    headerPath = input.headerMediaPath || null;
+    if (!headerPath) return { error: "Envie o arquivo do cabeçalho antes de criar o template." };
+    if (!isOwnHeaderPath(waba.workspaceId, headerPath)) return { error: "Arquivo do cabeçalho inválido. Envie de novo." };
+    const file = await admin.storage.from("conversation-media").download(headerPath);
+    if (file.error || !file.data) return { error: "Não consegui ler o arquivo do cabeçalho. Envie de novo." };
+    const invalid = validateHeaderFile(input.headerFormat, file.data.type, file.data.size);
+    if (invalid) return { error: invalid };
+    try {
+      const ext = headerPath.split(".").pop() || "jpg";
+      const handle = await uploadTemplateExampleMedia(await file.data.arrayBuffer(), file.data.type.split(";")[0], `exemplo.${ext}`);
+      header = { format: input.headerFormat, handle };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "A Meta recusou o arquivo de exemplo." };
+    }
+  }
+
   try {
     const created = await createMetaCloudTemplate(waba.wabaId, {
       name,
@@ -129,7 +158,22 @@ export async function createWorkspaceTemplate(input: {
       category: input.category as MetaTemplateCategory,
       bodyText,
       sampleValues: samples,
+      header,
     });
+    if (header && headerPath) {
+      const { error } = await admin.from("template_header_media").upsert(
+        {
+          workspace_id: waba.workspaceId,
+          template_name: name,
+          language,
+          format: header.format,
+          media_path: headerPath,
+          media_name: header.format === "DOCUMENT" ? (input.headerMediaName || "").slice(0, 120) || null : null,
+        },
+        { onConflict: "workspace_id,template_name,language" }
+      );
+      if (error) console.error("Falha ao gravar a mídia do cabeçalho do template:", error.message);
+    }
     if (count > 0) {
       const { error } = await createAdminClient()
         .from("template_variable_maps")

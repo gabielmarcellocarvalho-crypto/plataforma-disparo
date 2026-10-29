@@ -4,6 +4,9 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { createWorkspaceTemplate, type TemplateMappings } from "@/app/actions/templates";
+import { prepareCampaignHeaderUpload } from "@/app/actions/campaigns";
+import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
+import { headerMediaRule, validateHeaderFile, type HeaderMediaFormat } from "@/lib/template-header";
 import type { MetaTemplateRow } from "@/lib/metacloud-templates";
 import { mappingLegend, previewText, variableCount, type TemplateField } from "@/lib/template-variables";
 import { cn } from "@/lib/utils";
@@ -85,6 +88,38 @@ export function TemplatesManager({
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [headerFormat, setHeaderFormat] = useState<HeaderMediaFormat | "">("");
+  const [headerUpload, setHeaderUpload] = useState<{ path: string; name: string } | null>(null);
+  const [headerError, setHeaderError] = useState<string | null>(null);
+  const [uploadingHeader, setUploadingHeader] = useState(false);
+
+  function pickHeaderFormat(value: string) {
+    setHeaderFormat(value === "IMAGE" || value === "DOCUMENT" ? value : "");
+    setHeaderUpload(null);
+    setHeaderError(null);
+  }
+
+  async function onHeaderFile(file: File | null) {
+    setHeaderError(null);
+    setHeaderUpload(null);
+    if (!file || !headerFormat) return;
+    const invalid = validateHeaderFile(headerFormat, file.type, file.size);
+    if (invalid) return setHeaderError(invalid);
+    setUploadingHeader(true);
+    try {
+      const prep = await prepareCampaignHeaderUpload(headerFormat, file.name, file.type, file.size);
+      if (prep.error || !prep.path || !prep.token) return setHeaderError(prep.error || "Não foi possível preparar o envio.");
+      const { error } = await createBrowserSupabase()
+        .storage.from("conversation-media")
+        .uploadToSignedUrl(prep.path, prep.token, file, { contentType: file.type.split(";")[0] });
+      if (error) return setHeaderError(`Falha ao subir o arquivo: ${error.message}`);
+      setHeaderUpload({ path: prep.path, name: file.name });
+    } catch {
+      setHeaderError("Falha de conexão ao subir o arquivo. Tente de novo.");
+    } finally {
+      setUploadingHeader(false);
+    }
+  }
 
   const varCount = useMemo(() => variableCount(bodyText), [bodyText]);
   const problems = useMemo(() => templateProblems(name, bodyText), [name, bodyText]);
@@ -103,7 +138,16 @@ export function TemplatesManager({
     setFormError(null);
     setNotice(null);
     startTransition(async () => {
-      const r = await createWorkspaceTemplate({ name, category, language: "pt_BR", bodyText, variableFields: chosen });
+      const r = await createWorkspaceTemplate({
+        name,
+        category,
+        language: "pt_BR",
+        bodyText,
+        variableFields: chosen,
+        headerFormat: headerFormat || null,
+        headerMediaPath: headerUpload?.path ?? null,
+        headerMediaName: headerUpload?.name ?? null,
+      });
       if (r.error !== null) {
         setFormError(r.error);
         return;
@@ -112,6 +156,7 @@ export function TemplatesManager({
       setName("");
       setBodyText("");
       setVariableFields([]);
+      pickHeaderFormat("");
       router.refresh();
     });
   }
@@ -211,6 +256,39 @@ export function TemplatesManager({
           </label>
         </div>
 
+        <div className="flex flex-col gap-1.5 text-sm font-semibold">
+          <label htmlFor="template-header-format">
+            Cabeçalho <span className="font-normal text-text-muted">(opcional)</span>
+          </label>
+          <select
+            id="template-header-format"
+            value={headerFormat}
+            onChange={(e) => pickHeaderFormat(e.target.value)}
+            className="border border-border rounded-md px-3 py-2 text-sm font-normal outline-none focus:border-primary bg-surface cursor-pointer"
+          >
+            <option value="">Sem cabeçalho</option>
+            <option value="IMAGE">Imagem</option>
+            <option value="DOCUMENT">Documento (PDF)</option>
+          </select>
+          {headerFormat && (
+            <>
+              <input
+                type="file"
+                accept={headerMediaRule(headerFormat).accept}
+                onChange={(e) => onHeaderFile(e.target.files?.[0] ?? null)}
+                disabled={uploadingHeader}
+                className="text-sm font-normal"
+              />
+              <span className="text-xs text-text-muted font-normal">
+                {headerMediaRule(headerFormat).label}. A Meta analisa esse arquivo como exemplo, e ele é enviado junto em automações, follow-ups e conversas.
+              </span>
+              {uploadingHeader && <span className="text-xs text-text-muted font-normal">Enviando arquivo…</span>}
+              {headerUpload && !uploadingHeader && <span className="text-xs text-success font-semibold">Arquivo pronto: {headerUpload.name}</span>}
+              {headerError && <span className="text-xs text-danger font-semibold">{headerError}</span>}
+            </>
+          )}
+        </div>
+
         <label className="flex flex-col gap-1.5 text-sm font-semibold">
           Texto
           <textarea
@@ -272,7 +350,7 @@ export function TemplatesManager({
           <button
             type="button"
             onClick={submit}
-            disabled={pending || !name || !bodyText || !allChosen || problems.length > 0}
+            disabled={pending || !name || !bodyText || !allChosen || problems.length > 0 || uploadingHeader || (!!headerFormat && !headerUpload)}
             className="bg-primary-strong text-white text-sm font-bold px-4 py-2 rounded-lg cursor-pointer disabled:opacity-60"
           >
             {pending ? "Enviando para a Meta…" : "Enviar para análise da Meta"}

@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { listMetaCloudTemplates, sendMetaCloudTemplate } from "@/lib/metacloud";
+import { listMetaCloudTemplates, sendMetaCloudTemplate, type TemplateHeaderMedia } from "@/lib/metacloud";
+import { loadTemplateHeaderMedia } from "@/lib/template-header-media";
 import { listDialog360Templates, sendDialog360Template } from "@/lib/dialog360";
 import { variableCount } from "@/lib/template-variables";
 import { fillTemplateBody } from "@/lib/template-log";
@@ -36,6 +37,12 @@ type ContactRow = {
 // número do disparo avulso. As leituras de contato/agente/número passam pela RLS — quem não é do
 // workspace não chega aqui.
 type OfficialChannel = { kind: "metacloud"; phoneNumberId: string; wabaId: string } | { kind: "360dialog"; apiKey: string };
+// Templates do workspace que têm mídia de cabeçalho guardada (criados pela AutomaX), no formato "nome|idioma".
+async function templatesWithHeaderMedia(workspaceId: string): Promise<Set<string>> {
+  const { data } = await createAdminClient().from("template_header_media").select("template_name, language").eq("workspace_id", workspaceId);
+  return new Set((data || []).map((r) => `${r.template_name as string}|${r.language as string}`));
+}
+
 type ChannelTemplate = { name: string; language: string; category: string; bodyText: string | null; headerFormat: string | null };
 async function officialTarget(contactId: string, agentId: string | null, instanceId: string | null) {
   const supabase = await createClient();
@@ -101,12 +108,14 @@ export async function listConversationTemplates(contactId: string, agentId: stri
   const t = await officialTarget(contactId, agentId, instanceId);
   if (t.error !== null) return { error: t.error };
   try {
-    const [templates, mappings] = await Promise.all([templatesOf(t.channel), mappingsOf(t.contact.workspace_id)]);
+    const [templates, mappings, withMedia] = await Promise.all([templatesOf(t.channel), mappingsOf(t.contact.workspace_id), templatesWithHeaderMedia(t.contact.workspace_id)]);
     const company = companyOf(t.contact);
     const data = templates.map((tpl): ConversationTemplate => {
       const body = tpl.bodyText || "";
       const p = templateParamsFor(variableCount(body), mappings.get(`${tpl.name}|${tpl.language}`), t.contact, company);
-      const blocked = !templateHeaderSupported(tpl.headerFormat)
+      // Cabeçalho de imagem/PDF: dá pra mandar daqui se o template foi criado pela AutomaX (a mídia fica guardada).
+      const mediaOk = t.channel.kind === "metacloud" && withMedia.has(`${tpl.name}|${tpl.language}`);
+      const blocked = !templateHeaderSupported(tpl.headerFormat) && !mediaOk
         ? "Tem imagem/arquivo no cabeçalho — mande por uma campanha, que tem o envio da mídia."
         : p.error;
       return { name: tpl.name, language: tpl.language, category: tpl.category, preview: p.params ? fillTemplateBody(body, p.params) : body, blocked };
@@ -140,7 +149,11 @@ export async function sendConversationTemplate(
     return { error: err instanceof Error ? err.message : "Não foi possível ler os templates do número." };
   }
   if (!tpl) return { error: "Template não encontrado ou não está mais aprovado pela Meta." };
-  if (!templateHeaderSupported(tpl.headerFormat)) return { error: "Template com mídia no cabeçalho: mande por uma campanha." };
+  let header: TemplateHeaderMedia | null = null;
+  if (!templateHeaderSupported(tpl.headerFormat)) {
+    header = t.channel.kind === "metacloud" ? await loadTemplateHeaderMedia(createAdminClient(), contact.workspace_id, tpl.name, tpl.language) : null;
+    if (!header) return { error: "Template com mídia no cabeçalho: mande por uma campanha." };
+  }
 
   const mappings = await mappingsOf(contact.workspace_id);
   const p = templateParamsFor(variableCount(tpl.bodyText || ""), mappings.get(`${tpl.name}|${tpl.language}`), contact, companyOf(contact));
@@ -150,7 +163,7 @@ export async function sendConversationTemplate(
   try {
     const sent =
       t.channel.kind === "metacloud"
-        ? await sendMetaCloudTemplate(t.channel.phoneNumberId, contact.phone, tpl.name, tpl.language, p.params)
+        ? await sendMetaCloudTemplate(t.channel.phoneNumberId, contact.phone, tpl.name, tpl.language, p.params, header)
         : await sendDialog360Template(t.channel.apiKey, contact.phone, tpl.name, tpl.language, p.params);
     externalId = sent?.id ?? null;
   } catch (err) {

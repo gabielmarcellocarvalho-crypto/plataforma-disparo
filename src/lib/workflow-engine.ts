@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
 import { sendMetaCloudText, sendMetaCloudTemplate } from "@/lib/metacloud";
+import { loadTemplateHeaderMedia } from "@/lib/template-header-media";
 import { fieldValue } from "@/lib/template-send";
 import { openHeaders } from "@/lib/webhook-headers";
 import {
@@ -502,7 +503,9 @@ async function executeAction(supabase: AdminClient, contact: Contact, action: Ac
         const params = tpl.variables.map((field) => fieldValue(field, contact, vars.company_name));
         const empty = params.findIndex((v) => !v);
         if (empty >= 0) return { ok: false, detail: { error: `o lead não tem o campo da variável {{${empty + 1}}} (${tpl.variables[empty]})` } };
-        await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params);
+        // Template com imagem/PDF no cabeçalho criado pela AutomaX: a mídia guardada vai em cada envio.
+        const header = await loadTemplateHeaderMedia(supabase, contact.workspace_id, tpl.name, tpl.language || "pt_BR");
+        await sendMetaCloudTemplate(instance.phone_number_id, contact.phone, tpl.name, tpl.language || "pt_BR", params, header);
         content = await templateLogContent(supabase, { wabaId: (instance as { meta_waba_id?: string | null }).meta_waba_id, phoneNumberId: instance.phone_number_id }, tpl.name, tpl.language || "pt_BR", params);
         billing = (tpl.category || "marketing").toLowerCase(); // a coluna só aceita minúsculas (check de messages.billing_category)
       } else {

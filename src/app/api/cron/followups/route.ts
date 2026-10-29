@@ -3,6 +3,7 @@ import { templateLogContent } from "@/lib/template-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { agentSendText } from "@/lib/agent-channel";
 import { sendMetaCloudTemplate } from "@/lib/metacloud";
+import { loadTemplateHeaderMedia } from "@/lib/template-header-media";
 import { fieldValue } from "@/lib/template-send";
 import { generateReply, capBubbles, type ConversationMessage } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
@@ -155,7 +156,8 @@ export async function GET(req: Request) {
           continue;
         }
         try {
-          await sendMetaCloudTemplate(channel.phoneNumberId, contact.phone!, tpl.name, tpl.language, params);
+          const header = await loadTemplateHeaderMedia(supabase, agent.workspace_id, tpl.name, tpl.language);
+          await sendMetaCloudTemplate(channel.phoneNumberId, contact.phone!, tpl.name, tpl.language, params, header);
         } catch (err) {
           console.error("Erro ao enviar template de follow-up:", err instanceof Error ? err.message : err);
           skipped++;
