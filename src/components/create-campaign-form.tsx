@@ -25,7 +25,16 @@ const WEEK_DAY_LABELS: { value: number; label: string }[] = [
 
 type AgentOption = { id: string; name: string; connection_status: string };
 type WhatsappInstanceOption = { id: string; channel: WhatsappChannel; department: string };
-type Dialog360Template = { name: string; language: string; category: string; bodyText: string | null; bodyVarCount: number; headerFormat?: string | null };
+type Dialog360Template = {
+  name: string;
+  language: string;
+  category: string;
+  bodyText: string | null;
+  bodyVarCount: number;
+  headerFormat?: string | null;
+  variablesMapped?: boolean; // mais de 1 variável só é aceito quando cada uma tem campo definido em Templates
+  headerSaved?: boolean; // mídia do cabeçalho já guardada no template (criado pela AutomaX)
+};
 type SequenceStep = { dayOffset: number; subject: string; body: string; ctaLabel: string };
 
 let stepKeySeq = 0;
@@ -114,9 +123,11 @@ export function CreateCampaignForm({
     setHeaderUpload(null);
     setHeaderError(null);
   }, [templateKey]);
+  const headerSaved = !!selectedTemplate?.headerSaved;
   const headerBlocked =
-    headerInfo.kind === "unsupported" || (headerInfo.kind === "media" && !headerUpload) || uploadingHeader;
-  const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || selectedTemplate.bodyVarCount > 1 || headerBlocked);
+    headerInfo.kind === "unsupported" || (headerInfo.kind === "media" && !headerSaved && !headerUpload) || uploadingHeader;
+  const variablesBlocked = !!selectedTemplate && selectedTemplate.bodyVarCount > 1 && !selectedTemplate.variablesMapped;
+  const blockDialog360Submit = isDialog360Blast && (!selectedTemplate || variablesBlocked || headerBlocked);
 
   async function onHeaderFile(file: File | null) {
     setHeaderError(null);
@@ -608,7 +619,12 @@ export function CreateCampaignForm({
                       cabeçalho ou com imagem ou documento.
                     </p>
                   )}
-                  {headerInfo.kind === "media" && (
+                  {headerInfo.kind === "media" && headerSaved && (
+                    <p className="text-xs text-success font-semibold">
+                      {headerInfo.format === "IMAGE" ? "Imagem" : "Documento"} do cabeçalho já configurado no template. É a mesma de Templates.
+                    </p>
+                  )}
+                  {headerInfo.kind === "media" && !headerSaved && (
                     <div className="flex flex-col gap-1.5 border border-border rounded-lg p-3 bg-bg">
                       <span className="text-sm font-semibold">
                         {headerInfo.format === "IMAGE" ? "Imagem do cabeçalho" : "Documento do cabeçalho"}
@@ -633,9 +649,10 @@ export function CreateCampaignForm({
                     </div>
                   )}
 
-                  {selectedTemplate && selectedTemplate.bodyVarCount > 1 && (
+                  {variablesBlocked && (
                     <p className="text-xs text-danger font-medium">
-                      Esse template tem mais de 1 variável no corpo — ainda não suportado (só {"{{1}}"} = primeiro nome). Escolha outro.
+                      Esse template tem {selectedTemplate?.bodyVarCount} variáveis e nenhuma está ligada a um campo. Crie o template pela tela Templates
+                      (lá você escolhe o campo de cada variável) ou escolha outro.
                     </p>
                   )}
                 </div>

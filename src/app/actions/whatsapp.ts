@@ -193,7 +193,12 @@ export async function connectMetaCloudInstance(
   }
 }
 
-export type ListTemplatesResult = { error: string | null; templates: Dialog360Template[] };
+// variablesMapped: todas as variáveis do corpo têm um campo definido na tela Templates (ou tem 0/1 variável).
+// headerSaved: o template foi criado pela AutomaX e a mídia do cabeçalho já está guardada.
+export type ListTemplatesResult = {
+  error: string | null;
+  templates: (Dialog360Template & { headerFormat?: string | null; variablesMapped?: boolean; headerSaved?: boolean })[];
+};
 
 // Busca os Message Templates aprovados desse número — 360dialog ou metacloud, mesmo formato de
 // retorno pros dois — usado pelo seletor de template na criação de campanha (em vez do cliente digitar
@@ -218,7 +223,26 @@ export async function listWhatsappTemplates(instanceId: string): Promise<ListTem
     }
     if (instance.channel === "metacloud") {
       if (!instance.meta_waba_id) return { error: "Esse número ainda não tem WABA vinculado.", templates: [] };
-      return { error: null, templates: await listMetaCloudTemplates(instance.meta_waba_id) };
+      const list = await listMetaCloudTemplates(instance.meta_waba_id);
+      // Templates criados pela AutomaX já têm o campo de cada variável e a mídia do cabeçalho guardados:
+      // a campanha usa isso em vez de pedir de novo.
+      const [maps, media] = await Promise.all([
+        supabase.from("template_variable_maps").select("template_name, language, variables").eq("workspace_id", workspace.id),
+        supabase.from("template_header_media").select("template_name, language").eq("workspace_id", workspace.id),
+      ]);
+      const mapped = new Map((maps.data || []).map((m) => [`${m.template_name}|${m.language}`, (m.variables as string[]) || []]));
+      const withMedia = new Set((media.data || []).map((m) => `${m.template_name}|${m.language}`));
+      return {
+        error: null,
+        templates: list.map((t) => {
+          const fields = mapped.get(`${t.name}|${t.language}`) || [];
+          return {
+            ...t,
+            variablesMapped: t.bodyVarCount <= 1 || (fields.length >= t.bodyVarCount && fields.slice(0, t.bodyVarCount).every(Boolean)),
+            headerSaved: withMedia.has(`${t.name}|${t.language}`),
+          };
+        }),
+      };
     }
     return { error: "Esse número não usa API oficial (360dialog/Meta).", templates: [] };
   } catch (err) {

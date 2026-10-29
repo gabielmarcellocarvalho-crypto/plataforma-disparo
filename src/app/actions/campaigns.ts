@@ -8,6 +8,7 @@ import { isContactStage } from "@/lib/crm-stages";
 import { normalizeTags, toPostgrestArrayLiteral } from "@/lib/contact-tags";
 import { listDialog360Templates } from "@/lib/dialog360";
 import { listMetaCloudTemplates } from "@/lib/metacloud";
+import { loadTemplateHeaderMedia } from "@/lib/template-header-media";
 import { campaignHeaderPath, headerSupport, isOwnHeaderPath, validateHeaderFile, type HeaderMediaFormat } from "@/lib/template-header";
 import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
 
@@ -194,7 +195,20 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
       }
       const match = templates.find((t) => t.name === dialog360TemplateName && (!dialog360TemplateLang || t.language === dialog360TemplateLang));
       if (!match) return { error: "Template não encontrado entre os aprovados desse número — atualize a lista e escolha de novo." };
-      if (match.bodyVarCount > 1) return { error: "Esse template tem mais de 1 variável no corpo — ainda não suportado (só {{1}} = primeiro nome)." };
+      // Mais de 1 variável só com o campo de cada uma definido na tela Templates (o disparo preenche por ele).
+      if (match.bodyVarCount > 1) {
+        const { data: map } = await supabase
+          .from("template_variable_maps")
+          .select("variables")
+          .eq("workspace_id", workspace.id)
+          .eq("template_name", match.name)
+          .eq("language", match.language)
+          .maybeSingle();
+        const fields = ((map?.variables as string[] | undefined) || []).slice(0, match.bodyVarCount);
+        if (fields.length < match.bodyVarCount || fields.some((f) => !f)) {
+          return { error: `Esse template tem ${match.bodyVarCount} variáveis e nenhuma está ligada a um campo. Crie o template pela tela Templates (lá você escolhe o campo de cada variável) ou escolha outro.` };
+        }
+      }
       dialog360TemplateVarCount = match.bodyVarCount;
 
       // Cabeçalho de mídia: a Meta exige a imagem/documento em cada envio. Decide pelo formato real do
@@ -204,12 +218,22 @@ export async function createCampaign(_prevState: ActionResult, formData: FormDat
         return { error: `Esse template tem cabeçalho de ${support.format.toLowerCase()}, ainda não suportado. Escolha um template sem cabeçalho ou com imagem/documento.` };
       }
       if (support.kind === "media") {
-        if (!headerMediaPath) return { error: `Esse template tem cabeçalho de ${support.format === "IMAGE" ? "imagem" : "documento"}: envie o arquivo antes de criar a campanha.` };
-        if (!isOwnHeaderPath(workspace.id, headerMediaPath)) return { error: "Arquivo do cabeçalho inválido. Envie de novo." };
-        const { data: pub } = createAdminClient().storage.from("conversation-media").getPublicUrl(headerMediaPath);
-        templateHeaderFormat = support.format;
-        templateHeaderMediaUrl = pub.publicUrl;
-        templateHeaderMediaName = support.format === "DOCUMENT" ? headerMediaName : null;
+        if (headerMediaPath) {
+          if (!isOwnHeaderPath(workspace.id, headerMediaPath)) return { error: "Arquivo do cabeçalho inválido. Envie de novo." };
+          const { data: pub } = createAdminClient().storage.from("conversation-media").getPublicUrl(headerMediaPath);
+          templateHeaderFormat = support.format;
+          templateHeaderMediaUrl = pub.publicUrl;
+          templateHeaderMediaName = support.format === "DOCUMENT" ? headerMediaName : null;
+        } else {
+          // Sem arquivo novo: usa a mídia guardada quando o template foi criado pela AutomaX.
+          const saved = data.channel === "metacloud" ? await loadTemplateHeaderMedia(createAdminClient(), workspace.id, match.name, match.language) : null;
+          if (!saved || saved.format !== support.format) {
+            return { error: `Esse template tem cabeçalho de ${support.format === "IMAGE" ? "imagem" : "documento"}: envie o arquivo antes de criar a campanha.` };
+          }
+          templateHeaderFormat = saved.format;
+          templateHeaderMediaUrl = saved.url;
+          templateHeaderMediaName = saved.fileName ?? null;
+        }
       }
     }
   }
