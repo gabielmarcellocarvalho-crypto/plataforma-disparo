@@ -9,6 +9,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchContactProfilePicture } from "@/lib/evolution";
 import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage, type AgentImage, type ToolExecutor } from "@/lib/agent-reply";
+import { fetchHeaderImage, lastHeaderImageUrl, stripHeaderImageMarker } from "@/lib/agent-opening-media";
 import { getSchedulingContext } from "@/lib/scheduling";
 import { buildSchedulingTools, makeSchedulingExecutor, schedulingPromptBlock, SCHEDULING_TOOL_NAMES } from "@/lib/scheduling-tools";
 import { buildNuvemshopTools, getNuvemshopContext, makeNuvemshopExecutor, nuvemshopPromptBlock, NUVEMSHOP_TOOL_NAMES } from "@/lib/integrations/nuvemshop/tools";
@@ -507,17 +508,21 @@ export async function runAgentTurn(
     if (latestUserMsg && latestUserMsg.id !== myMessageId) return;
   }
 
+  // Além das mensagens do agente, entra o que o lead recebeu sem agente (abertura de campanha, template de
+  // automação): sem isso a IA responde sem saber o que foi oferecido.
   const { data: historyRows } = await supabase
     .from("messages")
     .select("role, content")
-    .eq("agent_id", agent.id)
+    .or(`agent_id.eq.${agent.id},and(agent_id.is.null,role.eq.assistant)`)
     .eq("contact_id", contact.id)
     .order("created_at", { ascending: false })
     .limit(HISTORY_LIMIT);
 
-  const history: ConversationMessage[] = (historyRows || [])
-    .reverse()
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  const orderedRows = (historyRows || []).reverse();
+  // Imagem do template enviado (convite): o modelo enxerga junto com a mensagem do lead.
+  const headerImageUrl = lastHeaderImageUrl(orderedRows.map((m) => m.content as string));
+  const headerImage = headerImageUrl ? await fetchHeaderImage(headerImageUrl) : null;
+  const history: ConversationMessage[] = orderedRows.map((m) => ({ role: m.role as "user" | "assistant", content: stripHeaderImageMarker(m.content as string) }));
 
   // Pastas de fotos cadastradas pra esse agente — só habilita a ferramenta de foto se houver
   // alguma (agente sem fotos, tipo o da Hanoi, roda sem tools, igual antes).
@@ -577,7 +582,7 @@ export async function runAgentTurn(
       PHONE_KNOWN_BLOCK,
     { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: contact.missed_offhours },
     history,
-    images,
+    headerImage ? [...images, headerImage] : images,
     tools,
     executor,
     knowledgeText

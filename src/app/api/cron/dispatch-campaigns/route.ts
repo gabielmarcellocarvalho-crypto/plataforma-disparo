@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendText, instanceNameFor } from "@/lib/evolution";
 import { sendDialog360Template } from "@/lib/dialog360";
 import { sendMetaCloudTemplate } from "@/lib/metacloud";
+import { templateLogContent } from "@/lib/template-log";
+import { headerImageMarker } from "@/lib/agent-opening-media";
 import { isOfficialWhatsappChannel } from "@/lib/whatsapp-channel";
 import { sendCampaignEmail, ResendError } from "@/lib/email";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
@@ -319,7 +321,13 @@ export async function GET(req: Request) {
 
       // Conteúdo gravado no histórico da conversa (Conversas/CRM) — pro template, guarda uma referência
       // legível já que o corpo real fica só na Meta, não temos o texto renderizado aqui.
-      const loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
+      // Pelo número da Meta direta vai o texto do template já preenchido (o agente de IA e quem olha a
+      // conversa precisam ver o que o lead recebeu) e, se houver, o link da imagem do cabeçalho.
+      let loggedContent = isOfficialBlast ? `[Template ${blastInstance!.channel}: ${campaign.dialog360_template_name}]` : (text as string);
+      if (isMetacloudBlast) {
+        loggedContent = await templateLogContent(supabase, { phoneNumberId: blastInstance!.phone_number_id }, campaign.dialog360_template_name!, campaign.dialog360_template_lang || "pt_BR", bodyParams);
+        if (campaign.template_header_format === "IMAGE" && campaign.template_header_media_url) loggedContent += `\n${headerImageMarker(campaign.template_header_media_url as string)}`;
+      }
 
       try {
         // wamid devolvido pela API oficial — o webhook de status da Meta usa pra marcar entregue/lida.
