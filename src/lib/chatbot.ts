@@ -19,7 +19,9 @@ export type ChatbotStep =
   | { id: string; type: "question"; text: string; fieldKey: string; saveAsTag: boolean }
   | { id: string; type: "menu"; text: string; options: ChatbotOption[] };
 
-export type ChatbotConfig = { enabled: boolean; steps: ChatbotStep[]; finalMessage: string };
+// finalStage: etapa pra onde o lead vai quando termina o atendimento inicial. Vazio = "Interessado" (o padrão
+// de sempre); funil sem etapa "Interessado" joga o card na anterior mais próxima, por isso dá pra escolher.
+export type ChatbotConfig = { enabled: boolean; steps: ChatbotStep[]; finalMessage: string; finalStage: ContactStage | "" };
 
 export const MAX_STEPS = 10;
 export const MAX_OPTIONS = 9;
@@ -51,7 +53,8 @@ function normalizeStep(raw: unknown, i: number): ChatbotStep | null {
 export function normalizeChatbotConfig(raw: unknown): ChatbotConfig {
   const c = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const steps = (Array.isArray(c.steps) ? c.steps : []).map(normalizeStep).filter((s): s is ChatbotStep => s !== null).slice(0, MAX_STEPS);
-  return { enabled: Boolean(c.enabled) && steps.length > 0, steps, finalMessage: str(c.finalMessage).trim() };
+  const finalStage = typeof c.finalStage === "string" && (STAGE_ORDER as string[]).includes(c.finalStage) ? (c.finalStage as ContactStage) : "";
+  return { enabled: Boolean(c.enabled) && steps.length > 0, steps, finalMessage: str(c.finalMessage).trim(), finalStage };
 }
 
 // ── Texto ──────────────────────────────────────────────────────────────────
@@ -155,6 +158,7 @@ export const CHATBOT_TEMPLATES: ChatbotTemplate[] = [
         },
       ],
       finalMessage: "Obrigada, {{primeiro_nome}}! Já vou te colocar em contato com um consultor da nossa loja 😊",
+      finalStage: "encaminhamento",
     },
   },
   {
@@ -167,6 +171,7 @@ export const CHATBOT_TEMPLATES: ChatbotTemplate[] = [
         { id: "setor", type: "menu", text: "Com qual setor você quer falar?", options: [opt("Comercial"), opt("Suporte"), opt("Financeiro")] },
       ],
       finalMessage: "Perfeito! Já vou te encaminhar pra nossa equipe.",
+      finalStage: "",
     },
   },
 ];

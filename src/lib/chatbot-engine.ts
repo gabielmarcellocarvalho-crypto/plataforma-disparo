@@ -3,7 +3,8 @@ import { sendText } from "@/lib/evolution";
 import { sendDialog360Text } from "@/lib/dialog360";
 import { sendMetaCloudText } from "@/lib/metacloud";
 import { brPhoneVariant } from "@/lib/import-contacts";
-import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
+import { canAdvanceStage, isContactStage, type ContactStage } from "@/lib/crm-stages";
+import { stageForSignal } from "@/lib/pipelines";
 import { canonicalizeValue, type CustomFieldDef } from "@/lib/custom-fields";
 import { mergeTags } from "@/lib/contact-tags";
 import { normalizeCity } from "@/lib/territories";
@@ -36,8 +37,8 @@ export type ChatbotInbound = {
   media?: { url: string; kind: "image" | "audio" | "document"; caption: string | null } | null;
 };
 
-type Contact = { id: string; name: string | null; email: string | null; stage: string; team_member_id: string | null; custom_fields: Record<string, unknown> | null; tags: string[] | null };
-const CONTACT_COLUMNS = "id, name, email, stage, team_member_id, custom_fields, tags";
+type Contact = { id: string; name: string | null; email: string | null; stage: string; team_member_id: string | null; custom_fields: Record<string, unknown> | null; tags: string[] | null; pipeline_id?: string | null };
+const CONTACT_COLUMNS = "id, name, email, stage, team_member_id, custom_fields, tags, pipeline_id";
 
 type Session = { id: string; step_index: number; retries: number; answers: Record<string, string> };
 
@@ -149,9 +150,20 @@ async function addTag(admin: AdminClient, contact: Contact, tag: string) {
   await admin.from("contacts").update({ tags: mergeTags(contact.tags, [tag]) }).eq("id", contact.id);
 }
 
+// Move o lead pro sinal escolhido. Lead que já está num funil personalizado também troca de etapa LÁ (senão o
+// card fica na coluna antiga: a coluna vem de pipeline_stage_id quando ele existe).
 async function moveStage(admin: AdminClient, contact: Contact, stage: ContactStage) {
   if (!canAdvanceStage(contact.stage as ContactStage, stage)) return;
-  await admin.from("contacts").update({ stage, stage_changed_at: new Date().toISOString() }).eq("id", contact.id);
+  const patch: Record<string, unknown> = { stage, stage_changed_at: new Date().toISOString() };
+  if (contact.pipeline_id) {
+    const { data: etapas } = await admin.from("pipeline_stages").select("id, pipeline_id, name, signal, position").eq("pipeline_id", contact.pipeline_id).order("position");
+    const alvo = stageForSignal(
+      stage,
+      (etapas ?? []).map((e) => ({ id: e.id as string, pipeline_id: e.pipeline_id as string, name: e.name as string, signal: (isContactStage(e.signal as string) ? e.signal : "abordado") as ContactStage, position: e.position as number }))
+    );
+    if (alvo) patch.pipeline_stage_id = alvo.id;
+  }
+  await admin.from("contacts").update(patch).eq("id", contact.id);
 }
 
 // Avança a sessão só se ela ainda estiver na etapa que a gente leu — duas mensagens seguidas do lead
@@ -170,10 +182,9 @@ async function advance(admin: AdminClient, session: Session, patch: Partial<Sess
 async function finish(admin: AdminClient, instance: ChatbotInstance, phone: string, contactId: string, cfg: ChatbotConfig, answers: Record<string, string>, reason: "concluido" | "interrompido") {
   const contact = await reload(admin, contactId);
   if (cfg.finalMessage) await say(admin, instance, phone, contact, [cfg.finalMessage]);
-  // Respondeu = sinal de interesse (mesma regra do número sem IA de sempre); só avança.
-  if (canAdvanceStage(contact.stage as ContactStage, "interessado")) {
-    await admin.from("contacts").update({ stage: "interessado", stage_changed_at: new Date().toISOString() }).eq("id", contactId);
-  }
+  // Respondeu = sinal de interesse (mesma regra do número sem IA de sempre); só avança. A etapa de destino
+  // pode ser escolhida na configuração (ex.: "Encaminhamento"); sem escolha, segue "Interessado".
+  await moveStage(admin, contact, cfg.finalStage || "interessado");
   const resumo = Object.entries(answers).map(([k, v]) => `${k} = ${v}`).join(" · ");
   await admin.from("contact_notes").insert({
     contact_id: contactId,

@@ -333,6 +333,21 @@ function InstanceChatbot({ item, fieldDefs, stageLabels }: { item: ChatbotInstan
               <textarea value={config.finalMessage} onChange={(e) => set({ finalMessage: e.target.value })} rows={2} className={cn(input, "resize-y")} />
             </label>
 
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-bold text-text-muted">Quando terminar o atendimento inicial, mover o lead pra</span>
+              <select value={config.finalStage} onChange={(e) => set({ finalStage: e.target.value as ContactStage | "" })} className={input}>
+                <option value="">Interessado (padrão)</option>
+                {STAGE_ORDER.map((s) => (
+                  <option key={s} value={s}>
+                    {stageLabels[s]}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[11px] text-text-muted">
+                Se o seu funil não tem a etapa &quot;Interessado&quot;, o lead cai na etapa anterior mais próxima. Escolha aqui a etapa que ele deve ocupar.
+              </span>
+            </label>
+
             <p className="text-[11px] text-text-muted">
               Variáveis: <code>{"{{primeiro_nome}}"}</code>, <code>{"{{nome}}"}</code>, <code>{"{{campo:chave}}"}</code>. Roda só no primeiro contato de um
               número novo; se alguém da equipe responder, o bot sai da conversa. Cidade gravada no campo de cidade do workspace
