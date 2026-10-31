@@ -43,6 +43,7 @@ export async function addTask(_prevState: ActionResult, formData: FormData): Pro
   const title = String(formData.get("title") || "").trim();
   if (!title) return { error: "Informe o título da tarefa." };
 
+  const description = String(formData.get("description") || "").trim().slice(0, 2000) || null;
   const dueAt = String(formData.get("dueAt") || "").trim() || null;
   const contactId = String(formData.get("contactId") || "").trim() || null;
   const companyId = String(formData.get("companyId") || "").trim() || null;
@@ -52,6 +53,7 @@ export async function addTask(_prevState: ActionResult, formData: FormData): Pro
   const { error } = await supabase.from("tasks").insert({
     workspace_id: workspace.id,
     title,
+    description,
     due_at: dueAt,
     contact_id: contactId,
     company_id: companyId,

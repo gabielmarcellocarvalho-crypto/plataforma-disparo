@@ -109,3 +109,41 @@ export function funnelTriggerOptions(
   const hidden = resolveHiddenStages(hiddenStages);
   return STAGE_ORDER.filter((s) => allowed.includes(s) && !hidden.includes(s)).map((s) => ({ signal: s, label: labels[s] }));
 }
+
+// Funil da Visão geral montado com as etapas do cliente (as mesmas colunas do Pipeline), em vez dos 7
+// sinais fixos. `counts` = quantos leads estão em cada etapa AGORA. Etapas de perda saem do desenho e
+// viram o contador "descartados" (pode acontecer de qualquer fase, não é degrau). `value` é cumulativo
+// (quem está nessa etapa ou em alguma depois dela) — é o que faz o funil estreitar; `current` é a foto.
+export function buildPipelineFunnel(
+  stages: PipelineStage[],
+  counts: Record<string, number>
+): { points: { stage: ContactStage; label: string; value: number; current: number }[]; descartados: number } {
+  const ordenadas = sortStages(stages);
+  let descartados = 0;
+  const degraus = ordenadas.filter((e) => {
+    if (e.signal === "descartado") {
+      descartados += counts[e.id] ?? 0;
+      return false;
+    }
+    return true;
+  });
+  let acumulado = 0;
+  const points = degraus
+    .map((e) => ({ e, current: counts[e.id] ?? 0 }))
+    .reverse()
+    .map(({ e, current }) => {
+      acumulado += current;
+      return { stage: e.signal, label: e.name, value: acumulado, current };
+    })
+    .reverse();
+  return { points, descartados };
+}
+
+// Sinais cujo card cai numa das etapas escolhidas — usado pra achar os leads que nunca foram movidos
+// (pipeline_stage_id nulo) e que o Pipeline mostra na etapa do sinal deles.
+export function signalsLandingOn(selectedIds: string[], stages: PipelineStage[]): ContactStage[] {
+  return STAGE_ORDER.filter((s) => {
+    const e = stageForSignal(s, stages);
+    return Boolean(e && selectedIds.includes(e.id));
+  });
+}

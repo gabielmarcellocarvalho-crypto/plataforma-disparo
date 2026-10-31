@@ -1,11 +1,18 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Michroma, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-plus-jakarta",
   subsets: ["latin"],
   weight: ["500", "600", "700", "800"],
+});
+
+// Fonte do nome na marca (parecida com o letreiro da logo: larga, quadrada e fina).
+const michroma = Michroma({
+  variable: "--font-brand",
+  subsets: ["latin"],
+  weight: "400",
 });
 
 export const metadata: Metadata = {
@@ -29,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR" className={`${plusJakarta.variable} h-full antialiased`}>
+    <html lang="pt-BR" className={`${plusJakarta.variable} ${michroma.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-bg text-text">{children}</body>
     </html>
   );

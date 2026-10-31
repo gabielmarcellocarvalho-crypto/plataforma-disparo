@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { isContactStage } from "@/lib/crm-stages";
+import { signalsLandingOn, type PipelineStage } from "@/lib/pipelines";
 import { normalizeTags, toPostgrestArrayLiteral } from "@/lib/contact-tags";
 import { listDialog360Templates } from "@/lib/dialog360";
 import { listMetaCloudTemplates } from "@/lib/metacloud";
@@ -398,9 +399,23 @@ export async function activateCampaign(
     contacts = [data];
   } else {
     let validStages: string[] = [];
+    // Com funil próprio o filtro chega como ids de etapa (as colunas do Pipeline do cliente). Lead que
+    // nunca foi movido (pipeline_stage_id nulo) entra pelo sinal que o Pipeline mostra naquela etapa.
+    let pipelineStageIds: string[] = [];
+    let nullStageSignals: string[] = [];
     if (filters.stages.length > 0) {
-      validStages = filters.stages.filter(isContactStage);
-      if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
+      const { data: funil } = await supabase.from("pipelines").select("id").eq("workspace_id", workspace.id).order("is_default", { ascending: false }).order("position").limit(1).maybeSingle();
+      const { data: etapasRows } = funil
+        ? await supabase.from("pipeline_stages").select("id, pipeline_id, name, signal, position").eq("pipeline_id", funil.id)
+        : { data: null };
+      const etapas: PipelineStage[] = (etapasRows ?? []).map((e) => ({ id: e.id, pipeline_id: e.pipeline_id, name: e.name, signal: isContactStage(e.signal) ? e.signal : "abordado", position: e.position }));
+      pipelineStageIds = filters.stages.filter((id) => etapas.some((e) => e.id === id));
+      if (pipelineStageIds.length > 0) {
+        nullStageSignals = signalsLandingOn(pipelineStageIds, etapas);
+      } else {
+        validStages = filters.stages.filter(isContactStage);
+        if (validStages.length === 0) return { error: "Selecione ao menos uma fase válida do CRM." };
+      }
     }
     const since = filters.sinceDays && filters.sinceDays > 0 ? new Date(Date.now() - filters.sinceDays * 86400000).toISOString() : null;
     const tagsInclude = normalizeTags(filters.tagsInclude);
@@ -415,6 +430,10 @@ export async function activateCampaign(
       type Query = typeof inicial;
       let q: Query = inicial;
       if (validStages.length > 0) q = q.in("stage", validStages) as Query;
+      if (pipelineStageIds.length > 0) {
+        const porSinal = nullStageSignals.length > 0 ? `,and(pipeline_stage_id.is.null,stage.in.(${nullStageSignals.join(",")}))` : "";
+        q = q.or(`pipeline_stage_id.in.(${pipelineStageIds.join(",")})${porSinal}`) as Query;
+      }
       if (since) q = q.gte("stage_changed_at", since) as Query;
       if (tagsInclude.length > 0) q = q.overlaps("tags", tagsInclude) as Query;
       // "não tem nenhuma dessas" não tem atalho no client — vai no DSL do PostgREST, com o literal

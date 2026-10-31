@@ -3,7 +3,7 @@ import { getCurrentWorkspace } from "@/lib/workspace";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { OverviewInsightsBox } from "@/components/overview-insights-box";
 import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
-import { getVolumeMetrics, getConversionMetrics, getFunnelData, getResponseMetrics, getLeadSources, getEmailClickMetrics, getMessagesByDay } from "@/lib/overview-metrics";
+import { getVolumeMetrics, getConversionMetrics, getOverviewFunnel, getResponseMetrics, getLeadSources, getEmailClickMetrics, getMessagesByDay } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel, planHasConversion } from "@/lib/workspace-plan";
 import { getAttentionAlerts } from "@/lib/attention-center";
@@ -115,7 +115,7 @@ export default async function OverviewPage({
         getMessagesByDay(workspace.id, period),
         getVolumeMetrics(workspace.id, period),
         hasConversion ? getConversionMetrics(workspace.id, period) : Promise.resolve(EMPTY_CONVERSION),
-        hasConversion ? getFunnelData(workspace.id, period, funnelEnd) : Promise.resolve(EMPTY_FUNNEL),
+        hasConversion ? getOverviewFunnel(workspace.id, period, funnelEnd) : Promise.resolve(EMPTY_FUNNEL),
         hasConversion ? getResponseMetrics(workspace.id, period) : Promise.resolve(EMPTY_RESPONSE),
         hasConversion ? getLeadSources(workspace.id, period) : Promise.resolve([]),
       ])
@@ -136,7 +136,7 @@ export default async function OverviewPage({
   const periodFunnelEmpty = funnel.points.length === 0 || funnel.points[0]?.value === 0;
   const showingPipelineFunnel = Boolean(workspace) && hasConversion && periodFunnelEmpty;
   const shownFunnel =
-    showingPipelineFunnel && workspace ? await getFunnelData(workspace.id, { from: new Date(0), to: new Date() }, funnelEnd) : funnel;
+    showingPipelineFunnel && workspace ? await getOverviewFunnel(workspace.id, { from: new Date(0), to: new Date() }, funnelEnd) : funnel;
 
   // Distribui as mensagens do período por dia.
   const days = eachDayBrt(period.from, period.to);
@@ -259,7 +259,7 @@ export default async function OverviewPage({
         </div>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
+      <div className="grid gap-5 xl:grid-cols-[1fr_290px]">
         <OverviewInsightsBox
           periodLabel={period.label}
           volume={{ ...volume, chartData }}

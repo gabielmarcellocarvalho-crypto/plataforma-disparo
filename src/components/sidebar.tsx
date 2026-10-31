@@ -56,7 +56,9 @@ const NAV_ITEMS = [
     label: "Automações",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        <rect x="3" y="3" width="8" height="8" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect x="13" y="13" width="8" height="8" rx="2" />
       </svg>
     ),
   },
@@ -212,8 +214,8 @@ const COLABORADOR_NAV_ITEMS = [
 // Pipeline). Os itens de configuração ficam num grupo "Workspace" recolhível no fim.
 // Grupo com label vazio não desenha cabeçalho.
 const NAV_GROUPS: { id: string; label: string; hrefs: string[]; collapsible?: boolean }[] = [
-  { id: "main", label: "", hrefs: ["/", "/conversas", "/agenda"] },
-  { id: "crm", label: "CRM", hrefs: ["/crm", "/contatos", "/contatos?view=empresas"] },
+  { id: "main", label: "", hrefs: ["/"] },
+  { id: "crm", label: "CRM", hrefs: ["/conversas", "/crm", "/contatos", "/contatos?view=empresas", "/agenda"] },
   { id: "auto", label: "Automação & IA", hrefs: ["/agentes", "/automacoes", "/campanhas", "/templates"] },
   { id: "analise", label: "Análise", hrefs: ["/metricas"] },
   { id: "workspace", label: "Workspace", hrefs: ["/equipe", "/integracoes", "/configuracoes"], collapsible: true },
@@ -394,14 +396,25 @@ export function Sidebar({
     >
       {/* Marca: recolhida fica só o símbolo, centralizado. O nome some junto com os
           rótulos do menu — manter texto num trilho de 68px só geraria corte no meio da palavra. */}
-      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-2 mb-5" : "justify-center gap-1.5 px-5 py-2.5 mb-6 -translate-x-[3.8px]"}`}>
-        <Image src="/logo-automax.png" alt="AutomaX" width={45} height={30} className="shrink-0" priority />
+      {/* A marca é o botão de recolher/expandir o menu (só em telas >= lg; no celular o menu é um drawer). */}
+      <button
+        type="button"
+        onClick={() => {
+          if (window.matchMedia("(min-width: 1024px)").matches) onToggleCollapse?.();
+        }}
+        aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+        aria-expanded={!collapsed}
+        title={collapsed ? "Expandir menu" : "Recolher menu"}
+        className={`flex items-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-white/70 lg:cursor-pointer
+          ${collapsed ? "justify-center px-0 py-2 mb-5" : "justify-center gap-1.5 px-5 py-2.5 mb-6 -translate-x-[3.8px]"}`}
+      >
+        <Image src="/logo-automax.png" alt="" width={45} height={30} className="shrink-0" priority />
         {!collapsed && (
           <div className="leading-tight min-w-0">
-            <div className="font-extrabold text-[15px] text-white">AutomaX</div>
+            <div className="text-[11px] font-normal uppercase tracking-[0.18em] text-white" style={{ fontFamily: "var(--font-brand), var(--font-sans), sans-serif" }}>AutomaX</div>
           </div>
         )}
-      </div>
+      </button>
 
 
       <nav className="flex flex-col" aria-label="Seções">
@@ -436,38 +449,6 @@ export function Sidebar({
       </nav>
 
       <div className="mt-auto flex flex-col gap-2 pt-3">
-        {onToggleCollapse && (
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
-            aria-expanded={!collapsed}
-            title={collapsed ? "Expandir menu" : "Recolher menu"}
-            className={`hidden lg:flex items-center rounded-lg text-xs font-semibold text-sidebar-muted
-              hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer outline-none
-              focus-visible:ring-2 focus-visible:ring-white/70 min-h-[44px]
-              ${collapsed ? "justify-center px-0" : "gap-2 px-2.5"}`}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-              className={`shrink-0 transition-transform duration-200 motion-reduce:transition-none ${collapsed ? "rotate-180" : ""}`}
-            >
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <line x1="9" y1="4" x2="9" y2="20" />
-              <polyline points="15 10 13 12 15 14" />
-            </svg>
-            {!collapsed && "Recolher menu"}
-          </button>
-        )}
-
         <div className={`rounded-xl bg-white/[0.05] border border-sidebar-border ${collapsed ? "p-2" : "p-3"}`}>
           {!collapsed && <div className="text-[10px] font-bold uppercase tracking-wider text-sidebar-muted mb-2">Workspace atual</div>}
           {collapsed ? workspaceCompact : workspaceSlot}

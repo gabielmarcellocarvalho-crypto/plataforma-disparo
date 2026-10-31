@@ -11,7 +11,7 @@ type MemberDraft = { name: string; role: string; branchId: string; phone: string
 const EMPTY_BRANCH: BranchDraft = { name: "", city: "", phone: "" };
 const EMPTY_MEMBER: MemberDraft = { name: "", role: "", branchId: "", phone: "", email: "", active: true };
 
-export function TeamManager({ branches: initialBranches, members: initialMembers }: { branches: BranchRow[]; members: TeamMemberRow[] }) {
+export function TeamManager({ branches: initialBranches, members: initialMembers, view }: { branches: BranchRow[]; members: TeamMemberRow[]; view: "pessoas" | "filiais" | null }) {
   const [branches, setBranches] = useState(initialBranches);
   const [members, setMembers] = useState(initialMembers);
   const [error, setError] = useState<string | null>(null);
@@ -19,6 +19,8 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
 
   const [branchDraft, setBranchDraft] = useState<BranchDraft>(EMPTY_BRANCH);
   const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [branchFormOpen, setBranchFormOpen] = useState(false);
+  const [memberFormOpen, setMemberFormOpen] = useState(false);
 
   const [memberDraft, setMemberDraft] = useState<MemberDraft>(EMPTY_MEMBER);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
@@ -58,6 +60,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
       );
       setBranchDraft(EMPTY_BRANCH);
       setEditingBranchId(null);
+      setBranchFormOpen(false);
     });
   }
 
@@ -97,6 +100,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
       setMembers((prev) => (id ? prev.map((m) => (m.id === id ? row : m)) : [...prev, row]));
       setMemberDraft(EMPTY_MEMBER);
       setEditingMemberId(null);
+      setMemberFormOpen(false);
     });
   }
 
@@ -116,13 +120,18 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
     <div className="flex flex-col gap-6">
       {error && <p className="text-sm text-danger font-medium">{error}</p>}
 
-      <section className="bg-surface border border-border rounded-xl shadow-sm p-4 flex flex-col gap-3">
-        <div>
-          <h2 className="text-sm font-bold">Filiais</h2>
-          <p className="text-xs text-text-muted mt-0.5">
+      <section className={`bg-surface border border-border rounded-xl shadow-sm p-5 flex flex-col gap-4 ${view === "filiais" ? "" : "hidden"}`}>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <p className="text-xs text-text-muted max-w-xl">
             Onde o lead é atendido. Remover uma filial não apaga lead nem pessoa — os dois só ficam sem filial.
           </p>
+          {!branchFormOpen && !editingBranchId && (
+            <button type="button" onClick={() => setBranchFormOpen(true)} className="bg-primary-strong text-white text-xs font-bold px-3.5 py-2 rounded-md cursor-pointer">
+              + Filial
+            </button>
+          )}
         </div>
+        {branches.length === 0 && !branchFormOpen && <p className="text-sm text-text-muted py-4 text-center">Nenhuma filial cadastrada ainda.</p>}
 
         {branches.length > 0 && (
           <div className="flex flex-col gap-1.5">
@@ -140,6 +149,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
                   type="button"
                   onClick={() => {
                     setEditingBranchId(b.id);
+                    setBranchFormOpen(true);
                     setBranchDraft({ name: b.name, city: b.city || "", phone: b.phone || "" });
                   }}
                   className="text-[11px] font-bold text-primary-strong hover:underline cursor-pointer shrink-0"
@@ -159,7 +169,8 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
           </div>
         )}
 
-        <div className="flex flex-wrap items-end gap-2.5 border-t border-border pt-3">
+        {(branchFormOpen || editingBranchId) && (
+        <div className="flex flex-wrap items-end gap-2.5 rounded-lg border border-border bg-surface-2 p-3">
           <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
             <label className="text-xs font-semibold text-text-muted">Nome da filial</label>
             <input value={branchDraft.name} onChange={(e) => setBranchDraft({ ...branchDraft, name: e.target.value })} placeholder="ex.: Matriz, Filial Centro" className={INPUT} />
@@ -178,7 +189,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
             disabled={pending || !branchDraft.name.trim()}
             className="bg-primary-strong text-white text-xs font-bold px-3.5 py-2.5 rounded-md cursor-pointer disabled:opacity-60"
           >
-            {editingBranchId ? "Salvar filial" : "+ Filial"}
+            {editingBranchId ? "Salvar filial" : "Adicionar filial"}
           </button>
           {editingBranchId && (
             <button
@@ -186,24 +197,28 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
               onClick={() => {
                 setEditingBranchId(null);
                 setBranchDraft(EMPTY_BRANCH);
+                setBranchFormOpen(false);
               }}
               className="text-xs font-semibold text-text-muted hover:text-text cursor-pointer px-2 py-2.5"
             >
               Cancelar
             </button>
           )}
+          {!editingBranchId && (
+            <button type="button" onClick={() => { setBranchDraft(EMPTY_BRANCH); setBranchFormOpen(false); }} className="text-xs font-semibold text-text-muted hover:text-text cursor-pointer px-2 py-2.5">
+              Cancelar
+            </button>
+          )}
         </div>
+        )}
       </section>
 
-      <section className="bg-surface border border-border rounded-xl shadow-sm p-4 flex flex-col gap-3">
+      <section className={`bg-surface border border-border rounded-xl shadow-sm p-5 flex flex-col gap-4 ${view === "pessoas" ? "" : "hidden"}`}>
         <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-sm font-bold">Pessoas</h2>
-            <p className="text-xs text-text-muted mt-0.5">
-              Quem pode ficar responsável por um lead. Não é conta de acesso — cadastrar alguém aqui não cria login
-              nem dá acesso à plataforma.
-            </p>
-          </div>
+          <p className="text-xs text-text-muted max-w-xl">
+            Quem pode ficar responsável por um lead. Não é conta de acesso — cadastrar alguém aqui não cria login
+            nem dá acesso à plataforma.
+          </p>
           <div className="flex items-center gap-2.5">
             {branches.length > 0 && (
               <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className={`${INPUT} cursor-pointer`}>
@@ -220,6 +235,11 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
               <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="cursor-pointer accent-[var(--color-primary-strong)]" />
               mostrar inativos
             </label>
+            {!memberFormOpen && !editingMemberId && (
+              <button type="button" onClick={() => setMemberFormOpen(true)} className="bg-primary-strong text-white text-xs font-bold px-3.5 py-2 rounded-md cursor-pointer">
+                + Pessoa
+              </button>
+            )}
           </div>
         </div>
 
@@ -254,6 +274,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
                         type="button"
                         onClick={() => {
                           setEditingMemberId(m.id);
+                          setMemberFormOpen(true);
                           setMemberDraft({
                             name: m.name,
                             role: m.role || "",
@@ -283,7 +304,8 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
           </div>
         )}
 
-        <div className="flex flex-wrap items-end gap-2.5 border-t border-border pt-3">
+        {(memberFormOpen || editingMemberId) && (
+        <div className="flex flex-wrap items-end gap-2.5 rounded-lg border border-border bg-surface-2 p-3">
           <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
             <label className="text-xs font-semibold text-text-muted">Nome</label>
             <input value={memberDraft.name} onChange={(e) => setMemberDraft({ ...memberDraft, name: e.target.value })} className={INPUT} />
@@ -326,7 +348,7 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
             disabled={pending || !memberDraft.name.trim()}
             className="bg-primary-strong text-white text-xs font-bold px-3.5 py-2.5 rounded-md cursor-pointer disabled:opacity-60"
           >
-            {editingMemberId ? "Salvar pessoa" : "+ Pessoa"}
+            {editingMemberId ? "Salvar pessoa" : "Adicionar pessoa"}
           </button>
           {editingMemberId && (
             <button
@@ -334,13 +356,20 @@ export function TeamManager({ branches: initialBranches, members: initialMembers
               onClick={() => {
                 setEditingMemberId(null);
                 setMemberDraft(EMPTY_MEMBER);
+                setMemberFormOpen(false);
               }}
               className="text-xs font-semibold text-text-muted hover:text-text cursor-pointer px-2 py-2.5"
             >
               Cancelar
             </button>
           )}
+          {!editingMemberId && (
+            <button type="button" onClick={() => { setMemberDraft(EMPTY_MEMBER); setMemberFormOpen(false); }} className="text-xs font-semibold text-text-muted hover:text-text cursor-pointer px-2 py-2.5">
+              Cancelar
+            </button>
+          )}
         </div>
+        )}
       </section>
     </div>
   );

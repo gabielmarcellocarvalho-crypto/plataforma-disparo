@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace, assertPageAccess } from "@/lib/workspace";
 import { resolveStageLabels, resolveHiddenStages, getVisibleStages } from "@/lib/crm-stages";
 import { listWorkspaceTags } from "@/app/actions/contacts";
+import { listPipelines } from "@/app/actions/pipelines";
+import { sortStages } from "@/lib/pipelines";
 import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { CreateCampaignForm } from "@/components/create-campaign-form";
 import { CampaignRowActions } from "@/components/campaign-row-actions";
@@ -49,7 +51,14 @@ export default async function CampanhasPage() {
   // segmentação da campanha reflete na hora, sem precisar duplicar configuração.
   const stageLabels = resolveStageLabels(workspaceRow?.crm_stage_labels);
   const visibleStages = getVisibleStages(resolveHiddenStages(workspaceRow?.crm_hidden_stages));
-  const stageOptions = visibleStages.map((s) => ({ value: s, label: stageLabels[s] }));
+  // Com funil próprio, as fases do filtro são as colunas do Pipeline do cliente (o valor é o id da etapa);
+  // sem funil, continuam os sinais padrão com os rótulos do CRM.
+  const pipelines = workspace ? await listPipelines() : [];
+  const funilPadrao = pipelines.find((p) => p.is_default) ?? pipelines[0];
+  const stageOptions =
+    funilPadrao && funilPadrao.stages.length > 0
+      ? sortStages(funilPadrao.stages).map((e) => ({ value: e.id, label: e.name }))
+      : visibleStages.map((s) => ({ value: s, label: stageLabels[s] }));
 
   const counts: Record<string, { pendente: number; enviado: number; falhou: number }> = {};
   const deliveryCounts: Record<string, { delivered: number; read: number }> = {};
@@ -117,13 +126,7 @@ export default async function CampanhasPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Campanhas</h1>
-          <p className="text-text-muted text-sm mt-1">
-            Disparo de WhatsApp e e-mail em massa — mensagem fixa (disparo simples) ou conduzido por um agente de IA.
-          </p>
-        </div>
+      <div className="flex items-end justify-end flex-wrap gap-3">
         <CreateCampaignForm
           agents={agents || []}
           whatsappInstances={(whatsappInstances || []).map((i) => ({ id: i.id, channel: i.channel as WhatsappChannel, department: i.department }))}

@@ -67,6 +67,11 @@ export function AddTaskForm({ workspaceId, responsibles }: { workspaceId: string
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <label htmlFor="description" className="text-sm font-semibold">Descrição (opcional)</label>
+            <textarea id="description" name="description" rows={3} maxLength={2000} placeholder="Detalhes, contexto ou o que precisa ser feito…" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary resize-y" />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <label htmlFor="dueAt" className="text-sm font-semibold">Data de vencimento</label>
             <input id="dueAt" name="dueAt" type="date" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
           </div>

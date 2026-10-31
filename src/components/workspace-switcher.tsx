@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
+import { AutomaxLoader } from "@/components/page-loading";
 import { setActiveWorkspace, deleteWorkspace } from "@/app/actions/workspace";
 import type { WorkspaceSummary } from "@/lib/workspace";
 
@@ -87,6 +89,7 @@ export function WorkspaceSwitcher({
 
   function handleDelete(id: string) {
     setError(null);
+    setSwitchingName(null);
     startTransition(async () => {
       const result = await deleteWorkspace(id);
       if (result.error) setError(result.error);
@@ -180,14 +183,20 @@ export function WorkspaceSwitcher({
         </div>
       )}
 
-      {switchingName && (
-        <div className="fixed inset-0 z-[100] grid place-items-center bg-sidebar/95 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-3">
-            <span className="w-10 h-10 rounded-full border-[3px] border-white/20 border-t-white animate-spin" aria-hidden />
-            <p className="text-white text-sm font-bold">Trocando pra {switchingName}…</p>
-          </div>
-        </div>
-      )}
+      {/* Portal no body: a sidebar tem transform, e dentro de um ancestral com transform o `fixed`
+          vira relativo a ele — o overlay cobria só o menu em vez da tela inteira. Some quando a
+          transição termina (pending), pra não ficar preso depois do redirect. */}
+      {pending &&
+        switchingName &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] grid place-items-center bg-bg">
+            <div className="flex flex-col items-center gap-4">
+              <AutomaxLoader width={120} />
+              <p className="text-text-muted text-sm font-semibold">Trocando pra {switchingName}…</p>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

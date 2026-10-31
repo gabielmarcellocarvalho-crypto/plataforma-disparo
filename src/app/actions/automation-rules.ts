@@ -3,15 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
-import { isAutomationRuleType, type AutomationRuleType } from "@/lib/automation-rules";
+import { AUTOMATION_RULE_TYPES, isAutomationRuleType, type AutomationRuleType } from "@/lib/automation-rules";
 
 export type ActionResult = { error: string | null; ok?: boolean };
 export type AutomationRule = { type: AutomationRuleType; enabled: boolean; days_threshold: number };
 
 const DEFAULT_DAYS_THRESHOLD = 3;
-const RULE_TYPES: AutomationRuleType[] = ["contact_stale"];
+const RULE_TYPES: AutomationRuleType[] = AUTOMATION_RULE_TYPES;
 
-// Sempre retorna as 2 regras, com default (desligada, 3 dias) pros tipos sem linha ainda no banco —
+// Sempre retorna todas as regras, com default (desligada, 3 dias) pros tipos sem linha ainda no banco —
 // a UI não precisa tratar "regra inexistente" como caso especial.
 export async function getAutomationRules(workspaceId: string): Promise<AutomationRule[]> {
   const { workspace } = await getCurrentWorkspace();

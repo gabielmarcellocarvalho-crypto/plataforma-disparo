@@ -119,7 +119,7 @@ export function OverviewInsightsBox({
 
       {activeTab === "volume" ? (
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-3 min-[1700px]:grid-cols-6 gap-3">
             <Tile label="Leads recebidos" value={volume.leadsRecebidos} delta={deltas.leadsRecebidos} />
             <Tile label="Leads abordados" value={volume.leadsAbordados} delta={deltas.leadsAbordados} />
             <Tile label="Mensagens enviadas" value={volume.mensagensEnviadas} delta={deltas.mensagensEnviadas} />
@@ -134,7 +134,7 @@ export function OverviewInsightsBox({
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className={`grid grid-cols-2 sm:grid-cols-3 ${conversion.showFechamento ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-3`}>
+          <div className={`grid grid-cols-2 sm:grid-cols-3 ${conversion.showFechamento ? "lg:grid-cols-7 xl:grid-cols-4 min-[1700px]:grid-cols-7" : "lg:grid-cols-6 xl:grid-cols-3 min-[1700px]:grid-cols-6"} gap-3`}>
             <Tile label="Taxa de resposta" value={fmtPct(conversion.taxaResposta)} />
             <Tile label="Taxa de interesse" value={fmtPct(conversion.taxaInteresse)} />
             <Tile label="Taxa de qualificação" value={fmtPct(conversion.taxaQualificacao)} />

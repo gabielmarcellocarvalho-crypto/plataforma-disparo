@@ -6,7 +6,8 @@
 // precisam varrer linha a linha (ex.: "primeira mensagem por contato", pra contar conversas
 // iniciadas) param em MAX_ROWS — é um teto alto, mas não é ilimitado.
 import { createClient } from "@/lib/supabase/server";
-import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, type ContactStage } from "@/lib/crm-stages";
+import { resolveHiddenStages, getVisibleStages, displayStageFor, resolveStageLabels, isContactStage, STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { buildPipelineFunnel, stageForSignal, type PipelineStage } from "@/lib/pipelines";
 import type { Range } from "@/lib/cost-monitor";
 import { dayKeyBrt } from "@/lib/period";
 
@@ -575,4 +576,46 @@ export async function getLeadSources(workspaceId: string, range: Range): Promise
 
 export async function getMessagesByDay(workspaceId: string, range: Range): Promise<Record<string, number>> {
   return (await sqlMessagesByDay(workspaceId, range)) ?? legacyMessagesByDay(workspaceId, range);
+}
+
+// Funil com as etapas do próprio cliente (as colunas do Pipeline dele). Devolve null quando o workspace
+// não tem funil personalizado — aí vale o funil padrão pelos sinais, cortado no fim do plano.
+// Lead que nunca foi movido (pipeline_stage_id nulo) aparece na etapa do sinal dele, como no Pipeline.
+export async function pipelineFunnelData(
+  workspaceId: string,
+  range: Range,
+  client?: unknown
+): Promise<{ points: FunnelPoint[]; descartados: number } | null> {
+  const supabase = await clientOf(client);
+  const { data: funil } = await supabase.from("pipelines").select("id").eq("workspace_id", workspaceId).order("is_default", { ascending: false }).order("position").limit(1).maybeSingle();
+  if (!funil) return null;
+  const { data: rows } = await supabase.from("pipeline_stages").select("id, pipeline_id, name, signal, position").eq("pipeline_id", funil.id).order("position");
+  const etapas: PipelineStage[] = (rows ?? []).map((e) => ({ id: e.id, pipeline_id: e.pipeline_id, name: e.name, signal: isContactStage(e.signal) ? e.signal : "abordado", position: e.position }));
+  if (etapas.length === 0) return null;
+
+  const from = range.from.toISOString();
+  const to = range.to.toISOString();
+  const base = () => supabase.from("contacts").select("id", { count: "exact", head: true }).eq("workspace_id", workspaceId).gte("created_at", from).lte("created_at", to);
+  const counts: Record<string, number> = {};
+  await Promise.all([
+    ...etapas.map(async (e) => {
+      const { count } = await base().eq("pipeline_stage_id", e.id);
+      counts[e.id] = (counts[e.id] ?? 0) + (count ?? 0);
+    }),
+    ...STAGE_ORDER.map(async (signal) => {
+      const { count } = await base().is("pipeline_stage_id", null).eq("stage", signal);
+      const destino = stageForSignal(signal, etapas);
+      if (destino) counts[destino.id] = (counts[destino.id] ?? 0) + (count ?? 0);
+    }),
+  ]);
+  return buildPipelineFunnel(etapas, counts);
+}
+
+// Funil da Visão geral: o do cliente quando ele tem etapas próprias, senão o padrão do plano.
+export async function getOverviewFunnel(
+  workspaceId: string,
+  range: Range,
+  funnelEnd: ContactStage = "concluido"
+): Promise<{ points: FunnelPoint[]; descartados: number }> {
+  return (await pipelineFunnelData(workspaceId, range)) ?? getFunnelData(workspaceId, range, funnelEnd);
 }

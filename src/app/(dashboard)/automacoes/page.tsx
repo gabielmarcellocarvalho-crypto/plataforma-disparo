@@ -40,13 +40,6 @@ export default async function AutomacoesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Automações</h1>
-        <p className="text-text-muted text-sm mt-1">
-          Workflows disparados por gatilho do CRM, e a regra simples de contato parado.
-        </p>
-      </div>
-
       <WorkflowList workflows={workflows} members={members} stageNames={stageNames} />
 
       <div className="flex flex-col gap-2 border-t border-border pt-6">

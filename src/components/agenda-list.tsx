@@ -217,6 +217,7 @@ function TaskRow({
       />
       <div className="flex-1 min-w-0">
         <div className={`text-sm font-semibold truncate ${task.completed_at ? "line-through text-text-muted" : ""}`}>{task.title}</div>
+        {!fromAgent && task.description && <p className="text-xs text-text-muted mt-0.5 whitespace-pre-line line-clamp-3">{task.description}</p>}
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {task.due_at && (
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${overdue ? "bg-danger-soft text-danger" : "bg-surface-2 text-text-muted"}`}>
@@ -332,12 +333,12 @@ export function AgendaList({
                 key={k}
                 type="button"
                 onClick={() => setTab(k)}
-                className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-3 text-sm font-semibold whitespace-nowrap cursor-pointer ${
+                className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-4 text-base font-semibold whitespace-nowrap cursor-pointer ${
                   tab === k ? "border-primary-strong text-text" : "border-transparent text-text-muted hover:text-text"
                 }`}
               >
                 {label}
-                <span className={`text-[11px] font-bold px-1.5 rounded-full ${tone}`}>{tabItems(k).length}</span>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tone}`}>{tabItems(k).length}</span>
               </button>
             ))}
           </nav>
