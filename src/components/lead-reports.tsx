@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Clock, Trophy, UserPlus } from "lucide-react";
+import { SparkStatCard } from "@/components/ui/spark-stat-card";
 import type { Breakdown, LeadReports, Slice } from "@/lib/lead-reports";
 
 const TOPO = 8; // quantas linhas aparecem antes do "ver todos" — cidade tem 76, ninguém lê 76 barras
@@ -88,6 +90,7 @@ export function LeadReportsSection({ reports, periodLabel }: { reports: LeadRepo
 
   const cards: Breakdown[] = [
     ...(reports.porResponsavel ? [reports.porResponsavel] : []),
+    ...(reports.porTag ? [reports.porTag] : []),
     ...(reports.porFilial ? [reports.porFilial] : []),
     ...reports.porCampo,
     ...(reports.porMotivoPerda ? [reports.porMotivoPerda] : []),
@@ -120,6 +123,68 @@ export function LeadReportsSection({ reports, periodLabel }: { reports: LeadRepo
           </span>
         </div>
       </div>
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        <SparkStatCard
+          title="Leads por dia"
+          icon={<UserPlus size={20} />}
+          value={reports.total.toLocaleString("pt-BR")}
+          caption={periodLabel}
+          series={reports.porDia.labels.map((label, i) => ({ label, value: reports.porDia.leads[i] }))}
+          color="var(--color-primary)"
+        />
+        <SparkStatCard
+          title="Ganhos por dia"
+          icon={<Trophy size={20} />}
+          value={reports.ganhos.toLocaleString("pt-BR")}
+          caption={periodLabel}
+          series={reports.porDia.labels.map((label, i) => ({ label, value: reports.porDia.ganhos[i] }))}
+          color="var(--color-success)"
+        />
+        <div className="bg-surface border border-border rounded-lg shadow-sm p-4 flex flex-col justify-between gap-3">
+          <div className="flex items-center gap-2" style={{ color: "var(--color-info-text)" }}>
+            <Clock size={20} aria-hidden />
+            <h3 className="text-sm font-semibold text-text">Tempo até fechar</h3>
+          </div>
+          <div>
+            <b className="text-[26px] font-extrabold tracking-tight leading-none tabular-nums">
+              {reports.tempoMedioFechamentoDias === null ? "—" : `${reports.tempoMedioFechamentoDias.toFixed(1).replace(".", ",")} dias`}
+            </b>
+            <p className="text-xs text-text-muted mt-1">média entre o lead entrar e virar ganho</p>
+          </div>
+        </div>
+      </div>
+
+      {reports.desempenhoResponsavel.length > 0 && (
+        <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">
+          <h3 className="font-bold text-[15px] mb-1">Desempenho por responsável</h3>
+          <p className="text-xs text-text-muted mb-3">Taxa de ganho sobre o que já foi decidido (ganho + perdido).</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-text-muted text-xs font-bold uppercase">
+                  <th className="px-3 py-2">Pessoa</th>
+                  <th className="px-3 py-2 text-right">Leads</th>
+                  <th className="px-3 py-2 text-right">Ganhos</th>
+                  <th className="px-3 py-2 text-right">Perdidos</th>
+                  <th className="px-3 py-2 text-right">Taxa de ganho</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.desempenhoResponsavel.map((r) => (
+                  <tr key={r.nome} className="border-b border-border last:border-0">
+                    <td className="px-3 py-2.5 font-semibold">{r.nome}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{r.leads}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-bold text-success">{r.ganhos}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-danger">{r.perdidos}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-bold">{r.taxaPct === null ? "—" : `${r.taxaPct.toFixed(0)}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {reports.porMes.length > 1 && (
         <div className="bg-surface border border-border rounded-2xl p-5 shadow-sm">

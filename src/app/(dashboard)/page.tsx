@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { PeriodFilterBar } from "@/components/period-filter-bar";
 import { OverviewInsightsBox } from "@/components/overview-insights-box";
-import { getMonthToDateAgentCostUsd, evalCostBudget } from "@/lib/cost-monitor";
+import { getMonthToDateAgentCostUsd, evalCostBudget, COST_USD_TO_BRL } from "@/lib/cost-monitor";
 import { getVolumeMetrics, getConversionMetrics, getOverviewFunnel, getResponseMetrics, getLeadSources, getEmailClickMetrics, getMessagesByDay } from "@/lib/overview-metrics";
 import { resolvePeriod, eachDayBrt } from "@/lib/period";
 import { resolveWorkspacePlan, planFunnelEnd, planLabel, planHasConversion } from "@/lib/workspace-plan";
@@ -15,7 +15,10 @@ import { hasRedesignColumns } from "@/lib/redesign-columns";
 import { normalizeInsights } from "@/lib/ai-insights";
 import { AiInsightsCard } from "@/components/ai-insights-card";
 import { DonutChart } from "@/components/charts/donut-chart";
-import { AlertTriangle, ArrowRight, CalendarCheck, MessageSquare, UserPlus } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarCheck, CircleDollarSign, Clock, Inbox, MessageSquareWarning, Megaphone, Send, Trophy, UserPlus } from "lucide-react";
+import { SparkStatCard } from "@/components/ui/spark-stat-card";
+import { LeadsByTagCard, TagFilterSelect } from "@/components/overview-tags";
+import { getOverviewLeads, getTagMessagesByDay } from "@/lib/overview-leads";
 
 // Atalho do "Seu dia" (estilo home do HubSpot): ícone, número e o que fazer com ele.
 function TodayTile({ href, icon, value, label, tone }: { href: string; icon: React.ReactNode; value: React.ReactNode; label: string; tone: "info" | "primary" | "danger" | "success" }) {
@@ -80,6 +83,13 @@ function FunnelBars({ rows }: { rows: { label: string; value: number; current: n
   );
 }
 
+function fmtMinutes(v: number | null) {
+  if (v === null) return "—";
+  if (v < 60) return `${v.toFixed(v < 10 ? 1 : 0).replace(".", ",")} min`;
+  const h = Math.floor(v / 60);
+  return h < 48 ? `${h} h` : `${Math.floor(h / 24)} d`;
+}
+
 function fmtDue(iso: string | null) {
   if (!iso) return "sem data";
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
@@ -88,7 +98,7 @@ function fmtDue(iso: string | null) {
 export default async function OverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ preset?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ preset?: string; from?: string; to?: string; tag?: string }>;
 }) {
   const sp = await searchParams;
   const period = resolvePeriod(sp);
@@ -142,11 +152,28 @@ export default async function OverviewPage({
   const days = eachDayBrt(period.from, period.to);
   const msgByDay = new Map(days.map((d) => [d, msgByDayRaw[d] || 0]));
   const receivedByDay = workspace ? await getReceivedByDay(workspace.id, period) : {};
-  const chartData = days.map((d) => ({ date: `${d}T12:00:00.000Z`, mensagens: msgByDay.get(d) || 0, recebidas: receivedByDay[d] || 0 }));
+  const activeTag = sp.tag?.trim() || null;
+  const [leadsSeries, { data: tagRows }, tagMessages] = workspace
+    ? await Promise.all([
+        getOverviewLeads(workspace.id, period, days, activeTag),
+        supabase.rpc("workspace_tags", { ws_id: workspace.id }),
+        activeTag ? getTagMessagesByDay(workspace.id, period, days, activeTag) : Promise.resolve(null),
+      ])
+    : [null, { data: null }, null];
+  // Com tag escolhida, as mensagens (cards e gráfico) passam a ser só das conversas dessa tag.
+  const sentSeries = tagMessages ? tagMessages.sent : days.map((d) => msgByDay.get(d) || 0);
+  const receivedSeries = tagMessages ? tagMessages.received : days.map((d) => receivedByDay[d] || 0);
+  const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+  const allTags = ((tagRows ?? []) as { tag: string }[]).map((t) => t.tag);
+  const dayLabels = days.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`);
+  const toSeries = (values: number[]) => values.map((value, i) => ({ label: dayLabels[i], value }));
+  const chartData = days.map((d, i) => ({ date: `${d}T12:00:00.000Z`, mensagens: sentSeries[i], recebidas: receivedSeries[i] }));
 
   // Alerta de custo — só pra colaborador (cliente nunca vê custo/margem) e só se houver orçamento definido.
   // Continua sempre "mês corrente", independente do período escolhido no filtro: orçamento é mensal por natureza.
   let costAlert: { ratioPct: number; costBrl: number; budgetBrl: number } | null = null;
+  // Custo de IA do mês corrente em R$ — só colaborador vê (cliente nunca vê custo/margem).
+  let monthCostBrl: number | null = null;
   let attentionAlerts: Awaited<ReturnType<typeof getAttentionAlerts>> = [];
   if (workspace && isStaff) {
     const { data: budgetRow } = await supabase
@@ -154,8 +181,9 @@ export default async function OverviewPage({
       .select("monthly_cost_budget_brl, cost_alert_pct")
       .eq("id", workspace.id)
       .maybeSingle();
+    const costUsd = await getMonthToDateAgentCostUsd(supabase, workspace.id);
+    monthCostBrl = costUsd * COST_USD_TO_BRL;
     if (budgetRow?.monthly_cost_budget_brl) {
-      const costUsd = await getMonthToDateAgentCostUsd(supabase, workspace.id);
       const status = evalCostBudget(costUsd, budgetRow.monthly_cost_budget_brl, budgetRow.cost_alert_pct ?? 80);
       if (status.isOver && status.ratioPct !== null && status.budgetBrl !== null) {
         costAlert = { ratioPct: status.ratioPct, costBrl: status.costBrl, budgetBrl: status.budgetBrl };
@@ -249,15 +277,70 @@ export default async function OverviewPage({
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 flex-1 min-w-0 w-full">
             <TodayTile href="/agenda" icon={<CalendarCheck size={18} />} value={myDay.tasksPending} label="tarefas pendentes" tone="info" />
             <TodayTile href="/conversas" icon={<AlertTriangle size={18} />} value={myDay.attention} label="precisam de você" tone="danger" />
-            <TodayTile href="/crm" icon={<UserPlus size={18} />} value={volume.leadsRecebidos.toLocaleString("pt-BR")} label={`leads recebidos · ${period.label}`} tone="primary" />
-            <TodayTile href="/conversas" icon={<MessageSquare size={18} />} value={volume.conversasEmAndamento.toLocaleString("pt-BR")} label="conversas em andamento" tone="success" />
+            {monthCostBrl !== null ? (
+              <TodayTile
+                href="/metricas?aba=custos"
+                icon={<CircleDollarSign size={18} />}
+                value={`R$ ${monthCostBrl.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                label="custo de IA no mês"
+                tone="primary"
+              />
+            ) : (
+              <TodayTile href="/conversas" icon={<MessageSquareWarning size={18} />} value={response.conversasNaoRespondidas.toLocaleString("pt-BR")} label="sem resposta nossa" tone="primary" />
+            )}
+            {hasConversion ? (
+              <TodayTile href="/metricas?aba=atendimento" icon={<Clock size={18} />} value={fmtMinutes(response.tempoMedioRespostaMin)} label="tempo médio de resposta" tone="success" />
+            ) : (
+              <TodayTile href="/campanhas" icon={<Megaphone size={18} />} value={(campanhasAtivas ?? 0).toLocaleString("pt-BR")} label="campanhas ativas" tone="success" />
+            )}
           </div>
       )}
         <div className="flex items-center gap-2 flex-wrap xl:shrink-0 self-end xl:self-center">
           {isStaff && <AttentionCenterCard alerts={attentionAlerts} />}
+          <TagFilterSelect tags={allTags} active={activeTag} />
           <PeriodFilterBar activePreset={period.preset} from={sp.from ?? ""} to={sp.to ?? ""} align="end" />
         </div>
       </div>
+
+      {leadsSeries && (
+        <section aria-label="Indicadores do período" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SparkStatCard
+            title={activeTag ? `Leads · ${activeTag}` : "Leads recebidos"}
+            icon={<UserPlus size={20} />}
+            value={leadsSeries.totalLeads.toLocaleString("pt-BR")}
+            caption={period.label}
+            delta={activeTag ? null : deltas.leadsRecebidos}
+            series={toSeries(leadsSeries.leadsByDay)}
+            color="var(--color-primary)"
+          />
+          <SparkStatCard
+            title={activeTag ? `Ganhos · ${activeTag}` : "Vendas ganhas"}
+            icon={<Trophy size={20} />}
+            value={leadsSeries.totalWon.toLocaleString("pt-BR")}
+            caption={period.label}
+            series={toSeries(leadsSeries.wonByDay)}
+            color="var(--color-success)"
+          />
+          <SparkStatCard
+            title="Mensagens enviadas"
+            icon={<Send size={20} />}
+            value={(activeTag ? sum(sentSeries) : volume.mensagensEnviadas).toLocaleString("pt-BR")}
+            caption={period.label}
+            delta={activeTag ? null : deltas.mensagensEnviadas}
+            series={toSeries(sentSeries)}
+            color="var(--color-chart-2)"
+          />
+          <SparkStatCard
+            title="Mensagens recebidas"
+            icon={<Inbox size={20} />}
+            value={(activeTag ? sum(receivedSeries) : volume.mensagensRecebidas).toLocaleString("pt-BR")}
+            caption={period.label}
+            delta={activeTag ? null : deltas.mensagensRecebidas}
+            series={toSeries(receivedSeries)}
+            color="var(--color-info-text)"
+          />
+        </section>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_290px]">
         <OverviewInsightsBox
@@ -278,6 +361,7 @@ export default async function OverviewPage({
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2 items-start">
+        <div className="flex flex-col gap-5">
         {hasConversion ? (
           <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
             <CardHeader
@@ -314,6 +398,10 @@ export default async function OverviewPage({
             </div>
           </div>
         )}
+        {leadsSeries && (
+          <LeadsByTagCard tags={leadsSeries.tagCounts} untagged={leadsSeries.untagged} total={volume.leadsRecebidos} active={activeTag} periodLabel={period.label} />
+        )}
+        </div>
 
         <div className="flex flex-col gap-5">
           {hasConversion && attentionCard}

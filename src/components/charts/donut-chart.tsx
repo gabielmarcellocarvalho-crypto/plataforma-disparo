@@ -4,11 +4,11 @@
 // esperadas (origem é um campo livre), então não precisa da sofisticação do funnel-chart.
 import { useState } from "react";
 
-const PALETTE = ["var(--chart-line-primary)", "var(--chart-line-secondary)", "#F59E0B", "#8B5CF6", "#10B981", "#6E6A85"];
+const PALETTE = ["var(--chart-line-primary)", "var(--chart-line-secondary)", "#F59E0B", "#8B5CF6", "#10B981", "#6E6A85", "#EC4899", "#3B82F6", "#84CC16", "#14B8A6", "#A16207"];
 
 export type DonutSlice = { label: string; value: number };
 
-export function DonutChart({ data, size = 168, thickness = 22 }: { data: DonutSlice[]; size?: number; thickness?: number }) {
+export function DonutChart({ data, size = 168, thickness = 22, onSelect, selected }: { data: DonutSlice[]; size?: number; thickness?: number; onSelect?: (label: string) => void; selected?: string | null }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const total = data.reduce((sum, d) => sum + d.value, 0);
   if (total === 0) return null;
@@ -45,7 +45,8 @@ export function DonutChart({ data, size = 168, thickness = 22 }: { data: DonutSl
               strokeWidth={thickness}
               strokeDasharray={a.dashArray}
               strokeDashoffset={a.dashOffset}
-              opacity={hovered === null || hovered === a.i ? 1 : 0.35}
+              opacity={(selected ? selected === a.label : hovered === null || hovered === a.i) ? 1 : 0.35}
+              onClick={() => onSelect?.(a.label)}
               onMouseEnter={() => setHovered(a.i)}
               onMouseLeave={() => setHovered(null)}
               className="transition-opacity cursor-pointer"
@@ -65,7 +66,8 @@ export function DonutChart({ data, size = 168, thickness = 22 }: { data: DonutSl
             key={a.label}
             onMouseEnter={() => setHovered(a.i)}
             onMouseLeave={() => setHovered(null)}
-            className={`flex items-center gap-2 text-xs cursor-pointer transition-opacity ${hovered !== null && hovered !== a.i ? "opacity-40" : ""}`}
+            onClick={() => onSelect?.(a.label)}
+            className={`flex items-center gap-2 text-xs cursor-pointer transition-opacity ${(selected ? selected !== a.label : hovered !== null && hovered !== a.i) ? "opacity-40" : ""}`}
           >
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: a.color }} aria-hidden />
             <span className="text-text truncate max-w-[140px]">{a.label}</span>

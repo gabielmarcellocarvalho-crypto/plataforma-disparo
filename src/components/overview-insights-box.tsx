@@ -119,11 +119,8 @@ export function OverviewInsightsBox({
 
       {activeTab === "volume" ? (
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-3 min-[1700px]:grid-cols-6 gap-3">
-            <Tile label="Leads recebidos" value={volume.leadsRecebidos} delta={deltas.leadsRecebidos} />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Tile label="Leads abordados" value={volume.leadsAbordados} delta={deltas.leadsAbordados} />
-            <Tile label="Mensagens enviadas" value={volume.mensagensEnviadas} delta={deltas.mensagensEnviadas} />
-            <Tile label="Mensagens recebidas" value={volume.mensagensRecebidas} delta={deltas.mensagensRecebidas} />
             <Tile label="Conversas iniciadas" value={volume.conversasIniciadas} delta={deltas.conversasIniciadas} />
             <Tile label="Conversas em andamento" value={volume.conversasEmAndamento} />
           </div>

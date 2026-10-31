@@ -7,6 +7,7 @@
 // sem ganho nenhum.
 import { createClient } from "@/lib/supabase/server";
 import { STAGE_ORDER, type ContactStage } from "@/lib/crm-stages";
+import { dayKeyBrt, eachDayBrt } from "@/lib/period";
 import { formatFieldValue, readMultiValue, type CustomFieldDef } from "@/lib/custom-fields";
 
 type Range = { from: Date; to: Date };
@@ -26,6 +27,12 @@ export type LeadReports = {
   porResponsavel: Breakdown | null;
   porMotivoPerda: Breakdown | null;
   porCampo: Breakdown[];
+  porTag: Breakdown | null;
+  // Média de dias entre o lead entrar e virar ganho (só os ganhos do recorte).
+  tempoMedioFechamentoDias: number | null;
+  porDia: { labels: string[]; leads: number[]; ganhos: number[] };
+  // Quem trouxe resultado: leads atribuídos, ganhos e taxa sobre o que já foi decidido.
+  desempenhoResponsavel: { nome: string; leads: number; ganhos: number; perdidos: number; taxaPct: number | null }[];
 };
 
 type Row = {
@@ -36,6 +43,8 @@ type Row = {
   branch_id: string | null;
   lost_reason: string | null;
   custom_fields: Record<string, unknown> | null;
+  stage_changed_at: string | null;
+  tags: string[] | null;
 };
 
 const PAGE_SIZE = 1000;
@@ -50,7 +59,7 @@ async function fetchAllPaged(supabase: Awaited<ReturnType<typeof createClient>>,
   while (all.length < MAX_ROWS) {
     const { data } = await supabase
       .from("contacts")
-      .select("id, stage, created_at, team_member_id, branch_id, lost_reason, custom_fields")
+      .select("id, stage, created_at, stage_changed_at, tags, team_member_id, branch_id, lost_reason, custom_fields")
       .eq("workspace_id", workspaceId)
       .gte("created_at", range.from.toISOString())
       .lte("created_at", range.to.toISOString())
@@ -99,6 +108,14 @@ export async function getLeadReports(
   const porResponsavel = new Map<string, number>();
   const porMotivo = new Map<string, number>();
   const porCampo = new Map<string, Map<string, number>>();
+  const porTag = new Map<string, number>();
+  const dias = eachDayBrt(range.from, range.to);
+  const diaIdx = new Map(dias.map((d, i) => [d, i]));
+  const leadsDia = dias.map(() => 0);
+  const ganhosDia = dias.map(() => 0);
+  let somaFechamentoMs = 0;
+  let nFechamento = 0;
+  const equipe = new Map<string, { leads: number; ganhos: number; perdidos: number }>();
 
   // Só campo de lista entra em relatório: texto livre gera uma categoria por lead e não agrega nada.
   const camposAgregaveis = opts.fieldDefs.filter((d) => d.type === "selecao" || d.type === "selecao_multipla");
@@ -120,6 +137,29 @@ export async function getLeadReports(
     if (r.team_member_id) {
       const nome = opts.teamNames.get(r.team_member_id);
       if (nome) porResponsavel.set(nome, (porResponsavel.get(nome) ?? 0) + 1);
+    }
+    for (const t of r.tags ?? []) porTag.set(t, (porTag.get(t) ?? 0) + 1);
+
+    const iLead = diaIdx.get(dayKeyBrt(r.created_at));
+    if (iLead !== undefined) leadsDia[iLead]++;
+    if (r.stage === "concluido" && r.stage_changed_at) {
+      const iGanho = diaIdx.get(dayKeyBrt(r.stage_changed_at));
+      if (iGanho !== undefined) ganhosDia[iGanho]++;
+      const ms = new Date(r.stage_changed_at).getTime() - new Date(r.created_at).getTime();
+      if (ms >= 0) {
+        somaFechamentoMs += ms;
+        nFechamento++;
+      }
+    }
+    if (r.team_member_id) {
+      const nome = opts.teamNames.get(r.team_member_id);
+      if (nome) {
+        const e = equipe.get(nome) ?? { leads: 0, ganhos: 0, perdidos: 0 };
+        e.leads++;
+        if (r.stage === "concluido") e.ganhos++;
+        if (r.stage === "descartado") e.perdidos++;
+        equipe.set(nome, e);
+      }
     }
     if (r.lost_reason) porMotivo.set(r.lost_reason, (porMotivo.get(r.lost_reason) ?? 0) + 1);
 
@@ -159,6 +199,12 @@ export async function getLeadReports(
     porFilial: breakdown("filial", "Filial", porFilial),
     porResponsavel: breakdown("responsavel", "Responsável", porResponsavel),
     porMotivoPerda: breakdown("motivo", "Motivo da perda", porMotivo),
+    porTag: breakdown("tag", "Tag", porTag),
+    tempoMedioFechamentoDias: nFechamento > 0 ? somaFechamentoMs / nFechamento / 86_400_000 : null,
+    porDia: { labels: dias.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`), leads: leadsDia, ganhos: ganhosDia },
+    desempenhoResponsavel: [...equipe.entries()]
+      .map(([nome, e]) => ({ nome, ...e, taxaPct: e.ganhos + e.perdidos > 0 ? (e.ganhos / (e.ganhos + e.perdidos)) * 100 : null }))
+      .sort((a, b) => b.ganhos - a.ganhos || b.leads - a.leads),
     porCampo: camposAgregaveis
       .map((def) => breakdown(def.key, def.label, porCampo.get(def.key)!))
       .filter((b): b is Breakdown => b !== null),

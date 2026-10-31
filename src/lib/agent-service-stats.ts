@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { dayKeyBrt, eachDayBrt } from "@/lib/period";
 
 type Range = { from: Date; to: Date };
 
@@ -17,6 +18,10 @@ export type AgentServiceStats = {
   totalEscalated: number;
   resolutionRate: number;
   reasons: { reason: string; count: number }[];
+  // Conversas distintas atendidas pela IA em cada dia do período.
+  porDia: { labels: string[]; conversas: number[] };
+  // Respostas da IA por hora do dia (0–23, horário de Brasília) — mostra o horário de pico.
+  porHora: number[];
 };
 
 const PAGE = 1000; // teto do PostgREST por requisição
@@ -40,11 +45,11 @@ export function reasonKey(reason: string): string {
 export async function getAgentServiceStats(workspaceId: string, range: Range): Promise<AgentServiceStats> {
   const supabase = await createClient();
 
-  const pairs: { agent_id: string; contact_id: string }[] = [];
+  const pairs: { agent_id: string; contact_id: string; created_at: string }[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const { data } = await supabase
       .from("messages")
-      .select("agent_id, contact_id")
+      .select("agent_id, contact_id, created_at")
       .eq("workspace_id", workspaceId)
       .eq("role", "assistant")
       .not("agent_id", "is", null)
@@ -52,7 +57,7 @@ export async function getAgentServiceStats(workspaceId: string, range: Range): P
       .lte("created_at", range.to.toISOString())
       .order("created_at", { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1);
-    const rows = (data || []) as { agent_id: string; contact_id: string }[];
+    const rows = (data || []) as { agent_id: string; contact_id: string; created_at: string }[];
     pairs.push(...rows);
     if (rows.length < PAGE) break;
   }
@@ -82,6 +87,18 @@ export async function getAgentServiceStats(workspaceId: string, range: Range): P
     }
   }
 
+  const dias = eachDayBrt(range.from, range.to);
+  const diaIdx = new Map(dias.map((d, i) => [d, i]));
+  const contatosPorDia = dias.map(() => new Set<string>());
+  const porHora = Array.from({ length: 24 }, () => 0);
+  const horaFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "America/Sao_Paulo" });
+  for (const p of pairs) {
+    const i = diaIdx.get(dayKeyBrt(p.created_at));
+    if (i !== undefined && p.contact_id) contatosPorDia[i].add(p.contact_id);
+    const h = parseInt(horaFmt.format(new Date(p.created_at)), 10) % 24;
+    if (!Number.isNaN(h)) porHora[h]++;
+  }
+
   const { data: agents } = await supabase.from("agents").select("id, name").eq("workspace_id", workspaceId);
   const nameById = new Map((agents || []).map((a) => [a.id as string, a.name as string]));
 
@@ -105,6 +122,8 @@ export async function getAgentServiceStats(workspaceId: string, range: Range): P
     totalConversations,
     totalEscalated,
     resolutionRate: resolutionRate(totalConversations, totalEscalated),
+    porDia: { labels: dias.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`), conversas: contatosPorDia.map((s) => s.size) },
+    porHora,
     reasons: [...reasonCount.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 6),
   };
 }

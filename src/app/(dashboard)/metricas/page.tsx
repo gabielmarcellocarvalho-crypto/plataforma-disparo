@@ -14,6 +14,9 @@ import { listCustomFieldDefs } from "@/app/actions/custom-fields";
 import { listBranches, listTeamMembers } from "@/app/actions/team";
 import { resolveStageLabels } from "@/lib/crm-stages";
 import { getAgentServiceStats, type AgentServiceStats } from "@/lib/agent-service-stats";
+import { SparkStatCard } from "@/components/ui/spark-stat-card";
+import { getResponseMetrics } from "@/lib/overview-metrics";
+import { Bot, Clock, Hourglass, MessageSquareWarning } from "lucide-react";
 import { SectionNav, type NavSection } from "@/components/section-nav";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
@@ -83,7 +86,9 @@ export default async function MetricasPage({
       })()
     : null;
 
-  const service = workspace ? await getAgentServiceStats(workspace.id, period) : null;
+  const [service, response] = workspace
+    ? await Promise.all([getAgentServiceStats(workspace.id, period), getResponseMetrics(workspace.id, period)])
+    : [null, null];
 
   const sections: NavSection[] = [
     ...(leadReports ? [{ id: "vendas", label: "Vendas e leads", content: <LeadReportsSection reports={leadReports} periodLabel={period.label} /> }] : []),
@@ -92,7 +97,7 @@ export default async function MetricasPage({
           {
             id: "atendimento",
             label: "Atendimento IA",
-            content: <AgentServiceSection stats={service} periodLabel={period.label} />,
+            content: <AgentServiceSection stats={service} response={response} periodLabel={period.label} />,
           },
         ]
       : []),
@@ -301,7 +306,24 @@ export default async function MetricasPage({
   );
 }
 
-function AgentServiceSection({ stats, periodLabel }: { stats: AgentServiceStats; periodLabel: string }) {
+function fmtMin(v: number | null) {
+  if (v === null) return "—";
+  if (v < 60) return `${v.toFixed(v < 10 ? 1 : 0).replace(".", ",")} min`;
+  const h = Math.floor(v / 60);
+  return h < 48 ? `${h} h` : `${Math.floor(h / 24)} d`;
+}
+
+function AgentServiceSection({
+  stats,
+  response,
+  periodLabel,
+}: {
+  stats: AgentServiceStats;
+  response: { tempoMedioRespostaMin: number | null; conversasNaoRespondidas: number; maisTempoEsperandoMin: number | null } | null;
+  periodLabel: string;
+}) {
+  const picoMax = Math.max(...stats.porHora, 1);
+  const pico = stats.porHora.indexOf(Math.max(...stats.porHora));
   const kpi = "bg-surface border border-border rounded-2xl p-5 shadow-sm";
   return (
     <>
@@ -317,6 +339,49 @@ function AgentServiceSection({ stats, periodLabel }: { stats: AgentServiceStats;
         <div className={kpi}>
           <span className="text-xs font-semibold text-text-muted">Precisaram da equipe</span>
           <b className="block text-[26px] font-extrabold tracking-tight mt-2 leading-none">{stats.totalEscalated}</b>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SparkStatCard
+          title="Conversas da IA por dia"
+          icon={<Bot size={20} />}
+          value={stats.totalConversations.toLocaleString("pt-BR")}
+          caption={periodLabel}
+          series={stats.porDia.labels.map((label, i) => ({ label, value: stats.porDia.conversas[i] }))}
+          color="var(--color-primary)"
+        />
+        {[
+          { icon: <Clock size={20} />, title: "Tempo médio de resposta", value: fmtMin(response?.tempoMedioRespostaMin ?? null), sub: "da equipe, após a mensagem do lead", color: "var(--color-info-text)" },
+          { icon: <MessageSquareWarning size={20} />, title: "Sem resposta nossa", value: String(response?.conversasNaoRespondidas ?? 0), sub: "conversas aguardando retorno agora", color: "var(--color-danger)" },
+          { icon: <Hourglass size={20} />, title: "Maior espera", value: fmtMin(response?.maisTempoEsperandoMin ?? null), sub: "lead esperando há mais tempo", color: "var(--color-warning-text)" },
+        ].map((k) => (
+          <div key={k.title} className="bg-surface border border-border rounded-lg shadow-sm p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-2" style={{ color: k.color }}>
+              {k.icon}
+              <h3 className="text-sm font-semibold text-text">{k.title}</h3>
+            </div>
+            <div>
+              <b className="text-[26px] font-extrabold tracking-tight leading-none tabular-nums">{k.value}</b>
+              <p className="text-xs text-text-muted mt-1">{k.sub}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg shadow-sm p-5">
+        <h3 className="font-bold text-[15px] mb-1">Horário de pico da IA</h3>
+        <p className="text-xs text-text-muted mb-4">
+          Respostas do agente por hora do dia (Brasília) · {periodLabel}
+          {stats.porHora[pico] > 0 && <> · pico às {String(pico).padStart(2, "0")}h</>}
+        </p>
+        <div className="flex items-end gap-1 h-32">
+          {stats.porHora.map((n, h) => (
+            <div key={h} className="flex-1 flex flex-col items-center justify-end gap-1 h-full min-w-0" title={`${String(h).padStart(2, "0")}h: ${n} resposta(s)`}>
+              <div className="w-full rounded-t bg-primary min-h-[2px]" style={{ height: `${(n / picoMax) * 100}%`, opacity: n === picoMax && n > 0 ? 1 : 0.55 }} />
+              <span className="text-[10px] text-text-muted tabular-nums">{h % 3 === 0 ? String(h).padStart(2, "0") : ""}</span>
+            </div>
+          ))}
         </div>
       </div>
 
