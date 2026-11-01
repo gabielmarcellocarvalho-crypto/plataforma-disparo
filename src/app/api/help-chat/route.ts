@@ -1,12 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { hitRateLimit } from "@/lib/rate-limit-db";
 import { HELP_SYSTEM_PROMPT } from "@/lib/help-knowledge";
 
 // Central de ajuda: a IA responde dúvidas sobre a plataforma. Custo é nosso, então: só usuário logado,
-// modelo pequeno, histórico curto e limite por usuário. Nada do workspace entra na conversa.
-const MODEL = process.env.HELP_CHAT_MODEL || "claude-haiku-4-5-20251001";
+// Gemini Flash (o mais barato da plataforma), histórico curto e limite por usuário. Nada do workspace entra na conversa.
+const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const MODEL = process.env.HELP_CHAT_MODEL || process.env.GEMINI_LIGHT_MODEL || process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 const MAX_HISTORY = 12;
 const MAX_CHARS = 1500;
 const HOURLY_LIMIT = 40;
@@ -47,13 +48,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const res = await new Anthropic().messages.create({
+    const interaction = await client.interactions.create({
       model: MODEL,
-      max_tokens: 700,
-      system: HELP_SYSTEM_PROMPT,
-      messages,
+      system_instruction: HELP_SYSTEM_PROMPT,
+      input: messages.map((m) => ({
+        type: m.role === "assistant" ? "model_output" : "user_input",
+        content: [{ type: "text", text: m.content }],
+      })) as never,
     });
-    const reply = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+    // O Gemini insiste em negrito com asteriscos; o chat mostra texto puro, então tira.
+    const reply = (interaction.output_text ?? "").replace(/\*\*/g, "").trim();
     if (!reply) return NextResponse.json({ error: "Não consegui responder agora. Tente reformular a pergunta." }, { status: 502 });
     return NextResponse.json({ reply });
   } catch (err) {
