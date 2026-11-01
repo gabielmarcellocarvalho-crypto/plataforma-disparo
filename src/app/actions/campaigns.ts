@@ -373,11 +373,18 @@ export async function activateCampaign(
 
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, channel, workspace_id")
+    .select("id, channel, workspace_id, status")
     .eq("id", campaignId)
     .eq("workspace_id", workspace.id)
     .maybeSingle();
   if (!campaign) return { error: "Campanha não encontrada." };
+
+  // Rodadas (migration 0099): reativar uma campanha pausada/concluída abre uma rodada nova, com
+  // números próprios. Antes da migration a coluna não existe e tudo segue como antes (rodada nula).
+  const { data: roundRow, error: roundErr } = await supabase.from("campaigns").select("current_round").eq("id", campaignId).maybeSingle();
+  const hasRounds = !roundErr;
+  const reativando = campaign.status === "pausada" || campaign.status === "concluida";
+  const round = hasRounds ? (roundRow?.current_round ?? 1) + (reativando ? 1 : 0) : null;
 
   const optOutColumn = campaign.channel === "whatsapp" ? "opt_out_whatsapp" : "opt_out_email";
   const contactColumn = campaign.channel === "whatsapp" ? "phone" : "email";
@@ -469,7 +476,7 @@ export async function activateCampaign(
     return { error: `Nenhum contato encontrado com esse filtro e ${contactColumn === "phone" ? "telefone" : "e-mail"} válido, sem opt-out.` };
   }
 
-  const recipients = contacts.map((c) => ({ campaign_id: campaignId, contact_id: c.id }));
+  const recipients = contacts.map((c) => ({ campaign_id: campaignId, contact_id: c.id, ...(round ? { round } : {}) }));
   const { error: insertError } = await supabase
     .from("campaign_recipients")
     .upsert(recipients, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true });
@@ -477,9 +484,11 @@ export async function activateCampaign(
 
   const { error: statusError } = await supabase
     .from("campaigns")
-    .update({ status: "ativa" })
+    .update({ status: "ativa", ...(round ? { current_round: round, last_block_reason: null } : {}) })
     .eq("id", campaignId);
   if (statusError) return { error: statusError.message };
+  // Quem ficou na fila da rodada anterior passa a fazer parte desta.
+  if (round && reativando) await supabase.from("campaign_recipients").update({ round }).eq("campaign_id", campaignId).eq("status", "pendente");
 
   revalidatePath("/campanhas");
   return { error: null, ok: true };

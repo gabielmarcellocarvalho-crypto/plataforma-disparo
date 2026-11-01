@@ -87,6 +87,11 @@ export async function GET(req: Request) {
     .eq("status", "ativa")
     .neq("mode", "sequence"); // sequência de e-mail tem motor próprio (runEmailSequences), roda à parte
 
+  // Motivo da trava aparece na linha da campanha em /campanhas (antes ficava só na resposta do cron e
+  // a campanha parecia "ativa" sem andar). Antes da migration 0099 o update falha em silêncio.
+  const markBlocked = async (campaignId: string, reason: string) => {
+    await supabase.from("campaigns").update({ last_block_reason: reason, last_block_at: new Date().toISOString() }).eq("id", campaignId);
+  };
   let sent = 0;
   let failed = 0;
   let completed = 0;
@@ -297,23 +302,27 @@ export async function GET(req: Request) {
         emailLogoUrl = ws?.logo_url || null;
         if (!emailFrom) {
           skipped.push(`${campaign.id}:sem-remetente-email`);
+          await markBlocked(campaign.id, "Sem e-mail remetente configurado no workspace (Configurações > E-mail de envio).");
           pararCampanha = true;
           break;
         }
       } else if (isDialog360Blast) {
         if (!blastInstance!.dialog360_api_key || !blastInstance!.phone_number_id) {
           skipped.push(`${campaign.id}:360dialog-sem-credenciais`);
+          await markBlocked(campaign.id, "Número de WhatsApp sem credenciais da API. Reconecte o número em Configurações.");
           pararCampanha = true;
           break;
         }
       } else if (isMetacloudBlast) {
         if (!blastInstance!.phone_number_id) {
           skipped.push(`${campaign.id}:metacloud-sem-credenciais`);
+          await markBlocked(campaign.id, "Número de WhatsApp sem credenciais da API. Reconecte o número em Configurações.");
           pararCampanha = true;
           break;
         }
       } else if (!instanceName) {
         skipped.push(`${campaign.id}:sem-instancia`);
+        await markBlocked(campaign.id, "Campanha sem número de WhatsApp conectado.");
         pararCampanha = true;
         break;
       }
@@ -427,6 +436,7 @@ export async function GET(req: Request) {
           await supabase.from("contacts").update(contactUpdates).eq("id", contact.id);
         }
         sent++;
+        if (enviadosNoTick === 0) await supabase.from("campaigns").update({ last_block_reason: null }).eq("id", campaign.id).not("last_block_reason", "is", null);
       enviadosNoTick++;
       processadosNoTick++;
       } catch (err) {
@@ -440,6 +450,14 @@ export async function GET(req: Request) {
         //   422 = remetente malformado (ex.: "<email>" sem nome), mesmo caso: é configuração.
         if (err instanceof ResendError && (err.status === 429 || err.status === 403 || err.status === 422)) {
           skipped.push(`${campaign.id}:resend-${err.status}`);
+          await markBlocked(
+            campaign.id,
+            err.status === 429
+              ? "Cota de envio de e-mail estourada (Resend). Volta sozinha quando a cota renovar."
+              : err.status === 403
+                ? "Domínio do e-mail remetente não verificado no Resend."
+                : "E-mail remetente inválido. Confira o remetente em Configurações."
+          );
           // Problema de configuração não se resolve no próximo destinatário: para a campanha neste
           // tick em vez de repetir a mesma chamada condenada 10 vezes seguidas.
           if (err.status !== 429) pararCampanha = true;

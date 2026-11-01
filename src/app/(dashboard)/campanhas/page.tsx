@@ -23,11 +23,11 @@ export default async function CampanhasPage() {
   const { workspace } = await getCurrentWorkspace();
   const supabase = await createClient();
 
-  const [{ data: campaigns }, { data: agents }, { data: workspaceRow }, { data: whatsappInstances }] = workspace
+  const [{ data: campaignsRaw }, { data: agents }, { data: workspaceRow }, { data: whatsappInstances }] = workspace
     ? await Promise.all([
         supabase
           .from("campaigns")
-          .select("id, name, channel, mode, status, created_at")
+          .select("id, name, channel, mode, status, created_at, current_round, last_block_reason")
           .eq("workspace_id", workspace.id)
           .order("created_at", { ascending: false }),
         supabase
@@ -40,7 +40,15 @@ export default async function CampanhasPage() {
       ])
     : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
 
+  // Antes da migration 0099 as colunas de rodada não existem e a consulta acima volta vazia com erro:
+  // refaz sem elas pra tela continuar funcionando.
+  let campaigns: { id: string; name: string; channel: string; mode: string; status: string; created_at: string; current_round?: number; last_block_reason?: string | null }[] | null = campaignsRaw as never;
+  if (!campaigns && workspace) {
+    const { data } = await supabase.from("campaigns").select("id, name, channel, mode, status, created_at").eq("workspace_id", workspace.id).order("created_at", { ascending: false });
+    campaigns = data;
+  }
   const rows = campaigns ?? [];
+  const roundOf = (c: { current_round?: number }) => c.current_round ?? 1;
 
   // Tags existentes na base — viram as opções de segmentação na ativação do disparo ("mandar só pra
   // quem tem a tag Associado") e as sugestões ao marcar a campanha.
@@ -62,6 +70,7 @@ export default async function CampanhasPage() {
 
   const counts: Record<string, { pendente: number; enviado: number; falhou: number }> = {};
   const deliveryCounts: Record<string, { delivered: number; read: number }> = {};
+  const previousSent: Record<string, number> = {};
   if (rows.length > 0) {
     // O projeto tem "Max Rows" travado em 1000 nas configurações de API do Supabase — isso é um teto
     // do SERVIDOR, aplicado por cima de qualquer .limit() que o client peça (mesmo pedindo 50000, a
@@ -81,6 +90,7 @@ export default async function CampanhasPage() {
             .from("campaign_recipients")
             .select("id", { count: "exact", head: true })
             .eq("campaign_id", c.id)
+            .eq("round", roundOf(c))
             .in("status", g.statuses);
           return { campaignId: c.id, key: g.key, count: count ?? 0 };
         })
@@ -91,13 +101,23 @@ export default async function CampanhasPage() {
       counts[r.campaignId][r.key] = r.count;
     }
 
+    // Campanha reativada: o que já saiu nas rodadas anteriores fica numa linha à parte.
+    await Promise.all(
+      rows
+        .filter((c) => roundOf(c) > 1)
+        .map(async (c) => {
+          const { count } = await supabase.from("campaign_recipients").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).lt("round", roundOf(c)).eq("status", "enviado");
+          previousSent[c.id] = count ?? 0;
+        })
+    );
+
     // Entregues/lidas (webhook de status da Meta, migration 0089). Antes dela, as colunas não existem e
     // a tabela mostra "—".
     if (await hasRedesignColumns()) {
       const delivery = await Promise.all(
         rows.flatMap((c) =>
           (["delivered_at", "read_at"] as const).map(async (col) => {
-            const { count } = await supabase.from("campaign_recipients").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).not(col, "is", null);
+            const { count } = await supabase.from("campaign_recipients").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).eq("round", roundOf(c)).not(col, "is", null);
             return { campaignId: c.id, col, count: count ?? 0 };
           })
         )
@@ -192,6 +212,14 @@ export default async function CampanhasPage() {
                         <div className="min-w-0">
                           <div className="font-semibold truncate">{c.name}</div>
                           <div className="text-[11px] text-text-muted">{c.mode === "agent" ? "conduzida por agente" : "disparo simples"} · {c.channel === "email" ? "e-mail" : "WhatsApp"}</div>
+                          {roundOf(c) > 1 && (
+                            <div className="text-[11px] text-text-muted">
+                              Rodada {roundOf(c)} · {(previousSent[c.id] ?? 0).toLocaleString("pt-BR")} enviados nas anteriores
+                            </div>
+                          )}
+                          {c.status === "ativa" && c.last_block_reason && count.pendente > 0 && (
+                            <div className="text-[11px] font-semibold text-warning-text mt-0.5">Travada: {c.last_block_reason}</div>
+                          )}
                         </div>
                       </div>
                     </td>
