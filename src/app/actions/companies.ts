@@ -26,6 +26,11 @@ export type CompanyRow = {
   website: string | null;
   phone: string | null;
   industry: string | null;
+  cnpj: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
   custom_fields: Record<string, unknown> | null;
   created_at: string;
 };
@@ -41,6 +46,8 @@ export async function addCompany(_prevState: ActionResult, formData: FormData): 
   const website = String(formData.get("website") || "").trim() || null;
   const phone = String(formData.get("phone") || "").trim() || null;
   const industry = String(formData.get("industry") || "").trim() || null;
+  const cnpj = String(formData.get("cnpj") || "").trim() || null;
+  const address = String(formData.get("address") || "").trim() || null;
 
   const supabase = await createClient();
   const { error } = await supabase.from("companies").insert({
@@ -50,6 +57,8 @@ export async function addCompany(_prevState: ActionResult, formData: FormData): 
     website,
     phone,
     industry,
+    cnpj,
+    address,
   });
 
   if (error) {
@@ -69,7 +78,7 @@ export async function searchCompanies(workspaceId: string, query: string): Promi
   const supabase = await createClient();
   let request = supabase
     .from("companies")
-    .select("id, name, domain, website, phone, industry, custom_fields, created_at")
+    .select("id, name, domain, website, phone, industry, cnpj, address, city, state, zip, custom_fields, created_at")
     .eq("workspace_id", workspaceId)
     .order("name", { ascending: true })
     .limit(20);
@@ -97,7 +106,7 @@ export async function getCompanyDetail(companyId: string): Promise<{
   const [{ data: company }, { data: notes }, { data: contacts }] = await Promise.all([
     supabase
       .from("companies")
-      .select("id, name, domain, website, phone, industry, custom_fields, created_at, updated_at")
+      .select("id, name, domain, website, phone, industry, cnpj, address, city, state, zip, custom_fields, created_at, updated_at")
       .eq("id", companyId)
       .eq("workspace_id", workspace.id)
       .maybeSingle(),
@@ -119,7 +128,19 @@ export async function getCompanyDetail(companyId: string): Promise<{
 
 export async function updateCompanyInfo(
   companyId: string,
-  fields: { name: string; domain: string; website: string; phone: string; industry: string; customFields: Record<string, string> }
+  fields: {
+    name: string;
+    domain: string;
+    website: string;
+    phone: string;
+    industry: string;
+    cnpj: string;
+    address: string;
+    city: string;
+    state: string;
+    zip: string;
+    customFields: Record<string, string>;
+  }
 ): Promise<ActionResult> {
   const { workspace } = await getCurrentWorkspace();
   if (!workspace) return { error: "Nenhum workspace ativo." };
@@ -142,6 +163,11 @@ export async function updateCompanyInfo(
       website: fields.website.trim() || null,
       phone: fields.phone.trim() || null,
       industry: fields.industry.trim() || null,
+      cnpj: fields.cnpj.trim() || null,
+      address: fields.address.trim() || null,
+      city: fields.city.trim() || null,
+      state: fields.state.trim() || null,
+      zip: fields.zip.trim() || null,
       custom_fields: cleanFields,
       updated_at: new Date().toISOString(),
     })
@@ -153,6 +179,7 @@ export async function updateCompanyInfo(
   }
 
   revalidatePath("/empresas");
+  revalidatePath(`/empresas/${companyId}`);
   revalidatePath("/crm");
   return { error: null, ok: true };
 }
@@ -174,7 +201,7 @@ export async function addCompanyNote(companyId: string, content: string): Promis
   });
   if (error) return { error: "Não foi possível salvar a observação." };
 
-  revalidatePath("/empresas");
+  revalidatePath(`/empresas/${companyId}`);
   return { error: null, ok: true };
 }
 
@@ -237,4 +264,27 @@ export async function createCompanyAndLinkContact(contactId: string, name: strin
   revalidatePath("/contatos");
   revalidatePath("/empresas");
   return { error: null, companyId: company.id };
+}
+
+// Busca de contatos do workspace pra vincular a uma empresa na ficha dela (só quem ainda não tem essa empresa).
+export type LinkableContact = { id: string; name: string | null; phone: string | null; email: string | null };
+
+export async function searchContactsToLink(companyId: string, query: string): Promise<LinkableContact[]> {
+  const term = query.trim().replace(/[%,()]/g, " ");
+  if (term.length < 2) return [];
+  const { workspace } = await getCurrentWorkspace();
+  if (!workspace) return [];
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("contacts")
+    .select("id, name, phone, email, company_id")
+    .eq("workspace_id", workspace.id)
+    .or(`name.ilike.%${term}%,phone.ilike.%${term}%,email.ilike.%${term}%`)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  return (data || [])
+    .filter((c) => c.company_id !== companyId)
+    .slice(0, 8)
+    .map(({ id, name, phone, email }) => ({ id, name, phone, email }));
 }

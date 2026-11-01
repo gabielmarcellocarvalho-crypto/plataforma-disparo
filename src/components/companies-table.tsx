@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CompanyDrawer } from "@/components/company-drawer";
+import { useRouter } from "next/navigation";
 
 type CompanyListRow = {
   id: string;
@@ -50,7 +50,7 @@ function EmptyState({ hasQuery }: { hasQuery: boolean }) {
 
 export function CompaniesTable({ companies }: { companies: CompanyListRow[] }) {
   const [search, setSearch] = useState("");
-  const [openId, setOpenId] = useState<string | null>(null);
+  const router = useRouter();
 
   const filtered = useMemo(() => {
     if (!search.trim()) return companies;
@@ -83,7 +83,7 @@ export function CompaniesTable({ companies }: { companies: CompanyListRow[] }) {
                 <th className="px-4 py-3">Nome</th>
                 <th className="px-4 py-3">Domínio</th>
                 <th className="px-4 py-3">Telefone</th>
-                <th className="px-4 py-3">Indústria</th>
+                <th className="px-4 py-3">Segmento</th>
                 <th className="px-4 py-3">Contatos</th>
                 <th className="px-4 py-3">Criado em</th>
               </tr>
@@ -92,7 +92,7 @@ export function CompaniesTable({ companies }: { companies: CompanyListRow[] }) {
               {filtered.map((c) => (
                 <tr
                   key={c.id}
-                  onClick={() => setOpenId(c.id)}
+                  onClick={() => router.push(`/empresas/${c.id}`)}
                   className="border-b border-border last:border-0 cursor-pointer hover:bg-surface-2 transition-colors"
                 >
                   <td className="px-4 py-3">
@@ -118,8 +118,6 @@ export function CompaniesTable({ companies }: { companies: CompanyListRow[] }) {
           </table>
         </div>
       )}
-
-      <CompanyDrawer companyId={openId} onClose={() => setOpenId(null)} />
     </div>
   );
 }

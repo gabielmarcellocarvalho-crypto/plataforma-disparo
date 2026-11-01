@@ -166,16 +166,6 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
-  {
-    href: "/configuracoes",
-    label: "Configurações",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    ),
-  },
 ];
 
 const COLABORADOR_NAV_ITEMS = [
@@ -218,7 +208,7 @@ const NAV_GROUPS: { id: string; label: string; hrefs: string[]; collapsible?: bo
   { id: "crm", label: "CRM", hrefs: ["/conversas", "/crm", "/contatos", "/contatos?view=empresas", "/agenda"] },
   { id: "auto", label: "Automação & IA", hrefs: ["/agentes", "/automacoes", "/campanhas", "/templates"] },
   { id: "analise", label: "Análise", hrefs: ["/metricas"] },
-  { id: "workspace", label: "Workspace", hrefs: ["/equipe", "/integracoes", "/configuracoes"], collapsible: true },
+  { id: "workspace", label: "Workspace", hrefs: ["/equipe", "/integracoes"], collapsible: true },
 ];
 
 // Agentes nunca aparece pra cliente, em nenhum tipo de acesso — só staff (colaborador+developer)
@@ -311,8 +301,6 @@ function lerGruposFechados(): string[] {
 export function Sidebar({
   workspaceSlot,
   workspaceCompact,
-  userSlot,
-  userCompact,
   isStaff,
   isDeveloper,
   accessType,
@@ -325,8 +313,6 @@ export function Sidebar({
 }: {
   workspaceSlot: React.ReactNode;
   workspaceCompact: React.ReactNode;
-  userSlot: React.ReactNode;
-  userCompact: React.ReactNode;
   isStaff: boolean;
   isDeveloper: boolean;
   accessType: AccessType | null;
@@ -453,8 +439,6 @@ export function Sidebar({
           {!collapsed && <div className="text-[10px] font-bold uppercase tracking-wider text-sidebar-muted mb-2">Workspace atual</div>}
           {collapsed ? workspaceCompact : workspaceSlot}
         </div>
-
-        {collapsed ? userCompact : userSlot}
       </div>
     </aside>
   );

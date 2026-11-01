@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED } from "@/components/sidebar";
 import type { AccessType } from "@/lib/access-types";
+import { TopbarActions } from "@/components/topbar-actions";
 
 const CHAVE_RECOLHIDO = "sidebar:collapsed";
 
@@ -13,6 +14,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/crm/", "Ficha do lead"],
   ["/crm", "Pipeline"],
   ["/contatos", "Contatos"],
+  ["/empresas/", "Ficha da empresa"],
   ["/agentes/", "Editar agente"],
   ["/agentes", "Agentes de IA"],
   ["/automacoes/", "Editar automação"],
@@ -71,8 +73,7 @@ function gravarRecolhido(valor: boolean) {
 export function DashboardShell({
   workspaceSlot,
   workspaceCompact,
-  userSlot,
-  userCompact,
+  userEmail,
   isStaff,
   isDeveloper,
   accessType,
@@ -84,8 +85,7 @@ export function DashboardShell({
 }: {
   workspaceSlot: React.ReactNode;
   workspaceCompact: React.ReactNode;
-  userSlot: React.ReactNode;
-  userCompact: React.ReactNode;
+  userEmail: string;
   isStaff: boolean;
   isDeveloper: boolean;
   accessType: AccessType | null;
@@ -121,8 +121,6 @@ export function DashboardShell({
       <Sidebar
         workspaceSlot={workspaceSlot}
         workspaceCompact={workspaceCompact}
-        userSlot={userSlot}
-        userCompact={userCompact}
         isStaff={isStaff}
         isDeveloper={isDeveloper}
         accessType={accessType}
@@ -168,10 +166,13 @@ export function DashboardShell({
             </svg>
           </button>
           <span className="font-extrabold text-sm">AutomaX</span>
+          <div className="ml-auto">
+            <TopbarActions email={userEmail} />
+          </div>
         </header>
 
         {/* Trilha (workspace > página), como no redesign: situa quem alterna entre clientes. */}
-        <div className="hidden lg:flex items-center gap-2 h-11 px-5 border-b border-border bg-surface/70 text-sm shrink-0">
+        <div className="hidden lg:flex items-center gap-2 h-14 px-5 border-b border-border bg-surface/70 text-sm shrink-0">
           <span className="text-text-muted truncate max-w-[220px]">{workspaceName}</span>
           {pageTitle(pathname) && (
             <>
@@ -179,6 +180,9 @@ export function DashboardShell({
               <span className="font-semibold truncate">{pageTitle(pathname)}</span>
             </>
           )}
+          <div className="ml-auto">
+            <TopbarActions email={userEmail} />
+          </div>
         </div>
 
         <main id="conteudo" className="flex-1 min-h-0 min-w-0 overflow-y-auto p-4 lg:p-5">

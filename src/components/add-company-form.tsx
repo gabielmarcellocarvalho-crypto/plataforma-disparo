@@ -52,9 +52,23 @@ export function AddCompanyForm() {
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor="industry" className="text-sm font-semibold">
-              Indústria
+              Segmento
             </label>
             <input id="industry" name="industry" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="cnpj" className="text-sm font-semibold">
+              CNPJ
+            </label>
+            <input id="cnpj" name="cnpj" placeholder="00.000.000/0000-00" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="address" className="text-sm font-semibold">
+              Endereço
+            </label>
+            <input id="address" name="address" className="border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:border-primary" />
           </div>
 
           {state.error && <p className="text-sm text-danger font-medium">{state.error}</p>}
