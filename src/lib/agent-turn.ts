@@ -79,9 +79,11 @@ const HISTORY_LIMIT = 20;
 // gerando chamada paga à Anthropic sem limite, sem punir outros clientes: cada conversa tem seu
 // próprio contador independente, escala junto com o número de clientes na plataforma.
 const RATE_LIMIT_WINDOW_MS = 60_000;
+// Quantas mensagens exatamente iguais seguidas (contando a atual) caracterizam loop/teste.
+const REPEAT_LIMIT = 7;
 // Gente de verdade escreve em várias bolhas curtas (caso real: 17 mensagens em ~1,5 min, nenhuma repetida) e era
 // marcada como abuso com o limite antigo de 5/min. Só isso não é spam: bot/loop manda dezenas por minuto. Repetição
-// idêntica já tem trava própria (isFirstRepeat/isSecondRepeat) e rajada não custa LLM extra (só a última mensagem responde).
+// idêntica já tem trava própria (REPEAT_LIMIT) e rajada não custa LLM extra (só a última mensagem responde).
 const RATE_LIMIT_MAX_MESSAGES = 30;
 // Rate limit agregado por WORKSPACE (todos os contatos somados) — o de cima protege 1 número
 // específico, mas o número de WhatsApp de um agente é público por natureza (é o objetivo do produto);
@@ -334,10 +336,8 @@ export async function runAgentTurn(
   const mediaType = mediaUrl ? media!.kind : null;
 
   // Detecta mensagem repetida ANTES de logar a atual (a query já exclui ela por construção) — pega
-  // loop/teste (copy-paste da mesma mensagem) sem esperar o limite de volume geral. Dois níveis:
-  // 1ª repetição (2 iguais seguidas) = já responde igual antes, então pula silenciosamente (zero custo
-  // extra, zero flag — pode ser só um humano reenviando por impaciência); 2ª repetição (3 iguais
-  // seguidas) = aí sim escala pra atenção humana. No máximo 1 chamada paga pra qualquer streak de repetição.
+  // loop/teste (copy-paste da mesma mensagem) sem esperar o limite de volume geral: REPEAT_LIMIT iguais
+  // seguidas escalam pra atenção humana.
   const { data: lastUserMsgs } = await supabase
     .from("messages")
     .select("content")
@@ -345,11 +345,10 @@ export async function runAgentTurn(
     .eq("contact_id", contact.id)
     .eq("role", "user")
     .order("created_at", { ascending: false })
-    .limit(2);
+    .limit(REPEAT_LIMIT - 1);
   const normalizedCurrent = userContent.trim().toLowerCase();
   const priorContents = (lastUserMsgs || []).map((m) => (m.content as string).trim().toLowerCase());
-  const isFirstRepeat = priorContents[0] === normalizedCurrent;
-  const isSecondRepeat = isFirstRepeat && priorContents[1] === normalizedCurrent;
+  const isRepeatLoop = priorContents.length === REPEAT_LIMIT - 1 && priorContents.every((c) => c === normalizedCurrent);
 
   const { data: insertedUserMsg } = await supabase
     .from("messages")
@@ -419,12 +418,9 @@ export async function runAgentTurn(
     }
   }
 
-  // 1ª repetição: já respondeu igual há pouco, pular silenciosamente evita gastar outra chamada paga
-  // pra dizer a mesma coisa de novo (zero custo, zero flag — pode ser só impaciência do cliente).
-  if (isFirstRepeat && !isSecondRepeat) return;
-
-  // 2ª repetição seguida (3 mensagens iguais no total): agora sim é padrão de teste/loop, escala.
-  if (isSecondRepeat) {
+  // 7 ou mais mensagens exatamente iguais seguidas: padrão de teste/loop, escala. Menos que isso é gente
+  // reenviando ou mandando "sim"/"os dois" em bolhas — o agente responde normalmente.
+  if (isRepeatLoop) {
     await supabase
       .from("contacts")
       .update({
