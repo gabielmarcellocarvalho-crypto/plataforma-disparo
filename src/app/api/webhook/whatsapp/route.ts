@@ -9,6 +9,7 @@ import { canAdvanceStage, type ContactStage } from "@/lib/crm-stages";
 import { createInboundLead } from "@/lib/inbound-lead";
 import { secureEqual } from "@/lib/secure-compare";
 import { handleChatbotInbound } from "@/lib/chatbot-engine";
+import { formatSharedContacts, formatSharedLocation, phonesFromVcard } from "@/lib/incoming-shared";
 
 const OPT_OUT = /\b(sair|pare|parar|remover|descadastr|n[aã]o quero (mais )?(receber|mensagem)|me tira da lista|stop)\b/i;
 
@@ -31,6 +32,9 @@ type EvolutionMessage = {
     documentMessage?: unknown;
     stickerMessage?: unknown;
     reactionMessage?: unknown;
+    locationMessage?: { degreesLatitude?: number; degreesLongitude?: number; name?: string; address?: string };
+    contactMessage?: { displayName?: string; vcard?: string };
+    contactsArrayMessage?: { contacts?: Array<{ displayName?: string; vcard?: string }> };
   };
   key?: { remoteJid?: string; fromMe?: boolean; id?: string };
   pushName?: string;
@@ -98,8 +102,25 @@ async function resolveIncoming(instanceName: string, data: EvolutionMessage): Pr
   if (msg?.stickerMessage) return { text: null, images: [], unsupported: "figurinha", media: null, externalId, ignorable: true };
   if (msg?.reactionMessage) return { text: null, images: [], unsupported: "reação", media: null, externalId, ignorable: true };
 
+  // Localização e contato compartilhado viram texto pro agente seguir a conversa.
+  if (msg?.locationMessage) {
+    const text = formatSharedLocation({
+      latitude: msg.locationMessage.degreesLatitude,
+      longitude: msg.locationMessage.degreesLongitude,
+      name: msg.locationMessage.name,
+      address: msg.locationMessage.address,
+    });
+    if (text) return { text, images: [], unsupported: null, media: null, externalId };
+  }
+  const sharedContacts = msg?.contactsArrayMessage?.contacts || (msg?.contactMessage ? [msg.contactMessage] : null);
+  if (sharedContacts) {
+    const text = formatSharedContacts(sharedContacts.map((c) => ({ name: c.displayName, phones: phonesFromVcard(c.vcard) })));
+    if (text) return { text, images: [], unsupported: null, media: null, externalId };
+  }
+
   if (msg?.videoMessage) return { text: null, images: [], unsupported: "vídeo", media: null, externalId };
-  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null, externalId };
+  // Documento (PDF etc.): registra e segue sem responder, como a figurinha.
+  if (msg?.documentMessage) return { text: null, images: [], unsupported: "documento", media: null, externalId, ignorable: true };
   return { text: null, images: [], unsupported: null, media: null, externalId };
 }
 

@@ -66,8 +66,9 @@ async function resolveOfficialIncoming(
   // Figurinha e reação são resposta social, não pedido — o lead manda um joinha e pronto. Marcar
   // isso como "arquivo que o agente não leu" tirava o agente da conversa a cada figurinha. Segue
   // como não processado (não dá pra responder a um sticker), mas sem passar a conversa pro humano.
-  if (msg.rawType === "sticker" || msg.rawType === "reaction") {
-    const nome = msg.rawType === "sticker" ? "figurinha" : "reação";
+  // Documento (PDF etc.) segue a mesma regra: fica registrado, o agente não responde nem sai da conversa.
+  if (msg.rawType === "sticker" || msg.rawType === "reaction" || msg.rawType === "document") {
+    const nome = msg.rawType === "sticker" ? "figurinha" : msg.rawType === "reaction" ? "reação" : "documento";
     return { text: null, images: [], unsupported: nome, media: null, externalId, ignorable: true };
   }
 

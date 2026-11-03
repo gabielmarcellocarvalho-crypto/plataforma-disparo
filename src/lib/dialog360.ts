@@ -3,6 +3,7 @@
 // (whatsapp_instances.channel = '360dialog'). Formato confirmado na doc oficial (docs.360dialog.com),
 // não chutado — mas AINDA NÃO TESTADO contra uma conta/API key real, validar antes de confiar em produção.
 import { parseReferral, type AdReferral } from "@/lib/ad-referral";
+import { formatSharedContacts, formatSharedLocation } from "@/lib/incoming-shared";
 
 const BASE_URL = process.env.DIALOG360_BASE_URL || "https://waba-v2.360dialog.io";
 
@@ -183,6 +184,8 @@ export type Dialog360WebhookBody = {
           audio?: { id?: string; mime_type?: string };
           image?: { id?: string; mime_type?: string; caption?: string };
           document?: { id?: string; mime_type?: string; caption?: string };
+          location?: { latitude?: number; longitude?: number; name?: string; address?: string };
+          contacts?: Array<{ name?: { formatted_name?: string }; phones?: Array<{ phone?: string; wa_id?: string }> }>;
           // Presente quando a conversa começou num anúncio Click-to-WhatsApp.
           referral?: { source_type?: string; ctwa_clid?: string; source_url?: string; headline?: string; body?: string };
           // Clique em botão de quick reply de um TEMPLATE (type "button") ou de uma mensagem
@@ -249,6 +252,14 @@ export function parseDialog360IncomingMessages(body: Dialog360WebhookBody): Dial
           out.push({ ...base, type: "text", text: buttonText, mediaId: null, mimeType: null });
         } else if (m.type === "text" && m.text?.body) {
           out.push({ ...base, type: "text", text: m.text.body, mediaId: null, mimeType: null });
+        } else if (m.type === "location" && formatSharedLocation(m.location || {})) {
+          out.push({ ...base, type: "text", text: formatSharedLocation(m.location || {}), mediaId: null, mimeType: null });
+        } else if (
+          m.type === "contacts" &&
+          formatSharedContacts((m.contacts || []).map((c) => ({ name: c.name?.formatted_name, phones: (c.phones || []).map((p) => p.phone || p.wa_id) })))
+        ) {
+          const text = formatSharedContacts((m.contacts || []).map((c) => ({ name: c.name?.formatted_name, phones: (c.phones || []).map((p) => p.phone || p.wa_id) })));
+          out.push({ ...base, type: "text", text, mediaId: null, mimeType: null });
         } else if (m.type === "audio" && m.audio?.id) {
           out.push({ ...base, type: "audio", text: null, mediaId: m.audio.id, mimeType: m.audio.mime_type || null });
         } else if (m.type === "image" && m.image?.id) {
