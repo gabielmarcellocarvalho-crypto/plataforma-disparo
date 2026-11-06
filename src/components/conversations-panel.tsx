@@ -405,6 +405,8 @@ export function ConversationsPanel({
   const [aguardandoHumano, setAguardandoHumano] = useState(false);
   const [semResposta, setSemResposta] = useState(false);
   const [waitFilter, setWaitFilter] = useState("");
+  // "prioridade" = ordem do servidor (atenção humana e sinalizadas no topo); "recentes" = só pela última mensagem.
+  const [sortMode, setSortMode] = useState<"prioridade" | "recentes">("prioridade");
   const [campaignFilter, setCampaignFilter] = useState("");
   const [responsavelFilter, setResponsavelFilter] = useState("");
   const [ticketFilter, setTicketFilter] = useState<TicketStatus | "">("");
@@ -473,7 +475,11 @@ export function ConversationsPanel({
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    return conversations.filter((c) => {
+    const base =
+      sortMode === "recentes"
+        ? [...conversations].sort((a, b) => (b.messages[0]?.created_at || "").localeCompare(a.messages[0]?.created_at || ""))
+        : conversations;
+    return base.filter((c) => {
       if (q && !(c.contact.name || "").toLowerCase().includes(q) && !(c.contact.phone || "").includes(q)) return false;
       if (stageFilters.length > 0 && !stageFilters.includes(stageKeyOf(c.contact))) return false;
       if (excludeTags.length > 0 && (c.contact.tags ?? []).some((t) => excludeTags.includes(t.toLowerCase()))) return false;
@@ -495,7 +501,7 @@ export function ConversationsPanel({
       if (savedSel && !matchesSavedFilter(c.contact, savedSel.filters, defaultPipelineId)) return false;
       return true;
     });
-  }, [conversations, pipelines, query, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedSel, defaultPipelineId]);
+  }, [conversations, pipelines, query, sortMode, stageFilters, excludeTags, aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedSel, defaultPipelineId]);
   const metaCount = useMemo(() => conversations.filter((c) => isMetaCampaignLead(c.contact)).length, [conversations]);
   const googleCount = useMemo(() => conversations.filter((c) => isGoogleAdsLead(c.contact)).length, [conversations]);
   const tabCounts = useMemo(() => {
@@ -507,7 +513,7 @@ export function ConversationsPanel({
   // Só uma parte da lista vai pra tela (milhares de linhas travam o navegador). Qualquer mudança de
   // filtro/busca volta pro tamanho inicial, sem precisar de efeito: o limite guarda a "assinatura"
   // dos filtros em que foi ampliado e só vale enquanto ela for a mesma.
-  const filterSig = [query, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedFilterId].join("|");
+  const filterSig = [query, sortMode, stageFilters.join(","), excludeTags.join(","), aguardandoHumano, semResposta, waitFilter, campaignFilter, responsavelFilter, ticketFilter, inboxTab, metaOnly, googleOnly, savedFilterId].join("|");
   const [expanded, setExpanded] = useState<{ sig: string; limit: number }>({ sig: "", limit: LIST_PAGE_FIRST });
   const listLimit = expanded.sig === filterSig ? expanded.limit : LIST_PAGE_FIRST;
   const shown = filtered.slice(0, listLimit);
@@ -519,6 +525,7 @@ export function ConversationsPanel({
     (aguardandoHumano ? 1 : 0) +
     (semResposta ? 1 : 0) +
     (waitFilter ? 1 : 0) +
+    (sortMode !== "prioridade" ? 1 : 0) +
     (campaignFilter ? 1 : 0) +
     (responsavelFilter ? 1 : 0) +
     (ticketFilter ? 1 : 0) +
@@ -1039,6 +1046,10 @@ export function ConversationsPanel({
                       <option key={w.key} value={w.key}>{w.label}</option>
                     ))}
                   </select>
+                  <select value={sortMode} onChange={(e) => setSortMode(e.target.value as "prioridade" | "recentes")} className={`${filterSelect} col-span-2`} aria-label="Ordenação">
+                    <option value="prioridade">Ordem: atenção primeiro</option>
+                    <option value="recentes">Ordem: mais recentes</option>
+                  </select>
                   {showResponsavel && vendors.length > 0 && (
                     <select value={responsavelFilter} onChange={(e) => setResponsavelFilter(e.target.value)} className={`${filterSelect} col-span-2`} aria-label="Responsável">
                       <option value="">Responsável: todos</option>
@@ -1124,6 +1135,7 @@ export function ConversationsPanel({
                       setAguardandoHumano(false);
                       setSemResposta(false);
                       setWaitFilter("");
+                      setSortMode("prioridade");
                       setCampaignFilter("");
                       setResponsavelFilter("");
                       setTicketFilter("");
