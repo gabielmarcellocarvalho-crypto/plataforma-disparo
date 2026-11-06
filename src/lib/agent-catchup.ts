@@ -12,7 +12,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { agentSendText } from "@/lib/agent-channel";
 import { resolveAgentChannel } from "@/lib/agent-handoff";
-import { generateReply, capBubbles, splitByCharLimit, type ConversationMessage } from "@/lib/agent-reply";
+import { generateReply, capBubbles, splitByCharLimit, type AgentImage, type ConversationMessage } from "@/lib/agent-reply";
 import { generateReplyGemini } from "@/lib/agent-reply-gemini";
 import { normalizeAgentConfig, isWithinBusinessHours } from "@/lib/agent-prompt";
 import { canAdvanceStage } from "@/lib/crm-stages";
@@ -31,7 +31,29 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export type CatchupResult = { sent: number; skipped: number };
+// Fotos da(s) última(s) mensagem(ns) seguida(s) do lead (as mais recentes vêm primeiro em `rows`).
+async function lastUserImages(rows: Array<{ role: string; media_url: string | null; media_type: string | null }>): Promise<AgentImage[]> {
+  const urls: string[] = [];
+  for (const r of rows) {
+    if (r.role !== "user") break;
+    if (r.media_type === "image" && r.media_url) urls.push(r.media_url);
+  }
+  const images: AgentImage[] = [];
+  for (const url of urls.slice(0, 3)) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const mime = (res.headers.get("content-type") || "").split(";")[0];
+      const mediaType: AgentImage["mediaType"] = mime.includes("png") ? "image/png" : mime.includes("gif") ? "image/gif" : mime.includes("webp") ? "image/webp" : "image/jpeg";
+      images.push({ base64: Buffer.from(await res.arrayBuffer()).toString("base64"), mediaType });
+    } catch (err) {
+      console.error("Erro ao baixar foto pra retomada pós-horário:", err instanceof Error ? err.message : err);
+    }
+  }
+  return images;
+}
+
+export type CatchupResult ={ sent: number; skipped: number };
 
 export async function runOffHoursCatchup(supabase: AdminClient): Promise<CatchupResult> {
   let sent = 0;
@@ -80,7 +102,7 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
 
       const { data: historyRows } = await supabase
         .from("messages")
-        .select("role, content")
+        .select("role, content, media_url, media_type")
         .eq("agent_id", agent.id)
         .eq("contact_id", contact.id)
         .order("created_at", { ascending: false })
@@ -97,10 +119,14 @@ export async function runOffHoursCatchup(supabase: AdminClient): Promise<Catchup
         continue;
       }
 
-      // Sem ferramentas (foto/arquivo) aqui — mesma simplificação já usada no worker de follow-up:
-      // é uma retomada de texto, não o fluxo completo de mensagem ao vivo.
+      // A foto que o lead mandou fora do horário já está guardada no storage: sem rebaixar a imagem, o modelo
+      // só via "[o cliente enviou uma foto]" e chutava o que era.
+      const images = await lastUserImages(historyRows || []);
+
+      // Sem ferramentas aqui — mesma simplificação já usada no worker de follow-up: é uma retomada, não o
+      // fluxo completo de mensagem ao vivo.
       const replyFn = agent.llm_provider === "gemini" ? generateReplyGemini : generateReply;
-      const gen = await replyFn(agent.system_prompt + PHONE_KNOWN_BLOCK, { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: true }, history, [], [], undefined, knowledgeText);
+      const gen = await replyFn(agent.system_prompt + PHONE_KNOWN_BLOCK, { name: contact.name, custom_fields: contact.custom_fields, missedOffHours: true }, history, images, [], undefined, knowledgeText);
 
       const preSplitParts = agentConfig.maxBubbles > 1 ? splitByCharLimit(gen.replyParts, agentConfig.bubbleCharLimit) : gen.replyParts;
       const replyParts = capBubbles(preSplitParts, agentConfig.maxBubbles);
